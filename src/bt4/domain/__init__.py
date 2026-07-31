@@ -9,6 +9,7 @@ logic, biological models, or heavy third-party dependencies.
 from __future__ import annotations
 
 from .certificate import OptimalityCertificate, OptimalityStatus
+from .contracts import Constraint, ObjectiveTerm
 from .genetic_code import (
     AA_TO_CODONS,
     AMINO_ACIDS,
@@ -20,6 +21,7 @@ from .genetic_code import (
 )
 from .objective import Frontier, ObjectiveVector, dominates, pareto_front
 from .result import Metrics, Result, Severity, Violation
+from .scope import Scope
 from .sequence import DNA_BASES, gc_fraction, validate_dna, validate_protein
 
 __all__ = [
@@ -28,12 +30,15 @@ __all__ = [
     "CODON_TABLE",
     "DNA_BASES",
     "STOP",
+    "Constraint",
     "Frontier",
     "Metrics",
+    "ObjectiveTerm",
     "ObjectiveVector",
     "OptimalityCertificate",
     "OptimalityStatus",
     "Result",
+    "Scope",
     "Severity",
     "Violation",
     "dominates",

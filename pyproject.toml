@@ -39,6 +39,7 @@ dev = [
 
 [project.scripts]
 bt4 = "bt4.cli.__main__:main"
+bt4-studio = "bt4.app.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/masonberger4/BT4"
@@ -48,11 +49,17 @@ path = "src/bt4/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bt4"]
-# hatchling ships only .py by default; force-include the typing marker and the
-# data-driven codon tables (TSV + provenance sidecars) so they reach the wheel.
-[tool.hatch.build.targets.wheel.force-include]
-"src/bt4/py.typed" = "bt4/py.typed"
-"src/bt4/biomodels/codon/data" = "bt4/biomodels/codon/data"
+# hatchling includes every file under the package directory (not only .py), so
+# the typing marker (py.typed) and the data-driven codon tables (TSV + provenance
+# sidecars) reach the wheel automatically. A previous force-include of the same
+# paths double-added them and broke `pip install .` / wheel builds ("a second
+# file is being added to the wheel archive at the same path"); the artifacts
+# below keep the non-.py data files in the sdist as well.
+artifacts = [
+  "src/bt4/py.typed",
+  "src/bt4/biomodels/codon/data/*.tsv",
+  "src/bt4/biomodels/codon/data/*.provenance.json",
+]
 
 [tool.ruff]
 line-length = 100
@@ -67,6 +74,16 @@ python_version = "3.11"
 strict = true
 packages = ["bt4"]
 mypy_path = "src"
+# The BT4 Studio app layer (bt4.app) is PySide6/Qt UI code. Qt's dynamic
+# signal/slot machinery does not type-check cleanly under --strict without heavy
+# scaffolding, and the app is deliberately kept out of the pure engine's strict
+# gate (it is covered instead by ruff and an offscreen smoke test). The engine
+# -- everything the app calls through bt4.api -- remains fully strict.
+exclude = ['(^|/)bt4/app/']
+
+[[tool.mypy.overrides]]
+module = ["PySide6.*", "pyqtgraph.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "-q"

@@ -8,12 +8,16 @@ about how optimal the answer is and how it was derived.
 BT4 is a from-scratch successor to BT3. The design, contracts, invariants, and
 roadmap live in [`CLAUDE.md`](./CLAUDE.md) — read it first.
 
-> **Status: Phase 0 (foundations).** The pure `domain` layer (genetic code,
-> sequence validation, multi-objective vector + Pareto frontier, optimality
-> certificate, result types), content-addressed provenance, the optional
-> Rust/PyO3 accelerator with a pure-Python fallback, packaging, the layering
-> contract, and CI are being laid down. The optimizer, constraints, ML models,
-> and the BT4 Studio desktop app come in later phases.
+> **Status: honest exact core + first multi-objective app.** On top of the
+> Phase 0 foundations (pure `domain` layer, content-addressed provenance, the
+> optional Rust/PyO3 accelerator, layering contract, CI) BT4 now has a working,
+> honest vertical slice: an **exact codon-trellis DP** that optimizes CAI under
+> local hard constraints (max-homopolymer, forbidden motifs incl. reverse
+> complements) with true per-constraint context and a real **optimality
+> certificate**; a **CAI/GC Pareto frontier**; a stable `bt4.api`; a `bt4` CLI;
+> and **BT4 Studio**, the PySide6 desktop app (§6.6). Richer objectives (tAI,
+> codon-pair, ramp), ILP/relaxation backends, and the validated splice/folding/
+> expression models follow per the [`CLAUDE.md`](./CLAUDE.md) roadmap.
 
 ## What makes BT4 different (vs BT3)
 
@@ -40,6 +44,41 @@ pip install -e '.[dev]'          # pure-Python core + dev tooling
 
 Optional extras: `ilp` (OR-Tools), `fold` (ViennaRNA), `ml` (torch),
 `app` (PySide6 desktop app), `service` (FastAPI HTTP API), `assp` (online check).
+
+## Usage
+
+**Python API** (stable, print-free — every frontend goes through it):
+
+```python
+from bt4 import api
+
+result = api.optimize("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5))
+print(result.dna, result.certificate.status.value)   # e.g. ...TAA proven_optimal
+print(result.audit["cai"], result.metrics.gc)         # recomputed from the DNA
+
+frontier = api.frontier("MAALKHETQW", steps=11)        # CAI vs GC Pareto frontier
+report = api.validate(result.dna, api.OptimizeConfig(max_homopolymer=5))
+```
+
+**CLI:**
+
+```bash
+bt4 optimize MAALKHETQW --max-homopolymer 5 --forbid GAATTC   # summary
+bt4 optimize MAALKHETQW --fasta                               # FASTA out
+bt4 optimize MAALKHETQW --json                                # JSON + manifest
+bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
+bt4 organisms                                                 # list codon tables
+```
+
+**BT4 Studio** (native desktop app): paste a protein, pick constraints and a GC
+target, and watch the optimality-certificate badge, metrics, sequence, and the
+interactive Pareto frontier. It runs each solve on a background thread and calls
+only `bt4.api`; nothing leaves the machine.
+
+```bash
+pip install -e '.[app]'
+bt4-studio            # or:  python -m bt4.app
+```
 
 ### Optional Rust accelerator
 

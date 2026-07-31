@@ -31,3 +31,16 @@ def test_determinism_backtranslation_is_stable() -> None:
         return "".join(synonymous_codons(aa)[0] for aa in protein)
 
     assert make() == make()
+
+
+def test_determinism_optimize_is_stable() -> None:
+    # The end-to-end optimizer is a deterministic surface: identical input and
+    # config must yield byte-identical DNA and an identical manifest stamp.
+    from bt4 import api
+
+    config = api.OptimizeConfig(max_homopolymer=5, forbidden_motifs=("GAATTC",))
+
+    first = api.optimize("MAALKHETQWYCDEF", config)
+    second = api.optimize("MAALKHETQWYCDEF", config)
+    assert first.dna == second.dna
+    assert first.audit["manifest"] == second.audit["manifest"]

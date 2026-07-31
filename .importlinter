@@ -6,10 +6,10 @@ include_external_packages = True
 name = BT4 strict acyclic layering
 type = layers
 layers =
-    bt4.cli | bt4.service
+    bt4.cli | bt4.service | bt4.app
     bt4.api
     bt4.pipeline
-    bt4.optimize | bt4.constraints | bt4.objectives | bt4.biomodels
+    bt4.optimize | bt4.constraints | bt4.objectives | bt4.biomodels | bt4.io
     bt4.provenance
     bt4.domain
 
