@@ -26,7 +26,7 @@ ilp = ["ortools>=9.10"]
 fold = ["ViennaRNA>=2.6"]
 ml = ["torch>=2.2", "numpy>=1.26"]
 app = ["PySide6>=6.7", "pyqtgraph>=0.13"]         # BT4 Studio native desktop app
-service = ["fastapi>=0.110", "uvicorn>=0.29"]     # optional headless HTTP API
+service = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]  # optional headless HTTP API (+ test client)
 assp = ["httpx>=0.27"]                            # opt-in online ASSP cross-check
 packaging = ["pyinstaller>=6.0"]                  # build standalone BT4 Studio bundles
 dev = [
@@ -78,12 +78,14 @@ mypy_path = "src"
 # The BT4 Studio app layer (bt4.app) is PySide6/Qt UI code. Qt's dynamic
 # signal/slot machinery does not type-check cleanly under --strict without heavy
 # scaffolding, and the app is deliberately kept out of the pure engine's strict
-# gate (it is covered instead by ruff and an offscreen smoke test). The engine
-# -- everything the app calls through bt4.api -- remains fully strict.
-exclude = ['(^|/)bt4/app/']
+# gate (it is covered instead by ruff and an offscreen smoke test). The optional
+# FastAPI service layer (bt4.service) is excluded on the same basis (dynamic
+# FastAPI decorators vs --strict); it stays ruff-linted and HTTP-smoke-tested.
+# Both call only bt4.api -- the engine behind that surface stays fully strict.
+exclude = ['(^|/)bt4/app/', '(^|/)bt4/service/']
 
 [[tool.mypy.overrides]]
-module = ["PySide6.*", "pyqtgraph.*"]
+module = ["PySide6.*", "pyqtgraph.*", "fastapi.*", "pydantic.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

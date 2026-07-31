@@ -10,9 +10,11 @@ This layer never prints; it raises on error and returns immutable results.
 
 from __future__ import annotations
 
+from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import available_organisms
+from bt4.constraints import available_enzymes
 from bt4.domain import Result
-from bt4.io import result_to_dict, result_to_json, to_fasta
+from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
 from bt4.pipeline import (
     FrontierResult,
     OptimizeConfig,
@@ -27,13 +29,19 @@ __all__ = [
     "OptimizeConfig",
     "Result",
     "ValidationReport",
+    "available_enzymes",
     "available_organisms",
+    "build_table",
+    "count_codons",
     "frontier",
     "optimize",
+    "parse_fasta",
+    "read_fasta",
     "result_to_dict",
     "result_to_json",
     "to_fasta",
     "validate",
+    "write_table",
 ]
 
 

@@ -7,6 +7,26 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **Restriction-site constraint** (`bt4.constraints.RestrictionSiteConstraint`,
+  `available_enzymes`): an IUPAC-aware matcher and a catalog of common enzymes
+  (EcoRI, BamHI, NotI, ...), always avoiding each site's reverse complement.
+  Wired into `OptimizeConfig.restriction_enzymes`, the CLI (`--enzyme`,
+  `bt4 enzymes`), and BT4 Studio.
+- **More organisms**: representative *E. coli* K-12 and *S. cerevisiae*
+  codon-usage tables (auto-discovered; clearly labeled representative).
+- **`bt4 build-table`** and `bt4.io` FASTA parsing: recompute an authentic codon
+  table from a user-supplied CDS FASTA (Laplace-smoothed so the result always
+  loads), with a content-hashed provenance sidecar.
+- **`bt4.service`**: an optional FastAPI HTTP API (`/optimize`, `/frontier`,
+  `/validate`, `/organisms`, `/health`) that calls only `bt4.api`.
+- **Benchmark harness** (`scripts/benchmark.py`) and a golden/regression test
+  suite pinning current optimizer output.
+
+### Fixed
+- BT4 Studio frontier plot now shows raw CAI / GC-fraction axis values instead of
+  a rescaled "x0.001" SI-prefix label.
+
 ## [0.1.0] - 2026-07-31
 
 First tagged release: an honest exact-DP codon optimizer with a CLI and the BT4

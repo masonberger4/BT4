@@ -97,3 +97,22 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest tests/test_app_smoke.py -q
+
+  service:
+    # Builds and tests the optional headless HTTP API (bt4.service, FastAPI).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (core + service + dev)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[service,dev]'
+      - name: Ruff (service layer)
+        run: ruff check src/bt4/service
+      - name: Layering contract (service in scope)
+        run: lint-imports
+      - name: Service HTTP smoke test
+        run: pytest tests/test_service.py -q

@@ -32,8 +32,10 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 - **Objectives:** CAI (codon adaptation, log relative-adaptiveness) and a GC-target
   proximity term, returned as a **CAI/GC Pareto frontier** — not a single
   magic-weighted number.
-- **Hard constraints:** maximum homopolymer run, and forbidden motifs (with
-  automatic reverse complements — e.g. restriction sites).
+- **Hard constraints:** maximum homopolymer run, forbidden motifs, and a
+  **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
+- **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* out of the box,
+  and `bt4 build-table` builds an authentic table from your own CDS FASTA.
 - **Honest metrics:** every reported number (CAI, GC, violations) is recomputed
   from the delivered sequence, never trusted from the solver.
 - **Reproducible provenance:** a content-hashed manifest (codon-table SHA-256 +
@@ -97,12 +99,17 @@ export. The optimization runs on a background thread, so the window never blocks
 ### Command line
 
 ```bash
-bt4 optimize MAALKHETQW --max-homopolymer 5 --forbid GAATTC   # summary
+bt4 optimize MAALKHETQW --max-homopolymer 5 --enzyme EcoRI    # summary
 bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest
 bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
-bt4 organisms                                                 # list codon tables
+bt4 organisms         # list codon tables      bt4 enzymes    # list restriction enzymes
+bt4 build-table my_cds.fasta --organism my_species --out .    # table from real CDS
 ```
+
+An optional headless HTTP API is available too (`pip install -e '.[service]'`,
+then `uvicorn bt4.service.api:app`) exposing `/optimize`, `/frontier`,
+`/validate`, `/organisms`, and `/health`.
 
 ### Python API
 

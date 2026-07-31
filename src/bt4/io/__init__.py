@@ -7,6 +7,13 @@ deterministic so its output can enter the provenance stamp.
 
 from __future__ import annotations
 
+from .fasta import parse_fasta, read_fasta
 from .serialize import result_to_dict, result_to_json, to_fasta
 
-__all__ = ["result_to_dict", "result_to_json", "to_fasta"]
+__all__ = [
+    "parse_fasta",
+    "read_fasta",
+    "result_to_dict",
+    "result_to_json",
+    "to_fasta",
+]

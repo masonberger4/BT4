@@ -7,6 +7,13 @@ concrete local constraints.
 from __future__ import annotations
 
 from bt4.constraints.base import Constraint
+from bt4.constraints.restriction import RestrictionSiteConstraint, available_enzymes
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
 
-__all__ = ["Constraint", "ForbiddenMotifConstraint", "HomopolymerConstraint"]
+__all__ = [
+    "Constraint",
+    "ForbiddenMotifConstraint",
+    "HomopolymerConstraint",
+    "RestrictionSiteConstraint",
+    "available_enzymes",
+]
