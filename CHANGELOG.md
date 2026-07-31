@@ -7,6 +7,10 @@ its first tagged release.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-31
+
+Richer biology and surfaces on top of the exact-DP core.
+
 ### Added
 - **Restriction-site constraint** (`bt4.constraints.RestrictionSiteConstraint`,
   `available_enzymes`): an IUPAC-aware matcher and a catalog of common enzymes
