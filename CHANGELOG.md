@@ -7,6 +7,11 @@ its first tagged release.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-31
+
+First tagged release: an honest exact-DP codon optimizer with a CLI and the BT4
+Studio desktop app.
+
 ### Added
 - **Exact codon-trellis DP solver** (`bt4.optimize`) over the true per-constraint
   context, with an explicit `beam` speed knob and a machine-readable
