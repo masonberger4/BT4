@@ -219,6 +219,8 @@ class StudioWindow(QtWidgets.QMainWindow):
             axis = self.plot.getAxis(edge)
             axis.setPen(fg)
             axis.setTextPen(fg)
+            # Show raw CAI / GC-fraction values, not a rescaled "x0.001" SI prefix.
+            axis.enableAutoSIPrefix(False)
 
     def _set_tab_order(self) -> None:
         """Wire a sensible keyboard tab order through the controls."""

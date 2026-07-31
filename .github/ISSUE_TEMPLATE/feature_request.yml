@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest an idea or enhancement for BT4.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please search existing issues first, and take
+        a look at the roadmap in `CLAUDE.md` — it describes what's planned and the
+        design principles new work should fit.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: >
+        What problem are you trying to solve, or what's missing today? Please
+        describe the use case rather than jumping straight to a solution.
+      placeholder: I'm trying to ... but BT4 currently ...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like BT4 to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches or workarounds you've thought about.
+    validations:
+      required: false
+  - type: textarea
+    id: roadmap-fit
+    attributes:
+      label: How it fits the CLAUDE.md roadmap
+      description: >
+        How does this relate to the design and roadmap in `CLAUDE.md`? For
+        example: is it a new constraint or objective term, a solver backend, an
+        already-planned roadmap item (tAI, codon-pair bias, ILP/relaxation,
+        splice/folding/expression models, the service API, ...), or something
+        new? Note anything relevant to BT4's honesty invariants.
+    validations:
+      required: false
