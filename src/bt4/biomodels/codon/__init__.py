@@ -5,6 +5,7 @@ Re-exports the public API from :mod:`bt4.biomodels.codon.tables`.
 
 from __future__ import annotations
 
+from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import (
     ALIASES,
     CodonUsageTable,
@@ -21,8 +22,11 @@ __all__ = [
     "CodonUsageTable",
     "TableProvenance",
     "available_organisms",
+    "build_table",
+    "count_codons",
     "load_provenance",
     "load_table",
     "load_table_from_file",
     "sha256_hex",
+    "write_table",
 ]

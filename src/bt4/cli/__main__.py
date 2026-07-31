@@ -24,6 +24,7 @@ __all__ = ["main"]
 
 def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     motifs = tuple(m.strip().upper() for m in args.forbid) if args.forbid else ()
+    enzymes = tuple(e.strip() for e in args.enzyme) if args.enzyme else ()
     return api.OptimizeConfig(
         organism=args.organism,
         gc_target=args.gc_target,
@@ -31,6 +32,7 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         gc_weight=args.gc_weight,
         max_homopolymer=None if args.max_homopolymer <= 0 else args.max_homopolymer,
         forbidden_motifs=motifs,
+        restriction_enzymes=enzymes,
         beam=None if args.beam <= 0 else args.beam,
         seed=args.seed,
     )
@@ -43,6 +45,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--gc-weight", type=float, default=0.0, dest="gc_weight")
     parser.add_argument("--max-homopolymer", type=int, default=6, dest="max_homopolymer")
     parser.add_argument("--forbid", action="append", metavar="MOTIF", help="forbidden motif")
+    parser.add_argument(
+        "--enzyme", action="append", metavar="NAME", help="forbid a restriction site (repeatable)"
+    )
     parser.add_argument("--beam", type=int, default=0, help="beam width (0 = exact DP)")
     parser.add_argument("--seed", type=int, default=0)
 
@@ -87,6 +92,33 @@ def _cmd_organisms(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_enzymes(_args: argparse.Namespace) -> int:
+    for name in api.available_enzymes():
+        print(name)
+    return 0
+
+
+def _cmd_build_table(args: argparse.Namespace) -> int:
+    records = api.read_fasta(args.cds)
+    sequences = [seq for _header, seq in records]
+    if not sequences:
+        print("error: no sequences in the CDS FASTA", file=sys.stderr)
+        return 2
+    _table, counts = api.build_table(sequences, organism=args.organism)
+    path = api.write_table(
+        counts,
+        organism=args.organism,
+        path=args.out,
+        source=args.source,
+        cds_count=len(sequences),
+        pseudocount=args.pseudocount,
+    )
+    print(f"wrote {path}")
+    print(f"organism  {args.organism}")
+    print(f"CDS count {len(sequences)}")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bt4", description="BT4 back-translation optimizer")
     parser.add_argument("--version", action="version", version=f"bt4 {__version__}")
@@ -107,6 +139,22 @@ def _parser() -> argparse.ArgumentParser:
 
     p_org = sub.add_parser("organisms", help="list bundled codon-usage tables")
     p_org.set_defaults(func=_cmd_organisms)
+
+    p_enz = sub.add_parser("enzymes", help="list known restriction enzymes")
+    p_enz.set_defaults(func=_cmd_enzymes)
+
+    p_bt = sub.add_parser("build-table", help="build a codon table from a CDS FASTA")
+    p_bt.add_argument("cds", help="path to a FASTA of coding sequences")
+    p_bt.add_argument("--organism", required=True, help="name for the built table")
+    p_bt.add_argument("--out", default=".", help="output directory (default: .)")
+    p_bt.add_argument("--source", default="user-provided CDS set", help="provenance source label")
+    p_bt.add_argument(
+        "--pseudocount",
+        type=float,
+        default=1.0,
+        help="Laplace smoothing added to every codon so the table always loads (default: 1.0)",
+    )
+    p_bt.set_defaults(func=_cmd_build_table)
     return parser
 
 
@@ -115,7 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         exit_code: int = args.func(args)
-    except (ValueError, InfeasibleError) as exc:
+    except (ValueError, InfeasibleError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return exit_code

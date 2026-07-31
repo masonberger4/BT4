@@ -120,6 +120,11 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.motifs_edit.setAccessibleName("Forbidden motifs")
         self._add_row(form, "Forbidden motifs", self.motifs_edit)
 
+        self.enzymes_edit = QtWidgets.QLineEdit()
+        self.enzymes_edit.setPlaceholderText("comma-separated, e.g. EcoRI,BamHI")
+        self.enzymes_edit.setAccessibleName("Restriction enzymes to avoid")
+        self._add_row(form, "Restriction sites", self.enzymes_edit)
+
         self.steps_spin = QtWidgets.QSpinBox()
         self.steps_spin.setRange(1, 25)
         self.steps_spin.setValue(9)
@@ -231,6 +236,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.gc_spin,
             self.homo_spin,
             self.motifs_edit,
+            self.enzymes_edit,
             self.steps_spin,
             self.beam_spin,
             self.optimize_btn,
@@ -250,12 +256,16 @@ class StudioWindow(QtWidgets.QMainWindow):
         motifs = tuple(
             m.strip().upper() for m in self.motifs_edit.text().split(",") if m.strip()
         )
+        enzymes = tuple(
+            e.strip() for e in self.enzymes_edit.text().split(",") if e.strip()
+        )
         config = api.OptimizeConfig(
             organism=self.organism_combo.currentText(),
             gc_target=self.gc_spin.value(),
             max_homopolymer=homo if homo > 0 else None,
             forbidden_motifs=motifs,
             avoid_reverse_complement=True,
+            restriction_enzymes=enzymes,
             beam=beam if beam > 0 else None,
             seed=0,
         )

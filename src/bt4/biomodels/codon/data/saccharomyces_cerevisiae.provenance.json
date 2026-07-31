@@ -1,0 +1,8 @@
+{
+  "source": "Kazusa Codon Usage Database (representative published Saccharomyces cerevisiae values)",
+  "build": "hand-curated representative table, per-thousand codon frequencies",
+  "cds_count": null,
+  "retrieved": "2026-07-31",
+  "sha256": "136a1ec0b3c45c04562c01db89e257da76d01f93ce17010d295d019a0ec7219f",
+  "note": "These are REPRESENTATIVE published Saccharomyces cerevisiae codon-usage values (Kazusa-style, per-thousand), NOT an authoritative per-genome recount from a specific CDS set. They reflect well-known yeast biases (e.g. strong preference for AGA at Arg and TTG/TTA at Leu). Frequencies are relative usage on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Do not present these as an exact genome-wide count."
+}

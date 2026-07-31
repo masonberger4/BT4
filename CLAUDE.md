@@ -414,12 +414,17 @@ is a requirement, not a nice-to-have.
   full trellis inner loop to Rust and adding `build-table` remain. *This alone
   already beats BT3* (honest optimality, correct incremental GC).
 - **Phase 2 — Multi-objective, richer biology & first app.** 🔶 **In progress.**
-  Delivered: the **CAI/GC Pareto-frontier API** and the **BT4 Studio desktop
-  MVP (PySide6)** (§6.6) — calling `bt4.api` on a background thread, with the
-  frontier plot and the honest certificate badge. Remaining: tAI, codon-pair bias
+  Delivered: the **CAI/GC Pareto-frontier API**; the **BT4 Studio desktop MVP
+  (PySide6)** (§6.6) calling `bt4.api` on a background thread, with the frontier
+  plot and honest certificate badge; **restriction-site constraints** (REBASE-
+  style catalog, IUPAC-aware, auto reverse-complement); **more organisms**
+  (representative *E. coli* and *S. cerevisiae* tables, auto-discovered);
+  **`bt4 build-table`** to recompute an authentic codon table from a user CDS
+  FASTA; a committed **benchmark harness** (`scripts/benchmark.py`); and the
+  optional **`service/` FastAPI HTTP API**. Remaining: tAI, codon-pair bias
   (extended DP state), 5′ ramp/%MinMax, GC/CpG linear budgets; the ILP/CP-SAT +
-  Lagrangian-relaxation backends with gap certificates; and the benchmark harness
-  vs GeneOptimizer/IDT. (`service/` HTTP API can follow whenever automation needs it.)
+  Lagrangian-relaxation backends with gap certificates; and the published
+  comparison vs GeneOptimizer/IDT.
 - **Phase 3 — Non-local models & refinement done right.** ViennaRNA folding (5′
   ΔG objective + constraint); incremental SA / parallel-tempering with block
   moves; SpliceAI/Pangolin-class model trained on real GENCODE, Δsplicing

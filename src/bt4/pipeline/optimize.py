@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from bt4 import __version__
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
+from bt4.constraints.restriction import RestrictionSiteConstraint
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
 from bt4.domain import (
     CODON_TABLE,
@@ -72,6 +73,8 @@ class OptimizeConfig:
             complements) that may not appear in the coding sequence.
         avoid_reverse_complement: Also forbid the reverse complement of each
             motif.
+        restriction_enzymes: Names of restriction enzymes whose recognition
+            sites (and their reverse complements) may not appear.
         beam: ``None`` for an exact DP; an int caps the trellis beam width
             (certificate then reports ``beam_truncated``).
         seed: Master seed recorded in the manifest (the solver is deterministic).
@@ -84,6 +87,7 @@ class OptimizeConfig:
     max_homopolymer: int | None = 6
     forbidden_motifs: tuple[str, ...] = ()
     avoid_reverse_complement: bool = True
+    restriction_enzymes: tuple[str, ...] = ()
     beam: int | None = None
     seed: int = 0
 
@@ -133,6 +137,10 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
                 reverse_complement=config.avoid_reverse_complement,
             )
         )
+    if config.restriction_enzymes:
+        constraints.append(
+            RestrictionSiteConstraint(enzymes=tuple(config.restriction_enzymes))
+        )
     return constraints
 
 
@@ -173,6 +181,7 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "max_homopolymer": config.max_homopolymer,
         "forbidden_motifs": list(config.forbidden_motifs),
         "avoid_reverse_complement": config.avoid_reverse_complement,
+        "restriction_enzymes": list(config.restriction_enzymes),
         "beam": config.beam,
         "seed": config.seed,
     }
