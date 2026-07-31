@@ -101,3 +101,41 @@ def test_provenance_changes_with_organism() -> None:
 def test_invalid_protein_raises() -> None:
     with pytest.raises(ValueError):
         api.optimize("MAZX1")
+
+
+_RICH = "MAALKHETQWSNDECFGRPVIY"
+
+
+def test_ramp_term_participates() -> None:
+    result = api.optimize(_RICH, api.OptimizeConfig(ramp_weight=2.0))
+    assert "ramp" in result.metrics.objective.terms()
+    assert translate(result.dna) == result.protein + "*"
+    assert result.certificate.is_proven_optimal
+
+
+def test_cpg_depletion_reduces_cpg() -> None:
+    baseline = api.optimize(_RICH)
+    depleted = api.optimize(_RICH, api.OptimizeConfig(cpg_weight=3.0, cpg_mode="deplete"))
+    assert depleted.dna.count("CG") <= baseline.dna.count("CG")
+    assert "dinuc_cg_deplete" in depleted.metrics.objective.terms()
+
+
+def test_cpg_elevation_increases_cpg() -> None:
+    baseline = api.optimize(_RICH)
+    elevated = api.optimize(_RICH, api.OptimizeConfig(cpg_weight=3.0, cpg_mode="elevate"))
+    assert elevated.dna.count("CG") >= baseline.dna.count("CG")
+
+
+def test_gc_budget_via_cpsat() -> None:
+    pytest.importorskip("ortools")
+    from bt4._accel import gc_count
+
+    result = api.optimize(_RICH, api.OptimizeConfig(max_homopolymer=None, gc_min=36, gc_max=40))
+    assert result.certificate.solver == "cpsat"
+    assert 36 <= gc_count(result.dna) <= 40
+    assert translate(result.dna) == result.protein + "*"
+
+
+def test_gc_budget_with_cpg_raises() -> None:
+    with pytest.raises(ValueError):
+        api.optimize(_RICH, api.OptimizeConfig(gc_min=30, cpg_weight=1.0))

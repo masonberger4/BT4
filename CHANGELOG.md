@@ -7,6 +7,20 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **5' translation-ramp objective** (`RampTerm`) -- a heuristic that prefers
+  slower codons in the first N codons (`ramp_weight` / `ramp_codons`).
+- **CpG / dinucleotide objective** (`DinucleotideTerm`) to deplete (stealth) or
+  elevate (immunostimulatory) CpG content (`cpg_weight` / `cpg_mode`).
+- **Codon-pair bias** (`CpbTerm` + `build_codon_pair_table`): a pairwise objective
+  built from a reference CDS set, solved exactly in the trellis via a new
+  `objective_context` on the DP (the state now carries the previous codon).
+- **OR-Tools CP-SAT backend** (`bt4.optimize.cpsat.solve_cpsat`, `bt4[ilp]`
+  extra): solves the additive objective under a global **GC budget** (`gc_min` /
+  `gc_max`) with a proven-optimal / gap-bounded certificate. New `ilp` CI job.
+- CLI flags for all of the above (`--ramp-weight`, `--cpg-weight`, `--cpg-mode`,
+  `--gc-min`, `--gc-max`) and a CpG control in BT4 Studio.
+
 ## [0.2.0] - 2026-07-31
 
 Richer biology and surfaces on top of the exact-DP core.

@@ -125,6 +125,11 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.enzymes_edit.setAccessibleName("Restriction enzymes to avoid")
         self._add_row(form, "Restriction sites", self.enzymes_edit)
 
+        self.cpg_combo = QtWidgets.QComboBox()
+        self.cpg_combo.addItems(["off", "deplete", "elevate"])
+        self.cpg_combo.setAccessibleName("CpG dinucleotide mode")
+        self._add_row(form, "CpG", self.cpg_combo)
+
         self.steps_spin = QtWidgets.QSpinBox()
         self.steps_spin.setRange(1, 25)
         self.steps_spin.setValue(9)
@@ -237,6 +242,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.homo_spin,
             self.motifs_edit,
             self.enzymes_edit,
+            self.cpg_combo,
             self.steps_spin,
             self.beam_spin,
             self.optimize_btn,
@@ -259,6 +265,9 @@ class StudioWindow(QtWidgets.QMainWindow):
         enzymes = tuple(
             e.strip() for e in self.enzymes_edit.text().split(",") if e.strip()
         )
+        cpg = self.cpg_combo.currentText()
+        cpg_weight = 0.0 if cpg == "off" else 1.0
+        cpg_mode = "deplete" if cpg == "off" else cpg
         config = api.OptimizeConfig(
             organism=self.organism_combo.currentText(),
             gc_target=self.gc_spin.value(),
@@ -266,6 +275,8 @@ class StudioWindow(QtWidgets.QMainWindow):
             forbidden_motifs=motifs,
             avoid_reverse_complement=True,
             restriction_enzymes=enzymes,
+            cpg_weight=cpg_weight,
+            cpg_mode=cpg_mode,
             beam=beam if beam > 0 else None,
             seed=0,
         )

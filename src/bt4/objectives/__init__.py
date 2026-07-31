@@ -8,6 +8,17 @@ helper used by every term's ``score``.
 from __future__ import annotations
 
 from bt4.objectives.base import ObjectiveTerm, iter_codons
+from bt4.objectives.codon_pair import CpbTerm
+from bt4.objectives.dinucleotide import DinucleotideTerm
+from bt4.objectives.ramp import RampTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 
-__all__ = ["CaiTerm", "GcProximityTerm", "ObjectiveTerm", "iter_codons"]
+__all__ = [
+    "CaiTerm",
+    "CpbTerm",
+    "DinucleotideTerm",
+    "GcProximityTerm",
+    "ObjectiveTerm",
+    "RampTerm",
+    "iter_codons",
+]

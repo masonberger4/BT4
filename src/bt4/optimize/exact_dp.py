@@ -78,6 +78,7 @@ def solve_exact(
     scalar_delta: Callable[[str, str, int], float],
     constraints: Sequence[Constraint],
     beam: int | None = None,
+    objective_context: int = 0,
 ) -> SolveResult:
     """Solve for the maximum-scalar coding sequence over the codon trellis.
 
@@ -95,6 +96,12 @@ def solve_exact(
         beam: If ``None``, run the full exact DP. Otherwise keep at most ``beam``
             states per layer (highest scalar first); dropping any state marks the
             result ``BEAM_TRUNCATED``.
+        objective_context: Trailing DNA context (in characters) that
+            ``scalar_delta`` itself depends on -- e.g. ``3`` for a pairwise
+            objective that reads the previous codon. The trellis state carries
+            ``max`` of this and the constraint contexts, so pairwise/positional
+            objectives stay exact (states are only merged when both their future
+            constraint *and* objective behavior are identical).
 
     Returns:
         A :class:`SolveResult` whose ``dna`` translates back to
@@ -104,7 +111,7 @@ def solve_exact(
         InfeasibleError: If some residue admits no codon that keeps every
             constraint's ``ok_suffix`` satisfied.
     """
-    context_len = max((c.context_len() for c in constraints), default=0)
+    context_len = max([objective_context, *(c.context_len() for c in constraints)])
 
     layer: _Layer = {"": (0.0, "")}
     pruned = False
