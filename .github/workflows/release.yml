@@ -89,13 +89,21 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Create release and attach assets
+      - name: Create or update release and attach assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           assets=$(find artifacts -type f \( -name '*.zip' -o -name '*.whl' -o -name '*.tar.gz' \))
-          gh release create "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes \
-            $assets
+          # Idempotent: if the release already exists (e.g. created in the UI, which
+          # also creates the tag that triggered this run), upload assets to it
+          # instead of failing on "release already exists".
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} already exists; uploading assets"
+            gh release upload "${GITHUB_REF_NAME}" $assets --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              $assets
+          fi
