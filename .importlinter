@@ -1,0 +1,44 @@
+[importlinter]
+root_package = bt4
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = BT4 strict acyclic layering
+type = layers
+layers =
+    bt4.cli | bt4.service
+    bt4.api
+    bt4.pipeline
+    bt4.optimize | bt4.constraints | bt4.objectives | bt4.biomodels
+    bt4.provenance
+    bt4.domain
+
+[importlinter:contract:pure-domain]
+name = domain imports nothing from bt4
+type = forbidden
+source_modules =
+    bt4.domain
+forbidden_modules =
+    bt4.biomodels
+    bt4.objectives
+    bt4.constraints
+    bt4.optimize
+    bt4.pipeline
+    bt4.api
+    bt4.cli
+    bt4.service
+    bt4.io
+    bt4.provenance
+
+[importlinter:contract:core-stays-light]
+name = core is free of heavy optional deps
+type = forbidden
+source_modules =
+    bt4.domain
+    bt4.provenance
+forbidden_modules =
+    torch
+    numpy
+    ortools
+    RNA
+    fastapi

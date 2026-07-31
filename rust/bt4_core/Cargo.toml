@@ -1,0 +1,13 @@
+[package]
+name = "bt4_native"
+version = "0.0.0"
+edition = "2021"
+description = "Optional compiled hot-loop accelerator for BT4 (DNA sequence primitives)."
+license = "MIT"
+
+[lib]
+name = "bt4_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py311", "extension-module"] }

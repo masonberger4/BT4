@@ -1,0 +1,8 @@
+{
+  "source": "Kazusa Codon Usage Database (representative published Homo sapiens values)",
+  "build": "hand-curated representative table, per-thousand codon frequencies",
+  "cds_count": null,
+  "retrieved": "2026-07-31",
+  "sha256": "9d0e163bbec3a82cea14ef6a3f7591638fb22e6eab826e416852da06956d9e68",
+  "note": "These are REPRESENTATIVE published Homo sapiens codon-usage values (Kazusa-style, per-thousand), NOT an authoritative per-genome recount from a specific CDS set. Frequencies are relative usage on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Do not present these as an exact genome-wide count."
+}

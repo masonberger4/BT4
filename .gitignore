@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Models & scraped data belong in the hash-verified registry / release artifacts,
+# never in the tree.
+*.pt
+*.pkl
+~/.bt4/
+external/
+
+# Rust build artifacts (the crate's Cargo.lock IS committed for reproducibility)
+rust/**/target/
+*.so
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

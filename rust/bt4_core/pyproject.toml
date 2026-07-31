@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "bt4-native"
+version = "0.0.0"
+requires-python = ">=3.11"
+description = "Optional compiled hot-loop accelerator for BT4."
+
+[tool.maturin]
+module-name = "bt4_native"
+features = ["pyo3/abi3-py311"]

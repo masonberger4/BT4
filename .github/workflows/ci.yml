@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (core + dev)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+      - name: Ruff (lint)
+        run: ruff check src tests
+      - name: Mypy (strict)
+        run: mypy
+      - name: Import layering contract
+        run: lint-imports
+      - name: Tests + coverage
+        run: pytest --cov --cov-report=term-missing
+
+  determinism:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+      - name: Same input => byte-identical output
+        run: pytest tests -k determinism -q
+
+  native:
+    # Builds the optional Rust/PyO3 accelerator and runs the suite with it
+    # active, so the accelerator-vs-pure-Python equivalence test exercises Rust.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install (core + dev + maturin)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]' maturin
+      - name: Build & install the bt4_native accelerator
+        run: |
+          maturin build --release --manifest-path rust/bt4_core/Cargo.toml
+          pip install --force-reinstall --no-deps rust/bt4_core/target/wheels/bt4_native-*.whl
+      - name: Tests with the Rust path active
+        run: |
+          python -c "import bt4._accel as a; assert a.ACCELERATED, 'native ext not loaded'"
+          pytest -q
