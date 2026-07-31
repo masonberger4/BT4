@@ -420,11 +420,15 @@ is a requirement, not a nice-to-have.
   style catalog, IUPAC-aware, auto reverse-complement); **more organisms**
   (representative *E. coli* and *S. cerevisiae* tables, auto-discovered);
   **`bt4 build-table`** to recompute an authentic codon table from a user CDS
-  FASTA; a committed **benchmark harness** (`scripts/benchmark.py`); and the
-  optional **`service/` FastAPI HTTP API**. Remaining: tAI, codon-pair bias
-  (extended DP state), 5′ ramp/%MinMax, GC/CpG linear budgets; the ILP/CP-SAT +
-  Lagrangian-relaxation backends with gap certificates; and the published
-  comparison vs GeneOptimizer/IDT.
+  FASTA; a committed **benchmark harness** (`scripts/benchmark.py`); the optional
+  **`service/` FastAPI HTTP API**; a **5′ translation-ramp** term; **codon-pair
+  bias** (`CpbTerm`, built from a reference CDS) exact in the trellis via the
+  extended-state DP (objective context); a **CpG/dinucleotide** term
+  (deplete/elevate); and a first **OR-Tools CP-SAT backend** that solves the
+  additive objective under a **global GC budget** with a gap certificate.
+  Remaining: tAI (needs authentic tRNA data); ILP encoding of local constraints
+  and CpG budgets; Lagrangian relaxation; and the published comparison vs
+  GeneOptimizer/IDT.
 - **Phase 3 — Non-local models & refinement done right.** ViennaRNA folding (5′
   ΔG objective + constraint); incremental SA / parallel-tempering with block
   moves; SpliceAI/Pangolin-class model trained on real GENCODE, Δsplicing

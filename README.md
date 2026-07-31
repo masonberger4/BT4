@@ -29,9 +29,11 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 - **A real optimality certificate** on every result: `proven_optimal` when the
   full state space was explored, or honestly `beam_truncated` when you traded it
   for speed. BT4 never claims optimality it didn't earn.
-- **Objectives:** CAI (codon adaptation, log relative-adaptiveness) and a GC-target
-  proximity term, returned as a **CAI/GC Pareto frontier** — not a single
-  magic-weighted number.
+- **Objectives:** CAI, GC-target proximity, a 5′ translation ramp, CpG
+  deplete/elevate, and codon-pair bias — returned as a **CAI/GC Pareto frontier**,
+  not a single magic-weighted number.
+- **Global GC budget:** an optional OR-Tools **CP-SAT** backend hits a GC-count
+  budget the greedy-free exact DP can't, with a proven-optimal / gap certificate.
 - **Hard constraints:** maximum homopolymer run, forbidden motifs, and a
   **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* out of the box,

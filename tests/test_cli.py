@@ -66,6 +66,20 @@ def test_optimize_with_enzyme(capsys: pytest.CaptureFixture[str]) -> None:
     assert "0 hard" in out
 
 
+def test_optimize_with_cpg(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MAALKHETQWSNDECFGR", "--cpg-weight", "3", "--cpg-mode", "deplete"]
+    assert main(argv) == 0
+    assert "proven_optimal" in capsys.readouterr().out
+
+
+def test_optimize_gc_budget(capsys: pytest.CaptureFixture[str]) -> None:
+    pytest.importorskip("ortools")
+    argv = ["optimize", "MAALKHETQWSNDECFGR", "--gc-min", "36", "--gc-max", "40",
+            "--max-homopolymer", "0"]
+    assert main(argv) == 0
+    assert "cpsat" in capsys.readouterr().out
+
+
 def test_build_table(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from pathlib import Path
 

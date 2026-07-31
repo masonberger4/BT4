@@ -34,7 +34,9 @@ from bt4.domain import (
     ObjectiveTerm,
     ObjectiveVector,
     OptimalityCertificate,
+    OptimalityStatus,
     Result,
+    Scope,
     Severity,
     Violation,
     dominates,
@@ -43,8 +45,10 @@ from bt4.domain import (
     validate_dna,
     validate_protein,
 )
+from bt4.objectives.dinucleotide import DinucleotideTerm
+from bt4.objectives.ramp import RampTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
-from bt4.optimize import solve_exact
+from bt4.optimize import SolveResult, solve_exact
 from bt4.provenance import Manifest, build_manifest
 
 __all__ = [
@@ -75,6 +79,14 @@ class OptimizeConfig:
             motif.
         restriction_enzymes: Names of restriction enzymes whose recognition
             sites (and their reverse complements) may not appear.
+        ramp_weight: Weight on the 5' translation-ramp term (0 disables it).
+        ramp_codons: Length of the 5' ramp window in codons.
+        cpg_weight: Weight on the CpG-dinucleotide term (0 disables it).
+        cpg_mode: ``"deplete"`` (fewer CpGs, stealth) or ``"elevate"`` (more,
+            immunostimulatory) -- only used when ``cpg_weight`` is non-zero.
+        gc_min: Optional lower bound on the total GC nucleotide count. Setting a
+            GC budget routes the solve through the OR-Tools CP-SAT backend.
+        gc_max: Optional upper bound on the total GC nucleotide count.
         beam: ``None`` for an exact DP; an int caps the trellis beam width
             (certificate then reports ``beam_truncated``).
         seed: Master seed recorded in the manifest (the solver is deterministic).
@@ -88,6 +100,12 @@ class OptimizeConfig:
     forbidden_motifs: tuple[str, ...] = ()
     avoid_reverse_complement: bool = True
     restriction_enzymes: tuple[str, ...] = ()
+    ramp_weight: float = 0.0
+    ramp_codons: int = 35
+    cpg_weight: float = 0.0
+    cpg_mode: str = "deplete"
+    gc_min: int | None = None
+    gc_max: int | None = None
     beam: int | None = None
     seed: int = 0
 
@@ -122,8 +140,32 @@ class ValidationReport:
         return not any(v.severity is Severity.HARD for v in self.violations)
 
 
-def _build_terms(table: CodonUsageTable, config: OptimizeConfig) -> list[ObjectiveTerm]:
-    return [CaiTerm(table.relative_adaptiveness()), GcProximityTerm(config.gc_target)]
+def _active_terms(
+    table: CodonUsageTable,
+    config: OptimizeConfig,
+    *,
+    cai_weight: float | None = None,
+    gc_weight: float | None = None,
+) -> list[tuple[ObjectiveTerm, float]]:
+    """Objective terms active for this config, paired with their weights.
+
+    CAI and GC-proximity are always present; the 5' ramp and CpG terms join only
+    when their weight is non-zero. ``cai_weight``/``gc_weight`` override the config
+    values (used by the frontier sweep).
+    """
+    w = table.relative_adaptiveness()
+    active: list[tuple[ObjectiveTerm, float]] = [
+        (CaiTerm(w), config.cai_weight if cai_weight is None else cai_weight),
+        (
+            GcProximityTerm(config.gc_target),
+            config.gc_weight if gc_weight is None else gc_weight,
+        ),
+    ]
+    if config.ramp_weight != 0.0:
+        active.append((RampTerm(w, config.ramp_codons), config.ramp_weight))
+    if config.cpg_weight != 0.0:
+        active.append((DinucleotideTerm("CG", config.cpg_mode), config.cpg_weight))
+    return active
 
 
 def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
@@ -145,9 +187,9 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
 
 
 def _scalar_delta(
-    terms: Sequence[ObjectiveTerm], weights: Sequence[float]
+    active: Sequence[tuple[ObjectiveTerm, float]],
 ) -> Callable[[str, str, int], float]:
-    pairs = tuple(zip(terms, weights, strict=True))
+    pairs = tuple(active)
 
     def delta(prefix: str, codon: str, pos: int) -> float:
         return sum((w * term.delta(prefix, codon, pos) for term, w in pairs), 0.0)
@@ -182,6 +224,12 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "forbidden_motifs": list(config.forbidden_motifs),
         "avoid_reverse_complement": config.avoid_reverse_complement,
         "restriction_enzymes": list(config.restriction_enzymes),
+        "ramp_weight": config.ramp_weight,
+        "ramp_codons": config.ramp_codons,
+        "cpg_weight": config.cpg_weight,
+        "cpg_mode": config.cpg_mode,
+        "gc_min": config.gc_min,
+        "gc_max": config.gc_max,
         "beam": config.beam,
         "seed": config.seed,
     }
@@ -249,32 +297,86 @@ def _make_result(
     )
 
 
+def _solve_with_gc_budget(
+    residues: Sequence[str],
+    active: Sequence[tuple[ObjectiveTerm, float]],
+    constraints: Sequence[Constraint],
+    config: OptimizeConfig,
+) -> tuple[SolveResult, OptimalityCertificate]:
+    """Solve with a global GC budget via the CP-SAT backend (see cpsat.py).
+
+    The ILP backend handles only additive, context-free objectives, and does not
+    encode local sequence constraints; if the delivered sequence violates any,
+    the certificate is downgraded to ``RELAXED`` rather than claiming optimality.
+    """
+    # Validate the objective is ILP-compatible before importing OR-Tools, so the
+    # error is a clear ValueError even when the [ilp] extra is not installed.
+    if any(term.scope() is Scope.PAIRWISE or term.context_len() > 0 for term, _ in active):
+        raise ValueError(
+            "a GC budget (gc_min/gc_max) routes through the ILP backend, which does "
+            "not support pairwise objective terms (e.g. the CpG term) yet"
+        )
+    from bt4.optimize.cpsat import solve_cpsat  # lazy: keeps OR-Tools optional
+
+    pairs = tuple(active)
+
+    def codon_score(codon: str, pos: int) -> float:
+        return sum((w * term.delta("", codon, pos) for term, w in pairs), 0.0)
+
+    solve = solve_cpsat(
+        residues, codon_score=codon_score, gc_min=config.gc_min, gc_max=config.gc_max
+    )
+    hard = sorted(
+        {v.constraint for v in _violations(solve.dna, constraints) if v.severity is Severity.HARD}
+    )
+    if hard:
+        certificate = OptimalityCertificate(
+            status=OptimalityStatus.RELAXED,
+            solver="cpsat",
+            relaxed_terms=tuple(hard),
+            detail="ILP backend does not enforce local sequence constraints",
+        )
+    else:
+        certificate = solve.certificate
+    return solve, certificate
+
+
 def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     """Optimize ``protein`` into a coding sequence under ``config`` (single solve).
 
+    A GC budget (``gc_min``/``gc_max``) routes the solve through the OR-Tools
+    CP-SAT backend; otherwise the exact codon-trellis DP is used.
+
     Raises:
-        ValueError: On an invalid protein.
-        bt4.optimize.InfeasibleError: If the constraints admit no feasible codon.
+        ValueError: On an invalid protein, or a GC budget combined with a
+            pairwise objective term.
+        bt4.optimize.InfeasibleError: If no feasible sequence exists.
     """
     config = config or OptimizeConfig()
     p = validate_protein(protein)
     table = load_table(config.organism)
-    terms = _build_terms(table, config)
+    active = _active_terms(table, config)
+    terms = [term for term, _ in active]
     constraints = _build_constraints(config)
     residues = [*p, STOP]
-    solve = solve_exact(
-        residues,
-        scalar_delta=_scalar_delta(terms, (config.cai_weight, config.gc_weight)),
-        constraints=constraints,
-        beam=config.beam,
-    )
+    if config.gc_min is not None or config.gc_max is not None:
+        solve, certificate = _solve_with_gc_budget(residues, active, constraints, config)
+    else:
+        solve = solve_exact(
+            residues,
+            scalar_delta=_scalar_delta(active),
+            constraints=constraints,
+            beam=config.beam,
+            objective_context=max((term.context_len() for term, _ in active), default=0),
+        )
+        certificate = solve.certificate
     return _make_result(
         protein=p,
         dna=solve.dna,
         table=table,
         terms=terms,
         constraints=constraints,
-        certificate=solve.certificate,
+        certificate=certificate,
         config=config,
         alpha=None,
     )
@@ -301,10 +403,12 @@ def run_frontier(
     """Sweep the CAI/GC trade-off and return the Pareto frontier of exact solves.
 
     For each ``alpha`` in a uniform grid over ``[0, 1]`` the CAI weight is
-    ``alpha`` and the GC-proximity weight is ``1 - alpha``; each point is an
-    exact (or beam-capped) solve. Duplicate sequences are collapsed and the
-    non-dominated subset is returned, with the delivered point set to the
-    highest-CAI frontier member.
+    ``alpha`` and the GC-proximity weight is ``1 - alpha`` (any ramp/CpG terms
+    keep their configured weights); each point is an exact (or beam-capped) solve.
+    Duplicate sequences are collapsed and the non-dominated subset is returned,
+    with the delivered point set to the highest-CAI frontier member. The frontier
+    uses the exact DP; a GC budget (``gc_min``/``gc_max``) applies to
+    :func:`run_optimize` only, not here.
 
     Raises:
         ValueError: On an invalid protein or ``steps < 1``.
@@ -315,25 +419,26 @@ def run_frontier(
         raise ValueError(f"steps must be >= 1, got {steps}")
     p = validate_protein(protein)
     table = load_table(config.organism)
-    terms = _build_terms(table, config)
     constraints = _build_constraints(config)
     residues = [*p, STOP]
 
     alphas = [0.5] if steps == 1 else [i / (steps - 1) for i in range(steps)]
     by_dna: dict[str, Result] = {}
     for alpha in alphas:
+        active = _active_terms(table, config, cai_weight=alpha, gc_weight=1.0 - alpha)
         solve = solve_exact(
             residues,
-            scalar_delta=_scalar_delta(terms, (alpha, 1.0 - alpha)),
+            scalar_delta=_scalar_delta(active),
             constraints=constraints,
             beam=config.beam,
+            objective_context=max((term.context_len() for term, _ in active), default=0),
         )
         if solve.dna not in by_dna:
             by_dna[solve.dna] = _make_result(
                 protein=p,
                 dna=solve.dna,
                 table=table,
-                terms=terms,
+                terms=[term for term, _ in active],
                 constraints=constraints,
                 certificate=solve.certificate,
                 config=config,
@@ -362,7 +467,7 @@ def run_validate(dna: str, config: OptimizeConfig | None = None) -> ValidationRe
     config = config or OptimizeConfig()
     d = validate_dna(dna)
     table = load_table(config.organism)
-    terms = _build_terms(table, config)
+    terms = [term for term, _ in _active_terms(table, config)]
     constraints = _build_constraints(config)
     violations = _violations(d, constraints)
     if len(d) % 3 == 0:

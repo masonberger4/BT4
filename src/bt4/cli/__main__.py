@@ -33,6 +33,12 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         max_homopolymer=None if args.max_homopolymer <= 0 else args.max_homopolymer,
         forbidden_motifs=motifs,
         restriction_enzymes=enzymes,
+        ramp_weight=args.ramp_weight,
+        ramp_codons=args.ramp_codons,
+        cpg_weight=args.cpg_weight,
+        cpg_mode=args.cpg_mode,
+        gc_min=args.gc_min,
+        gc_max=args.gc_max,
         beam=None if args.beam <= 0 else args.beam,
         seed=args.seed,
     )
@@ -48,6 +54,17 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--enzyme", action="append", metavar="NAME", help="forbid a restriction site (repeatable)"
     )
+    parser.add_argument("--ramp-weight", type=float, default=0.0, dest="ramp_weight",
+                        help="5' translation-ramp weight (0 = off)")
+    parser.add_argument("--ramp-codons", type=int, default=35, dest="ramp_codons")
+    parser.add_argument("--cpg-weight", type=float, default=0.0, dest="cpg_weight",
+                        help="CpG-dinucleotide term weight (0 = off)")
+    parser.add_argument("--cpg-mode", choices=("deplete", "elevate"), default="deplete",
+                        dest="cpg_mode")
+    parser.add_argument("--gc-min", type=int, default=None, dest="gc_min",
+                        help="min total GC count (routes through the ILP backend)")
+    parser.add_argument("--gc-max", type=int, default=None, dest="gc_max",
+                        help="max total GC count (routes through the ILP backend)")
     parser.add_argument("--beam", type=int, default=0, help="beam width (0 = exact DP)")
     parser.add_argument("--seed", type=int, default=0)
 
