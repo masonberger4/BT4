@@ -4,13 +4,23 @@ Guidance for Claude Code (and humans) building **BT4**, the from-scratch
 successor to BT3. This file is the constitution of the new repository: read it
 before writing code, and keep it current as the architecture evolves.
 
-> Status: **Phase 0 in progress** — foundations & honesty scaffolding. The pure
+> Status: **Phase 0 complete; Phase 1 done and early Phase 2 landed.** The pure
 > `domain` layer, provenance manifest, packaging, layering contract, and CI are
-> laid down first. This document was written after a full review of the BT3
-> codebase and *every* BT3 branch (`master`, `almost-there`, `gemini`,
-> `streamlit`, and the merged `claude/ultracode-app-redesign` line). The lessons
-> from all of them are folded in below — especially the mistakes we must not
-> repeat.
+> in place, and on top of them an **honest exact-DP core** now ships: a codon
+> trellis with true per-constraint context and a real optimality certificate,
+> the `CaiTerm`/`GcProximityTerm` objectives and `Homopolymer`/`ForbiddenMotif`
+> constraints (with their `delta==score` and `ok_suffix⇔validate` property
+> tests), a **CAI/GC Pareto frontier**, the stable `bt4.api`, a `bt4` CLI, and
+> the first cut of **BT4 Studio** (the PySide6 desktop app). Still ahead:
+> richer objectives (tAI, codon-pair, ramp), ILP/relaxation backends, and the
+> validated splice/folding/expression models — see §9. This document was written
+> after a full review of the BT3 codebase and *every* BT3 branch (`master`,
+> `almost-there`, `gemini`, `streamlit`, and the merged
+> `claude/ultracode-app-redesign` line); the lessons are folded in below.
+>
+> **Keep this current.** CLAUDE.md is the constitution: when a phase lands, a
+> contract changes, or the architecture evolves, update this file *in the same
+> change* — a stale constitution is a BT3 anti-pattern (§10.11).
 
 ---
 
@@ -390,23 +400,26 @@ is a requirement, not a nice-to-have.
 
 ## 9. Phased roadmap
 
-- **Phase 0 — Foundations & honesty scaffolding.** Repo, strict layering +
-  import-linter, CI (lint/type/test/determinism), pure `domain` with
+- **Phase 0 — Foundations & honesty scaffolding.** ✅ **Done.** Repo, strict
+  layering + import-linter, CI (lint/type/test/determinism), pure `domain` with
   `ObjectiveVector` / `Frontier` / `OptimalityCertificate`, content-hashed
   provenance manifest, single-sourced version, license. Port BT3's genetic code +
   round-trip property test.
-- **Phase 1 — Exact, honest single-objective core.** Rust trellis with **true
-  per-constraint context (no global cap)**; exact DP + beam as an explicit knob;
-  certificate emission; the `ok_suffix⇔validate` and `delta==score` property
-  tests; provenanced codon tables + `build-table`. *This alone already beats BT3*
-  (honest optimality, correct incremental GC).
-- **Phase 2 — Multi-objective, richer biology & first app.** tAI, codon-pair bias
-  (extended DP state), 5′ ramp/%MinMax, GC/CpG linear budgets. ILP/CP-SAT backend
-  + Lagrangian relaxation with gap certificates. Pareto frontier API + benchmark
-  harness vs GeneOptimizer/IDT. **Stand up the `app/` desktop MVP (PySide6)**
-  (§6.6) as soon as there's a real multi-objective result to visualize — calling
-  `bt4.api` on a background thread; the frontier plot and certificate badge land
-  here, not at the end. (`service/` HTTP API can follow whenever automation needs it.)
+- **Phase 1 — Exact, honest single-objective core.** ✅ **Done.** Exact codon-
+  trellis DP with **true per-constraint context (no global cap)**, exact DP +
+  beam as an explicit knob, certificate emission, and the `ok_suffix⇔validate`
+  and `delta==score` property tests all shipped. The trellis currently runs in
+  pure Python with the Rust `bt4_native` primitives (`gc_count`,
+  `max_homopolymer_run`, `reverse_complement`) available and CI-built; porting the
+  full trellis inner loop to Rust and adding `build-table` remain. *This alone
+  already beats BT3* (honest optimality, correct incremental GC).
+- **Phase 2 — Multi-objective, richer biology & first app.** 🔶 **In progress.**
+  Delivered: the **CAI/GC Pareto-frontier API** and the **BT4 Studio desktop
+  MVP (PySide6)** (§6.6) — calling `bt4.api` on a background thread, with the
+  frontier plot and the honest certificate badge. Remaining: tAI, codon-pair bias
+  (extended DP state), 5′ ramp/%MinMax, GC/CpG linear budgets; the ILP/CP-SAT +
+  Lagrangian-relaxation backends with gap certificates; and the benchmark harness
+  vs GeneOptimizer/IDT. (`service/` HTTP API can follow whenever automation needs it.)
 - **Phase 3 — Non-local models & refinement done right.** ViennaRNA folding (5′
   ΔG objective + constraint); incremental SA / parallel-tempering with block
   moves; SpliceAI/Pangolin-class model trained on real GENCODE, Δsplicing

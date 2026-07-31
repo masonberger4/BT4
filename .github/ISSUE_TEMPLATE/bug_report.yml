@@ -1,0 +1,77 @@
+name: Bug report
+description: Report something in BT4 that is broken or behaving incorrectly.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please search existing
+        issues first to avoid duplicates, and include enough detail for us to
+        reproduce the problem.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: Describe the incorrect behavior you observed.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >
+        How can we reproduce it? Please include a minimal example — the protein
+        sequence and the config/flags (or the API call, or the sequence for
+        `validate`) that triggers the problem.
+      placeholder: |
+        e.g.
+        bt4 optimize MAALKHETQW --max-homopolymer 5 --forbid GAATTC
+        ...or a minimal Python snippet using bt4.api
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: BT4 version
+      description: Output of `bt4 --version`.
+      placeholder: e.g. bt4 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: OS and version.
+      placeholder: e.g. macOS 14.5, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install BT4?
+      options:
+        - pip (editable / from PyPI)
+        - From source
+        - BT4 Studio desktop app
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: >
+        Paste any error messages, tracebacks, or console output. This will be
+        automatically formatted as code, so no backticks needed.
+      render: shell
+    validations:
+      required: false
