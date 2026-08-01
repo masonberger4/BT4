@@ -462,7 +462,12 @@ is a requirement, not a nice-to-have.
   `scripts/sensitivity.py` uncertainty report (CAI/GC/tAI spread across codon-
   table and solver-budget choices, §8) and a windowed CpG/dinucleotide reporting
   profile (`objectives/dinuc_profile.py`, honestly separate from the additive
-  `DinucleotideTerm`, mirroring the %MinMax split).
+  `DinucleotideTerm`, mirroring the %MinMax split). A companion
+  `scripts/compare_reproducibility.py` adds the **run-to-run variability** view
+  over Ranaghan Table 4 (three proteins x three *anonymized* algorithms x ten
+  repeat runs, CC BY 4.0) - kept deliberately separate from the named-tool board
+  (anonymized tools, repeat runs = a determinism axis, not a scoreboard), with
+  BT4 shown as a zero-spread deterministic reference.
 - **Phase 3 — Non-local models & refinement done right.** 🔶 **Groundwork
   landed.** The **`FoldingModel` contract** (`biomodels/folding/`) ships with a
   lazy **ViennaRNA** backend (`calibrated=True`, behind the `bt4[fold]` extra) and

@@ -48,6 +48,10 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 - **Benchmarked against real tools:** `scripts/compare_tools.py` places BT4 next
   to GeneOptimizer / IDT / Twist / GenScript on a cited, CC BY 4.0 panel — every
   metric recomputed from the sequence, and BT4 never claimed "better", just placed.
+  `scripts/compare_reproducibility.py` adds a run-to-run **variability** view over
+  three proteins × three *anonymized* algorithms × ten repeat runs (kept honestly
+  separate from the named-tool board), with deterministic BT4 as a zero-spread
+  reference.
 - **Honest metrics:** every reported number (CAI, GC, violations) is recomputed
   from the delivered sequence, never trusted from the solver.
 - **Reproducible provenance:** a content-hashed manifest (codon-table SHA-256 +
