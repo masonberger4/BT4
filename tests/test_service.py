@@ -70,3 +70,26 @@ def test_optimize_invalid_protein() -> None:
     """An invalid amino-acid string yields HTTP 400."""
     response = client.post("/optimize", json={"protein": "MAZX"})
     assert response.status_code == 400
+
+
+def test_config_accepts_new_fields_and_rejects_unknown() -> None:
+    """ConfigModel mirrors the full engine config and forbids unknown keys.
+
+    Audit C2: the request model previously exposed only 9 of the config's fields
+    and silently dropped the rest. It now accepts every knob (e.g. tai_weight,
+    restriction_enzymes) and rejects a mistyped/unknown key with a 422 rather than
+    silently ignoring it.
+    """
+    ok = client.post(
+        "/optimize",
+        json={
+            "protein": "MAALKHETQWSNDECFGR",
+            "config": {"tai_weight": 1.0, "restriction_enzymes": ["EcoRI"], "cpg_weight": 2.0},
+        },
+    )
+    assert ok.status_code == 200
+    bad = client.post(
+        "/optimize",
+        json={"protein": "MAAL", "config": {"not_a_real_field": 1}},
+    )
+    assert bad.status_code == 422

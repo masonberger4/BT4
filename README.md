@@ -31,9 +31,10 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   for speed. BT4 never claims optimality it didn't earn.
 - **Objectives:** CAI, **tAI** (real human tRNA copy numbers via the dos Reis
   wobble model), GC-target proximity, a 5′ translation ramp, CpG deplete/elevate,
-  codon-pair bias, and a **%MinMax** codon-commonness term — returned as a
-  **multi-objective Pareto frontier** (a simplex sweep over every active axis, not
-  just CAI/GC), never a single magic-weighted number.
+  and a **%MinMax** codon-commonness term — returned as a **multi-objective Pareto
+  frontier** (a simplex sweep over every active axis, not just CAI/GC), never a
+  single magic-weighted number. (A codon-pair-bias term is implemented for the
+  trellis but not yet exposed as a config knob.)
 - **Global GC budget, two honest backends:** an OR-Tools **CP-SAT** backend for
   the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
@@ -188,12 +189,16 @@ objective is a new file plus its honesty property test — never an engine edit.
 
 ## Roadmap
 
-Phases 0–1 are done and Phase 2 is well underway: the multi-objective frontier,
-the desktop app, codon-pair / 5′-ramp / CpG / %MinMax objectives, tandem &
-inverted-repeat constraints, and two GC-budget backends — OR-Tools CP-SAT and an
-honest **Lagrangian relaxation** (which, unlike CP-SAT, keeps local constraints
-and pairwise terms under the budget) — have landed. tAI and the validated splice
-/ folding / expression models are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
+Phases 0–1 are done and Phase 2 is largely complete: the multi-objective
+frontier, the desktop app, **tAI** (real GtRNAdb tRNA data), 5′-ramp / CpG /
+%MinMax objectives, tandem & inverted-repeat and internal-ATG constraints, a
+cited tool benchmark, and two GC-budget backends — OR-Tools CP-SAT and an honest
+**exact budget DP** (which, unlike CP-SAT, keeps local constraints and pairwise
+terms under the budget) — have landed. A codon-pair-bias term (`CpbTerm`) is
+implemented for the trellis but not yet wired to a config knob. The validated
+splice / folding / expression models are next (the `FoldingModel` and
+`SplicePredictor` contracts and honest baselines are already in place). See
+[`CLAUDE.md`](./CLAUDE.md) §9.
 
 ## Contributing
 

@@ -54,7 +54,7 @@ from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 from bt4.optimize import SolveResult, solve_exact
-from bt4.provenance import Manifest, build_manifest
+from bt4.provenance import Manifest, build_manifest, resolve_git_commit
 
 __all__ = [
     "FrontierResult",
@@ -364,6 +364,7 @@ def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
         config=cfg,
         inputs=inputs,
         seed=config.seed,
+        git_commit=resolve_git_commit(),
     )
 
 
@@ -392,19 +393,26 @@ def _make_result(
     config: OptimizeConfig,
     alpha: float | None,
     extra_audit: dict[str, object] | None = None,
+    manifest_extra: dict[str, object] | None = None,
 ) -> Result:
     # Enforce invariant #1 at the boundary: the returned DNA must translate back.
     if translate(dna) != protein + STOP:
         raise AssertionError("round-trip invariant violated: translate(dna) != protein + stop")
     violations = _violations(dna, constraints)
     metrics = _metrics(dna, terms, violations)
+    # The manifest hashes everything that influences the output, so anything that
+    # changed the DNA (e.g. the folding backend under --refine) must enter it
+    # (invariant #9): a stamp cannot map to two different sequences.
+    stamp_extra: dict[str, object] = dict(manifest_extra or {})
+    if alpha is not None:
+        stamp_extra["alpha"] = alpha
     audit: dict[str, object] = {
         "cai": table.cai(dna),
         "gc_percent": metrics.gc * 100.0,
         "n_scored_codons": _n_scored_codons(dna),
         "solver": certificate.solver,
         "seed": config.seed,
-        "manifest": _manifest(config, {} if alpha is None else {"alpha": alpha}).to_dict(),
+        "manifest": _manifest(config, stamp_extra).to_dict(),
     }
     if config.tai_weight != 0.0:
         audit["tai"] = load_tai_table(config.organism).tai(dna)
@@ -560,8 +568,15 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
         certificate = solve.certificate
     dna = solve.dna
     extra_audit: dict[str, object] | None = None
+    manifest_extra: dict[str, object] | None = None
     if config.refine:
         dna, certificate, extra_audit = _refine(dna, residues, active, constraints, config)
+        # The folding backend changed the DNA, so its identity must enter the stamp
+        # (invariant #9); folding_dg is an output metric and stays out of the hash.
+        manifest_extra = {
+            "folding_model": extra_audit["folding_model"],
+            "folding_calibrated": extra_audit["folding_calibrated"],
+        }
     return _make_result(
         protein=p,
         dna=dna,
@@ -572,6 +587,7 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
         config=config,
         alpha=None,
         extra_audit=extra_audit,
+        manifest_extra=manifest_extra,
     )
 
 

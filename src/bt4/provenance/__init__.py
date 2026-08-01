@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
-from .manifest import Manifest, build_manifest, config_hash, content_hash
+from .manifest import (
+    Manifest,
+    build_manifest,
+    config_hash,
+    content_hash,
+    resolve_git_commit,
+)
 
-__all__ = ["Manifest", "build_manifest", "config_hash", "content_hash"]
+__all__ = [
+    "Manifest",
+    "build_manifest",
+    "config_hash",
+    "content_hash",
+    "resolve_git_commit",
+]
