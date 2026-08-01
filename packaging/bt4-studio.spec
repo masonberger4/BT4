@@ -22,13 +22,26 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 APP_NAME = "BT4 Studio"
+# App version for the macOS bundle's Info.plist (otherwise it mis-reports 0.0.0).
+try:
+    from bt4 import __version__ as APP_VERSION
+except Exception:  # pragma: no cover - defensive; the version is cosmetic
+    APP_VERSION = "0.0.0"
 _is_mac = sys.platform == "darwin"
 # Windows and Linux ship a single self-contained file; macOS ships a .app folder.
 _onefile = not _is_mac
 
 datas = []
 binaries = []
-hiddenimports = ["bt4.app.studio", "bt4.app.worker", "bt4.app.theme"]
+hiddenimports = [
+    "bt4.app.studio",
+    "bt4.app.worker",
+    "bt4.app.theme",
+    # The regular package holding the codon/tRNA .tsv data. Hidden-importing it
+    # makes the frozen importer register the package so importlib.resources.files()
+    # resolves the bundled data in the macOS .app build (and the one-file builds).
+    "bt4.biomodels.codon.data",
+]
 
 # pyqtgraph does dynamic imports the static analyzer misses, so collect its
 # submodules explicitly -- but SKIP `pyqtgraph.examples` (and `tests`), which
@@ -105,4 +118,12 @@ else:
         name=f"{APP_NAME}.app",
         icon=None,
         bundle_identifier="com.bt4.studio",
+        version=APP_VERSION,
+        info_plist={
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "11.0",
+            "NSPrincipalClass": "NSApplication",
+        },
     )

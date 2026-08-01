@@ -40,6 +40,17 @@ def test_homo_sapiens_loads_and_is_covered() -> None:
     assert "homo_sapiens" in available_organisms()
 
 
+def test_available_organisms_excludes_trna_tables() -> None:
+    # The tRNA tables (``<organism>.trna.tsv``) are tAI data, not codon-usage
+    # tables. They must not leak into the codon-table organism list, where they
+    # would appear as bogus organisms like "homo_sapiens.trna" (and then fail to
+    # load as a codon table). Regression test for that filter.
+    orgs = available_organisms()
+    assert not any(name.endswith(".trna") for name in orgs)
+    assert "homo_sapiens.trna" not in orgs
+    assert "homo_sapiens" in orgs  # the real codon organism is still there
+
+
 def test_alias_resolution() -> None:
     assert load_table("human").organism == "homo_sapiens"
     assert load_table("Human").organism == "homo_sapiens"

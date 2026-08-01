@@ -92,6 +92,10 @@ release, and under **Assets** download the one file for your computer:
 That's it — BT4 Studio opens, you paste a protein, pick an organism, and click
 **Optimize**.
 
+> **Mac note:** the `.dmg` is built for **Apple Silicon** Macs (M1/M2/M3/M4 — 2020
+> or later; check **Apple menu → About This Mac**). On an older **Intel** Mac, use
+> the developer install below for now.
+
 <details>
 <summary><b>"Windows protected your PC" / "macOS cannot verify the developer" — how to open it anyway</b></summary>
 

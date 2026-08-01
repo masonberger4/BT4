@@ -37,6 +37,12 @@ A few reassurances before we start:
 Pick only the file for the kind of computer you have. If you're not sure, you're
 almost certainly on **Windows** or **Mac**.
 
+> **Mac — Apple Silicon vs Intel:** the `.dmg` is built for **Apple Silicon** Macs
+> (M1/M2/M3/M4 — 2020 or later). To check, click the **Apple menu → About This
+> Mac**: if it says **Chip** you're on Apple Silicon (use the `.dmg`); if it says
+> **Processor / Intel**, use the "from source" developer install in the
+> [README](../README.md#install-for-developers-from-source) for now.
+
 > **Don't see any of these files under Assets?** The download for that release
 > hasn't been built yet. Check back shortly, or ask a maintainer — the
 > [packaging guide](../packaging/README.md#repairing-a-release) explains how they

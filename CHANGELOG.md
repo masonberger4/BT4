@@ -42,6 +42,15 @@ solver backends.
   honest, non-destructive way to repair a release that has no assets. The publish
   step now also fails loudly instead of publishing an empty, asset-less release.
   See [`packaging/README.md`](packaging/README.md#repairing-a-release).
+- **CI now launches the packaged app.** A `bt4-studio --self-test` hook builds the
+  main window (loading the bundled data + Qt/pyqtgraph) and exits without the
+  event loop; the release workflow runs it against the freshly built bundle on
+  each OS, so a bundle that builds but crashes on first launch fails CI instead of
+  shipping. The macOS `.app` also now carries its real version in `Info.plist`,
+  the codon/tRNA data dir is a regular package (reliable frozen-bundle resource
+  loading), and the Windows asset rename/upload no longer depends on a fragile
+  cross-shell absolute path. A full non-technical [`docs/INSTALL.md`](docs/INSTALL.md)
+  guide was added.
 
 ### Fixed
 - The only tagged release (`v0.2.0`) had **no downloadable app**: its publish step
@@ -49,6 +58,11 @@ solver backends.
   already exists" (the tag/release were made in the UI first), so the built
   bundles never attached. The pipeline is now idempotent and re-drivable, and the
   docs no longer point users at an empty Releases page.
+- **`available_organisms()` listed bogus organisms.** It matched every `*.tsv`,
+  so the tAI tRNA tables leaked in as `homo_sapiens.trna`, `mus_musculus.trna`,
+  and `saccharomyces_cerevisiae.trna` — visible in the app's organism dropdown and
+  `bt4 organisms`, and unloadable as codon tables. The tRNA tables are now
+  excluded (they remain available via `available_tai_organisms()`).
 
 ## [0.2.0] - 2026-07-31
 

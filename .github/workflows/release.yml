@@ -91,6 +91,24 @@ jobs:
       - name: Build the app
         working-directory: packaging
         run: pyinstaller --clean --noconfirm bt4-studio.spec
+      - name: Smoke-launch the built app (offscreen)
+        # Actually OPEN the freshly built bundle and construct the main window
+        # (--self-test builds StudioWindow, which loads the bundled codon data and
+        # the Qt/pyqtgraph stack, then exits 0 without the event loop). This is the
+        # only step that runs the PACKAGED app per-OS, so a bundle that builds but
+        # crashes on first launch -- e.g. a macOS .app that can't find its bundled
+        # data -- fails HERE instead of shipping to users.
+        timeout-minutes: 3
+        shell: bash
+        working-directory: packaging/dist
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          case "${{ runner.os }}" in
+            Windows) "./BT4 Studio.exe" --self-test ;;
+            macOS)   "./BT4 Studio.app/Contents/MacOS/BT4 Studio" --self-test ;;
+            Linux)   "./BT4 Studio" --self-test ;;
+          esac
       - name: Package the double-clickable asset
         shell: bash
         working-directory: packaging/dist
@@ -98,7 +116,7 @@ jobs:
           case "${{ runner.os }}" in
             Windows)
               # PyInstaller emits a single "BT4 Studio.exe"; give it a friendly name.
-              mv "BT4 Studio.exe" "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
+              mv "BT4 Studio.exe" "${{ matrix.asset }}"
               ;;
             macOS)
               # Wrap the .app in a compressed, drag-to-Applications .dmg.
@@ -106,17 +124,19 @@ jobs:
               cp -R "BT4 Studio.app" dmgroot/
               ln -s /Applications dmgroot/Applications
               hdiutil create -volname "BT4 Studio" -srcfolder dmgroot -ov \
-                -format UDZO "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
+                -format UDZO "${{ matrix.asset }}"
               ;;
             Linux)
               # PyInstaller emits a single "BT4 Studio" executable; friendly name.
-              mv "BT4 Studio" "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
+              mv "BT4 Studio" "${{ matrix.asset }}"
               ;;
           esac
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.asset }}
+          # Rename happens inside packaging/dist (avoids the fragile cross-shell
+          # ${GITHUB_WORKSPACE} absolute path on the Windows git-bash runner).
+          path: packaging/dist/${{ matrix.asset }}
 
   release:
     name: Publish GitHub Release

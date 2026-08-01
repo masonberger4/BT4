@@ -529,4 +529,12 @@ def main() -> int:
         app.setStyleSheet(theme.stylesheet(_is_dark()))
     window = StudioWindow()
     window.show()
+    if "--self-test" in sys.argv:
+        # Headless startup check used by the packaging CI. Constructing
+        # StudioWindow already exercised the things that break a frozen bundle --
+        # bundled-resource loading (available_organisms), the Qt platform plugin,
+        # and pyqtgraph -- so flush pending events and exit 0 without entering the
+        # blocking event loop. Lets CI assert the packaged app actually opens.
+        app.processEvents()
+        return 0
     return app.exec()
