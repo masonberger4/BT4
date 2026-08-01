@@ -230,6 +230,15 @@ class StudioWindow(QtWidgets.QMainWindow):
         seq_label.setBuddy(self.sequence_view)
         layout.addWidget(self.sequence_view)
 
+        tracks_label = QtWidgets.QLabel("Per-site composition tracks (GC / CpG density)")
+        layout.addWidget(tracks_label)
+        self.tracks_plot = pg.PlotWidget()
+        self.tracks_plot.setMaximumHeight(150)
+        self.tracks_plot.setAccessibleName("Per-site composition tracks: GC and CpG density")
+        tracks_label.setBuddy(self.tracks_plot)
+        self._style_tracks_plot()
+        layout.addWidget(self.tracks_plot)
+
         exports = QtWidgets.QHBoxLayout()
         self.export_fasta_btn = QtWidgets.QPushButton("Export FASTA")
         self.export_fasta_btn.setAccessibleName("Export FASTA")
@@ -257,6 +266,22 @@ class StudioWindow(QtWidgets.QMainWindow):
             axis.setPen(fg)
             axis.setTextPen(fg)
             # Show raw CAI / GC-fraction values, not a rescaled "x0.001" SI prefix.
+            axis.enableAutoSIPrefix(False)
+
+    def _style_tracks_plot(self) -> None:
+        """Apply theme-aware colours and axis labels to the per-site tracks plot."""
+        bg = "#242832" if self._dark else "#ffffff"
+        fg = "#e6e9ed" if self._dark else "#1b1f24"
+        self.tracks_plot.setBackground(bg)
+        self.tracks_plot.setLabel("bottom", "window start (nt)")
+        self.tracks_plot.setLabel("left", "fraction / density")
+        self.tracks_plot.showGrid(x=True, y=True, alpha=0.2)
+        self.tracks_plot.addLegend(offset=(-10, 10))
+        self.tracks_plot.setYRange(0.0, 1.0)
+        for edge in ("bottom", "left"):
+            axis = self.tracks_plot.getAxis(edge)
+            axis.setPen(fg)
+            axis.setTextPen(fg)
             axis.enableAutoSIPrefix(False)
 
     def _set_tab_order(self) -> None:
@@ -395,6 +420,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.metrics_table.setRowCount(0)
         self.sequence_view.setPlainText("")
         self.plot.clear()
+        self.tracks_plot.clear()
         self.export_fasta_btn.setEnabled(False)
         self.export_json_btn.setEnabled(False)
 
@@ -412,6 +438,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._render_metrics(delivered)
         self.sequence_view.setPlainText(delivered.dna)
         self._render_frontier(result)
+        self._render_tracks(delivered)
 
         self.export_fasta_btn.setEnabled(True)
         self.export_json_btn.setEnabled(True)
@@ -479,6 +506,37 @@ class StudioWindow(QtWidgets.QMainWindow):
                 symbolSize=24,
                 symbolBrush=pg.mkBrush("#e0b64a"),
                 symbolPen=pg.mkPen("#1b1f24"),
+            )
+
+    def _render_tracks(self, delivered: api.Result) -> None:
+        """Plot the delivered sequence's per-site GC and CpG-density tracks.
+
+        Honest reporting profiles (``api.tracks``): each point is a sliding-window
+        statistic recomputed from the DNA, never a solver output. Both tracks are
+        fraction-scaled (0-1), so they share the y-axis; %MinMax (a different
+        scale) stays available via ``api.tracks`` / ``bt4 tracks``.
+        """
+        self.tracks_plot.clear()
+        organism = self.organism_combo.currentText()
+        try:
+            tracks = api.tracks(delivered.dna, organism, nt_window=30)
+        except ValueError:
+            return
+        gc = tracks.get("gc_fraction")
+        cpg = tracks.get("cpg_density")
+        if gc is not None and gc.values:
+            self.tracks_plot.plot(
+                list(range(len(gc.values))),
+                list(gc.values),
+                pen=pg.mkPen("#4a83e0", width=2),
+                name="GC fraction",
+            )
+        if cpg is not None and cpg.values:
+            self.tracks_plot.plot(
+                list(range(len(cpg.values))),
+                list(cpg.values),
+                pen=pg.mkPen("#e0724a", width=2),
+                name="CpG density",
             )
 
     # ---- export -----------------------------------------------------------
