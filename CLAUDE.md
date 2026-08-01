@@ -454,8 +454,15 @@ is a requirement, not a nice-to-have.
   regression test** (`tests/test_performance.py`, §7) asserting sub-quadratic
   exact-DP runtime under a wall-clock ceiling. Remaining: tAI (needs authentic
   tRNA data); uORF pairing and CpG/whole-sequence *count* budgets (both non-local
-  / not per-codon-decomposable, deferred); and the published comparison vs
-  GeneOptimizer/IDT.
+  / not per-codon-decomposable, deferred). The **published comparison vs
+  GeneOptimizer/IDT/Twist** has landed as `scripts/compare_tools.py` over a real,
+  cited, CC BY 4.0 panel (Ranaghan et al. 2021, KRas4B) - every metric recomputed
+  by BT4's own functions, BT4 never claimed "better", each tool's output
+  attributed and the ATUM/DNA2.0 truncation flagged. Also shipped: a
+  `scripts/sensitivity.py` uncertainty report (CAI/GC/tAI spread across codon-
+  table and solver-budget choices, §8) and a windowed CpG/dinucleotide reporting
+  profile (`objectives/dinuc_profile.py`, honestly separate from the additive
+  `DinucleotideTerm`, mirroring the %MinMax split).
 - **Phase 3 — Non-local models & refinement done right.** 🔶 **Groundwork
   landed.** The **`FoldingModel` contract** (`biomodels/folding/`) ships with a
   lazy **ViennaRNA** backend (`calibrated=True`, behind the `bt4[fold]` extra) and
@@ -471,7 +478,12 @@ is a requirement, not a nice-to-have.
   ahead: the SpliceAI/Pangolin-class model trained on real GENCODE (Δsplicing
   objective, held-out-chromosome gate, hash-pinned artifact), parallel-tempering
   / block moves, the opt-in **ASSP** cross-check (§6) with offline fixtures, and
-  per-site risk tracks in the UI.
+  per-site risk tracks in the UI. The **`SplicePredictor` contract**
+  (`biomodels/splice/`) has now landed with an honestly-labeled uncalibrated
+  **consensus/PWM baseline** (`calibrated=False`, top-k/log-odds Δsplicing pooling
+  -- never noisy-OR, §10.14) and a `default()` that never crashes; it is the
+  contract the trained model will slot behind, and until that model passes its
+  held-out gate the baseline is never presented as calibrated.
 - **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
   `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
   gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a
@@ -480,8 +492,9 @@ is a requirement, not a nice-to-have.
   bacterial lysidine path gated on `sking=1`). `TaiTerm` is the exact-DP
   `tai_logw` objective (additive, `delta==score`), wired through `tai_weight` in
   the pipeline/CLI/app and as a frontier axis, with the tRNA table's hash entering
-  the provenance stamp when tAI is active. Other organisms raise until their
-  tRNA data is added -- no fabricated tables.
+  the provenance stamp when tAI is active. Real **mouse and yeast** tRNA tables
+  now ship alongside human (all from GtRNAdb, re-counted, content-hashed);
+  organisms without bundled tRNA data raise -- no fabricated tables.
 - **Phase 4 — Learned expression & polished app.** Expression predictor head,
   frontier reranking with calibration/uncertainty. Polish BT4 Studio (theming,
   accessibility) and ship **packaged installers** (PyInstaller/Briefcase) for

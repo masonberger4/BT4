@@ -113,7 +113,17 @@ def test_tai_of_sequence_in_unit_interval() -> None:
 
 def test_unknown_organism_has_no_tai_table() -> None:
     with pytest.raises(ValueError, match="no bundled tAI table"):
-        load_tai_table("saccharomyces_cerevisiae")
+        load_tai_table("nonexistent_species")
+
+
+def test_bundled_tai_organisms_load() -> None:
+    # Human ships from Phase 2; mouse and yeast were added with real GtRNAdb data.
+    for organism in ("homo_sapiens", "mus_musculus", "saccharomyces_cerevisiae"):
+        table = load_tai_table(organism)
+        w = table.relative_adaptiveness()
+        assert len(w) == 60
+        assert max(w.values()) == pytest.approx(1.0)
+        assert min(w.values()) > 0.0
 
 
 # --------------------------------------------------------------------------- #
