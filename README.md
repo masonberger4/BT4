@@ -52,10 +52,17 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 - **Optional Rust accelerator** (PyO3) for the hot-loop primitives, with an
   identical pure-Python fallback so nothing is required to run.
 
-> **Honest about scope.** BT4's design aims much wider than this — tAI,
-> codon-pair bias, 5′ ramp, ViennaRNA folding, SpliceAI/Pangolin-class splice
-> models, and a learned expression head. Those are on the roadmap and are **not
-> shipped yet**; BT4 refuses to present an unbuilt model as if it were real. See
+- **Optional 5′-folding refinement (`--refine`):** a simulated-annealing pass
+  (synonymous-only, never adds a hard violation, honest `heuristic` certificate)
+  that opens up start-proximal mRNA structure via a `FoldingModel`. With
+  **ViennaRNA** installed (`bt4[fold]`) this is real ΔG; otherwise it uses a
+  clearly-labeled uncalibrated proxy and says so — BT4 never presents the
+  baseline as calibrated thermodynamics.
+
+> **Honest about scope.** BT4's design aims wider still — tAI, SpliceAI/Pangolin-
+> class splice models, and a learned expression head. The splice/expression
+> models are on the roadmap and **not shipped yet**; BT4 refuses to present an
+> unbuilt or uncalibrated model as if it were real. See
 > [`CLAUDE.md`](./CLAUDE.md) §9 for the full plan.
 
 ---

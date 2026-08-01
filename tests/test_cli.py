@@ -102,6 +102,14 @@ def test_optimize_avoid_internal_start(capsys: pytest.CaptureFixture[str]) -> No
     assert "0 hard" in out
 
 
+def test_optimize_refine(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MAALKHETQWSNDECFGR", "--refine", "--refine-iterations", "200"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "heuristic" in out
+    assert "folding" in out
+
+
 def test_build_table(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from pathlib import Path
 

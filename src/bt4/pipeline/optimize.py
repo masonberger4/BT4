@@ -111,6 +111,15 @@ class OptimizeConfig:
         gc_min: Optional lower bound on the total GC nucleotide count. Setting a
             GC budget routes the solve through the OR-Tools CP-SAT backend.
         gc_max: Optional upper bound on the total GC nucleotide count.
+        refine: When ``True``, run a simulated-annealing refinement pass over the
+            exact-DP seed that also maximizes a 5' mRNA-folding score (opening up
+            start-proximal structure). The result's certificate becomes
+            ``HEURISTIC``. With the default (uncalibrated) folding backend the
+            reported folding number is a labeled proxy, not real deltaG -- see
+            ``folding_calibrated`` in the result audit. Incompatible with a GC
+            budget (the budget is not re-enforced during refinement).
+        refine_iterations: Number of SA proposals when ``refine`` is set.
+        folding_weight: Weight on the folding score in the refinement objective.
         beam: ``None`` for an exact DP; an int caps the trellis beam width
             (certificate then reports ``beam_truncated``).
         seed: Master seed recorded in the manifest (the solver is deterministic).
@@ -137,6 +146,9 @@ class OptimizeConfig:
     avoid_internal_start: bool = False
     gc_min: int | None = None
     gc_max: int | None = None
+    refine: bool = False
+    refine_iterations: int = 2000
+    folding_weight: float = 1.0
     beam: int | None = None
     seed: int = 0
 
@@ -320,6 +332,9 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "avoid_internal_start": config.avoid_internal_start,
         "gc_min": config.gc_min,
         "gc_max": config.gc_max,
+        "refine": config.refine,
+        "refine_iterations": config.refine_iterations,
+        "folding_weight": config.folding_weight,
         "beam": config.beam,
         "seed": config.seed,
     }
@@ -361,6 +376,7 @@ def _make_result(
     certificate: OptimalityCertificate,
     config: OptimizeConfig,
     alpha: float | None,
+    extra_audit: dict[str, object] | None = None,
 ) -> Result:
     # Enforce invariant #1 at the boundary: the returned DNA must translate back.
     if translate(dna) != protein + STOP:
@@ -377,6 +393,8 @@ def _make_result(
     }
     if alpha is not None:
         audit["alpha"] = alpha
+    if extra_audit:
+        audit.update(extra_audit)
     return Result(
         protein=protein,
         dna=dna,
@@ -440,6 +458,51 @@ def _solve_with_gc_budget(
     return solve, solve.certificate
 
 
+def _refine(
+    seed_dna: str,
+    residues: Sequence[str],
+    active: Sequence[tuple[ObjectiveTerm, float]],
+    constraints: Sequence[Constraint],
+    config: OptimizeConfig,
+) -> tuple[str, OptimalityCertificate, dict[str, object]]:
+    """Run a folding-aware SA refinement pass over the exact-DP seed.
+
+    Maximizes the additive objective plus a 5' mRNA-folding score by
+    synonymous-only simulated annealing (invariants #1/#5/#7 hold by
+    construction). The folding backend is the best available
+    (:func:`bt4.biomodels.folding.default`); when that is the uncalibrated
+    baseline the returned ``folding_dg`` is a labeled proxy, not real deltaG, and
+    is flagged ``folding_calibrated=False`` (CLAUDE.md sections 6 and 10.6). The
+    returned certificate is ``HEURISTIC`` -- refinement never claims optimality.
+    """
+    from bt4.biomodels.folding import default as folding_default  # lazy: keep core light
+    from bt4.optimize.anneal_refine import anneal_refine  # lazy
+
+    model = folding_default()
+    pairs = tuple(active)
+    weight = config.folding_weight
+
+    def score(dna: str) -> float:
+        additive = sum(w * term.score(dna) for term, w in pairs)
+        return additive + weight * model.score_sequence(dna)
+
+    result = anneal_refine(
+        seed_dna,
+        residues,
+        score,
+        constraints,
+        iterations=config.refine_iterations,
+        seed=config.seed,
+    )
+    extra_audit: dict[str, object] = {
+        "refined": True,
+        "folding_model": model.name,
+        "folding_calibrated": model.calibrated,
+        "folding_dg": model.five_prime_dg(result.dna),
+    }
+    return result.dna, result.certificate, extra_audit
+
+
 def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     """Optimize ``protein`` into a coding sequence under ``config`` (single solve).
 
@@ -455,13 +518,19 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
             GC budget that admits no assignment).
     """
     config = config or OptimizeConfig()
+    has_budget = config.gc_min is not None or config.gc_max is not None
+    if config.refine and has_budget:
+        raise ValueError(
+            "refine is not supported together with a GC budget (gc_min/gc_max): "
+            "the budget is a global constraint that refinement would not re-enforce"
+        )
     p = validate_protein(protein)
     table = load_table(config.organism)
     active = _active_terms(table, config)
     terms = [term for term, _ in active]
     constraints = _build_constraints(config)
     residues = [*p, STOP]
-    if config.gc_min is not None or config.gc_max is not None:
+    if has_budget:
         solve, certificate = _solve_with_gc_budget(residues, active, constraints, config)
     else:
         solve = solve_exact(
@@ -472,15 +541,20 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
             objective_context=max((term.context_len() for term, _ in active), default=0),
         )
         certificate = solve.certificate
+    dna = solve.dna
+    extra_audit: dict[str, object] | None = None
+    if config.refine:
+        dna, certificate, extra_audit = _refine(dna, residues, active, constraints, config)
     return _make_result(
         protein=p,
-        dna=solve.dna,
+        dna=dna,
         table=table,
         terms=terms,
         constraints=constraints,
         certificate=certificate,
         config=config,
         alpha=None,
+        extra_audit=extra_audit,
     )
 
 

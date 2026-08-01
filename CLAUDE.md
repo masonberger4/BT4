@@ -456,13 +456,22 @@ is a requirement, not a nice-to-have.
   tRNA data); uORF pairing and CpG/whole-sequence *count* budgets (both non-local
   / not per-codon-decomposable, deferred); and the published comparison vs
   GeneOptimizer/IDT.
-- **Phase 3 — Non-local models & refinement done right.** ViennaRNA folding (5′
-  ΔG objective + constraint); incremental SA / parallel-tempering with block
-  moves; SpliceAI/Pangolin-class model trained on real GENCODE, Δsplicing
-  objective, acceptance gate on held-out chromosomes, published as a hash-pinned
-  artifact. `--refine` becomes biologically meaningful. **Add the opt-in ASSP
-  cross-check backend** (§6) with offline fixtures + an "validate with ASSP"
-  action in the app; per-site risk tracks in the UI.
+- **Phase 3 — Non-local models & refinement done right.** 🔶 **Groundwork
+  landed.** The **`FoldingModel` contract** (`biomodels/folding/`) ships with a
+  lazy **ViennaRNA** backend (`calibrated=True`, behind the `bt4[fold]` extra) and
+  an honestly-labeled uncalibrated **baseline** (`calibrated=False`, a Nussinov
+  base-pair proxy in *arbitrary units* — never presented as real ΔG), and a
+  `default()` that never crashes. The **incremental SA refinement engine**
+  (`optimize/anneal_refine.py`) does synonymous-only single-codon moves with an
+  O(context) feasibility check that **provably never raises the hard-violation
+  count** (invariant #5, brute-forced over 56k swaps), a deterministic seeded
+  trajectory (#7), and an honest **HEURISTIC** certificate. A **`--refine`** path
+  wires the folding ΔG into an SA pass over the exact-DP seed, loudly flagging
+  `folding_calibrated=False` when the baseline is used (per §6/§10.6). Still
+  ahead: the SpliceAI/Pangolin-class model trained on real GENCODE (Δsplicing
+  objective, held-out-chromosome gate, hash-pinned artifact), parallel-tempering
+  / block moves, the opt-in **ASSP** cross-check (§6) with offline fixtures, and
+  per-site risk tracks in the UI.
 - **Phase 4 — Learned expression & polished app.** Expression predictor head,
   frontier reranking with calibration/uncertainty. Polish BT4 Studio (theming,
   accessibility) and ship **packaged installers** (PyInstaller/Briefcase) for
