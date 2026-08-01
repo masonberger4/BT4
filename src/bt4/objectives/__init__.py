@@ -12,6 +12,7 @@ from bt4.objectives.codon_pair import CpbTerm
 from bt4.objectives.dinucleotide import DinucleotideTerm
 from bt4.objectives.minmax import MinMaxTerm, min_max_profile
 from bt4.objectives.ramp import RampTerm
+from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "MinMaxTerm",
     "ObjectiveTerm",
     "RampTerm",
+    "TaiTerm",
     "iter_codons",
     "min_max_profile",
 ]

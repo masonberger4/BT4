@@ -153,6 +153,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.internal_start_check.setAccessibleName("Avoid internal start codons")
         self._add_row(form, "Internal ATG", self.internal_start_check)
 
+        self.tai_check = QtWidgets.QCheckBox("add tAI axis (human tRNA)")
+        self.tai_check.setAccessibleName("Add tRNA-adaptation-index objective (human only)")
+        self._add_row(form, "tAI", self.tai_check)
+
         self.steps_spin = QtWidgets.QSpinBox()
         self.steps_spin.setRange(1, 25)
         self.steps_spin.setValue(9)
@@ -270,6 +274,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.tandem_spin,
             self.inverted_spin,
             self.internal_start_check,
+            self.tai_check,
             self.steps_spin,
             self.beam_spin,
             self.optimize_btn,
@@ -314,6 +319,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             tandem_unit=tandem if tandem > 0 else None,
             inverted_stem=inverted if inverted > 0 else None,
             avoid_internal_start=self.internal_start_check.isChecked(),
+            tai_weight=1.0 if self.tai_check.isChecked() else 0.0,
             beam=beam if beam > 0 else None,
             seed=0,
         )

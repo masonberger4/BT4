@@ -29,6 +29,7 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         organism=args.organism,
         gc_target=args.gc_target,
         cai_weight=args.cai_weight,
+        tai_weight=args.tai_weight,
         gc_weight=args.gc_weight,
         max_homopolymer=None if args.max_homopolymer <= 0 else args.max_homopolymer,
         forbidden_motifs=motifs,
@@ -58,6 +59,8 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--organism", default="homo_sapiens", help="codon-usage table (alias ok)")
     parser.add_argument("--gc-target", type=float, default=0.55, dest="gc_target")
     parser.add_argument("--cai-weight", type=float, default=1.0, dest="cai_weight")
+    parser.add_argument("--tai-weight", type=float, default=0.0, dest="tai_weight",
+                        help="tRNA-adaptation-index weight (0 = off; human tRNA data only)")
     parser.add_argument("--gc-weight", type=float, default=0.0, dest="gc_weight")
     parser.add_argument("--max-homopolymer", type=int, default=6, dest="max_homopolymer")
     parser.add_argument("--forbid", action="append", metavar="MOTIF", help="forbidden motif")
@@ -115,6 +118,8 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
     print(f"dna       {result.dna}")
     print(f"length    {result.metrics.length_nt} nt")
     print(f"CAI       {cai:.4f}")
+    if "tai" in result.audit:
+        print(f"tAI       {float(result.audit['tai']):.4f}")  # type: ignore[arg-type]
     print(f"GC        {result.metrics.gc * 100:.1f}%")
     print(f"optimality {cert.status.value} ({cert.solver})")
     hard, soft = result.metrics.hard_violations, result.metrics.soft_violations

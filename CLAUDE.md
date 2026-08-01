@@ -472,6 +472,16 @@ is a requirement, not a nice-to-have.
   objective, held-out-chromosome gate, hash-pinned artifact), parallel-tempering
   / block moves, the opt-in **ASSP** cross-check (§6) with offline fixtures, and
   per-site risk tracks in the UI.
+- **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
+  `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
+  gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a
+  content-SHA-256 provenance sidecar and independently re-counted) via a faithful
+  port of the dos Reis (2004) `get.ws` wobble model (verified s-values; the
+  bacterial lysidine path gated on `sking=1`). `TaiTerm` is the exact-DP
+  `tai_logw` objective (additive, `delta==score`), wired through `tai_weight` in
+  the pipeline/CLI/app and as a frontier axis, with the tRNA table's hash entering
+  the provenance stamp when tAI is active. Other organisms raise until their
+  tRNA data is added -- no fabricated tables.
 - **Phase 4 — Learned expression & polished app.** Expression predictor head,
   frontier reranking with calibration/uncertainty. Polish BT4 Studio (theming,
   accessibility) and ship **packaged installers** (PyInstaller/Briefcase) for
