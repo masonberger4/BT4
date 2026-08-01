@@ -280,3 +280,24 @@ def test_internal_start_flags_strong_kozak_atg() -> None:
     # With the guard off it is not flagged.
     clean = api.validate("GCCACCATGGCC", api.OptimizeConfig(max_homopolymer=None))
     assert not any(v.constraint == "internal_start" for v in clean.violations)
+
+
+def test_refine_returns_heuristic_with_folding_audit() -> None:
+    result = api.optimize(
+        _RICH, api.OptimizeConfig(refine=True, refine_iterations=300, max_homopolymer=5)
+    )
+    # Refinement is a heuristic pass -- it must never claim proven optimality.
+    assert result.certificate.status.value == "heuristic"
+    assert not result.certificate.is_proven_optimal
+    assert result.audit.get("refined") is True
+    assert "folding_dg" in result.audit
+    # Honesty: the folding number is flagged calibrated or not (default backend is not).
+    assert isinstance(result.audit["folding_calibrated"], bool)
+    # Invariants #1 and (feasibility) #5 survive refinement.
+    assert translate(result.dna) == result.protein + "*"
+    assert result.metrics.hard_violations == 0
+
+
+def test_refine_with_gc_budget_raises() -> None:
+    with pytest.raises(ValueError, match="refine"):
+        api.optimize(_RICH, api.OptimizeConfig(refine=True, gc_min=30))

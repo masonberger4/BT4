@@ -44,6 +44,9 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         inverted_stem=args.inverted_stem,
         inverted_loop=args.inverted_loop,
         avoid_internal_start=args.avoid_internal_start,
+        refine=args.refine,
+        refine_iterations=args.refine_iterations,
+        folding_weight=args.folding_weight,
         gc_min=args.gc_min,
         gc_max=args.gc_max,
         beam=None if args.beam <= 0 else args.beam,
@@ -83,6 +86,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--avoid-internal-start", action="store_true",
                         dest="avoid_internal_start",
                         help="forbid internal ATG in a strong Kozak context")
+    parser.add_argument("--refine", action="store_true",
+                        help="run a 5'-folding-aware SA refinement pass (HEURISTIC result)")
+    parser.add_argument("--refine-iterations", type=int, default=2000, dest="refine_iterations",
+                        help="SA proposals when --refine is set (default 2000)")
+    parser.add_argument("--folding-weight", type=float, default=1.0, dest="folding_weight",
+                        help="weight on the 5' folding score during --refine")
     parser.add_argument("--gc-min", type=int, default=None, dest="gc_min",
                         help="min total GC count (CP-SAT, or Lagrangian with local/pairwise terms)")
     parser.add_argument("--gc-max", type=int, default=None, dest="gc_max",
@@ -110,6 +119,15 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
     print(f"optimality {cert.status.value} ({cert.solver})")
     hard, soft = result.metrics.hard_violations, result.metrics.soft_violations
     print(f"violations {hard} hard / {soft} soft")
+    if result.audit.get("refined"):
+        model = result.audit.get("folding_model")
+        dg = float(result.audit.get("folding_dg", 0.0))  # type: ignore[arg-type]
+        calibrated = bool(result.audit.get("folding_calibrated", False))
+        units = "kcal/mol" if calibrated else "arbitrary units (UNCALIBRATED proxy)"
+        print(f"folding    5' dG {dg:.3f} {units} [{model}]")
+        if not calibrated:
+            print("  NOTE: folding is a labeled baseline proxy, not real thermodynamics; "
+                  "install bt4[fold] (ViennaRNA) for calibrated dG.")
     return 0
 
 
