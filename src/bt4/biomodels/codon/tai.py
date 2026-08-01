@@ -119,7 +119,11 @@ def build_tai_weights(
     i_met = _CODONS.index("ATG")
     w_abs[i_met] = p[3] * t[i_met]  # Met: only its Watson-Crick reader, no Ile wobble
     if sking == 1:
-        w_abs[_CODONS.index("ATA")] = p[8]  # bacterial lysidine reading of Ile ATA
+        # Bacterial lysidine reading of Ile ATA: p[8] weighted by the reader's own
+        # copy number (reference get.ws is W[ATA] = p[9] * tRNA[ATA]); the reader
+        # slot is t[ATA] (anticodon == reverse_complement(ATA) == TAT).
+        idx_ata = _CODONS.index("ATA")
+        w_abs[idx_ata] = p[8] * t[idx_ata]
 
     # Keep the 60 scoreable codons: drop stops and Met (no synonymous choice).
     kept = [
