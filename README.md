@@ -30,12 +30,15 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   full state space was explored, or honestly `beam_truncated` when you traded it
   for speed. BT4 never claims optimality it didn't earn.
 - **Objectives:** CAI, GC-target proximity, a 5′ translation ramp, CpG
-  deplete/elevate, and codon-pair bias — returned as a **CAI/GC Pareto frontier**,
-  not a single magic-weighted number.
-- **Global GC budget:** an optional OR-Tools **CP-SAT** backend hits a GC-count
-  budget the greedy-free exact DP can't, with a proven-optimal / gap certificate.
-- **Hard constraints:** maximum homopolymer run, forbidden motifs, and a
-  **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
+  deplete/elevate, codon-pair bias, and a **%MinMax** codon-commonness term —
+  returned as a **CAI/GC Pareto frontier**, not a single magic-weighted number.
+- **Global GC budget, two honest backends:** an OR-Tools **CP-SAT** backend for
+  the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
+  dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
+  constraints and pairwise terms honored, with a gap-bounded certificate.
+- **Hard constraints:** maximum homopolymer run, forbidden motifs, **tandem &
+  inverted-repeat** (hairpin) bans, and a **restriction-enzyme catalog**
+  (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* out of the box,
   and `bt4 build-table` builds an authentic table from your own CDS FASTA.
 - **Honest metrics:** every reported number (CAI, GC, violations) is recomputed
@@ -172,10 +175,12 @@ objective is a new file plus its honesty property test — never an engine edit.
 
 ## Roadmap
 
-Phases 0–1 are done and early Phase 2 (multi-objective frontier + the desktop
-app) has landed. Richer objectives (tAI, codon-pair, 5′ ramp), ILP/relaxation
-backends with gap certificates, and the validated splice / folding / expression
-models are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
+Phases 0–1 are done and Phase 2 is well underway: the multi-objective frontier,
+the desktop app, codon-pair / 5′-ramp / CpG / %MinMax objectives, tandem &
+inverted-repeat constraints, and two GC-budget backends — OR-Tools CP-SAT and an
+honest **Lagrangian relaxation** (which, unlike CP-SAT, keeps local constraints
+and pairwise terms under the budget) — have landed. tAI and the validated splice
+/ folding / expression models are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
 
 ## Contributing
 

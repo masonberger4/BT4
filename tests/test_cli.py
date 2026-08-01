@@ -80,6 +80,20 @@ def test_optimize_gc_budget(capsys: pytest.CaptureFixture[str]) -> None:
     assert "cpsat" in capsys.readouterr().out
 
 
+def test_optimize_with_minmax(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MAALKHETQWSNDECFGR", "--minmax-weight", "2", "--minmax-direction", "min"]
+    assert main(argv) == 0
+    assert "proven_optimal" in capsys.readouterr().out
+
+
+def test_optimize_with_repeats(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MAALKHETQWSNDECFGR", "--tandem-unit", "3", "--inverted-stem", "4"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "proven_optimal" in out
+    assert "0 hard" in out
+
+
 def test_build_table(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from pathlib import Path
 

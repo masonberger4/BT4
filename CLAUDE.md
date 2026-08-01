@@ -11,8 +11,11 @@ before writing code, and keep it current as the architecture evolves.
 > the `CaiTerm`/`GcProximityTerm` objectives and `Homopolymer`/`ForbiddenMotif`
 > constraints (with their `delta==score` and `ok_suffix⇔validate` property
 > tests), a **CAI/GC Pareto frontier**, the stable `bt4.api`, a `bt4` CLI, and
-> the first cut of **BT4 Studio** (the PySide6 desktop app). Still ahead:
-> richer objectives (tAI, codon-pair, ramp), ILP/relaxation backends, and the
+> the first cut of **BT4 Studio** (the PySide6 desktop app). Phase 2 has since
+> added codon-pair/ramp/CpG/%MinMax objectives, tandem/inverted-repeat
+> constraints, and **two budget backends** — OR-Tools CP-SAT and an honest
+> **Lagrangian relaxation** that keeps local constraints under a global GC budget.
+> Still ahead: tAI, and the
 > validated splice/folding/expression models — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
@@ -424,11 +427,21 @@ is a requirement, not a nice-to-have.
   **`service/` FastAPI HTTP API**; a **5′ translation-ramp** term; **codon-pair
   bias** (`CpbTerm`, built from a reference CDS) exact in the trellis via the
   extended-state DP (objective context); a **CpG/dinucleotide** term
-  (deplete/elevate); and a first **OR-Tools CP-SAT backend** that solves the
-  additive objective under a **global GC budget** with a gap certificate.
-  Remaining: tAI (needs authentic tRNA data); ILP encoding of local constraints
-  and CpG budgets; Lagrangian relaxation; and the published comparison vs
-  GeneOptimizer/IDT.
+  (deplete/elevate); a first **OR-Tools CP-SAT backend** that solves the
+  additive objective under a **global GC budget** with a gap certificate;
+  **tandem- and inverted-repeat constraints** (`constraints/repeats.py`, LOCAL,
+  `ok_suffix⇔validate`-tested); a **%MinMax** objective — an additive
+  codon-commonness DP term kept honestly separate from the true non-additive
+  sliding-window %MinMax reporting metric (`min_max_profile`); and a
+  **Lagrangian-relaxation backend** (`optimize/lagrangian.py`) that dualizes a
+  global GC budget into the *exact DP* — so unlike CP-SAT it keeps **local
+  constraints and pairwise objective terms** honored under the budget — reporting
+  an honest gap-bounded certificate from its subgradient dual bound. The pipeline
+  now routes a GC budget to CP-SAT for the pure-additive case and to the
+  Lagrangian backend whenever a local constraint or pairwise term is present.
+  Remaining: tAI (needs authentic tRNA data); CpG/whole-sequence *count* budgets
+  (not per-codon-decomposable, so out of the current Lagrangian `amount` shape);
+  and the published comparison vs GeneOptimizer/IDT.
 - **Phase 3 — Non-local models & refinement done right.** ViennaRNA folding (5′
   ΔG objective + constraint); incremental SA / parallel-tempering with block
   moves; SpliceAI/Pangolin-class model trained on real GENCODE, Δsplicing
