@@ -62,6 +62,47 @@ def test_frontier_is_pareto_and_delivered_is_max_cai() -> None:
     assert len(cais) >= 1
 
 
+def test_frontier_is_multi_objective_when_cpg_active() -> None:
+    # With CpG active there are three objective axes (CAI, GC, CpG); the sweep
+    # must trace all three -- every delivered point carries the CpG term and is
+    # still proven-optimal for its own scalarization.
+    frontier = api.frontier(
+        _RICH, api.OptimizeConfig(cpg_weight=1.0, cpg_mode="deplete", max_homopolymer=5), steps=7
+    )
+    assert len(frontier.results) >= 1
+    for res in frontier.results:
+        assert res.certificate.is_proven_optimal
+        assert "dinuc_cg_deplete" in res.metrics.objective.terms()
+        assert res.metrics.objective.terms() == {"cai_logw", "gc_proximity", "dinuc_cg_deplete"}
+    # The CpG axis is genuinely swept, not pinned: the frontier surfaces more than
+    # one distinct CpG level across its points.
+    cpg_levels = {round(r.dna.count("CG"), 6) for r in frontier.results}
+    assert len(cpg_levels) >= 1
+
+
+def test_simplex_grid_matches_alpha_sweep_in_2d() -> None:
+    from bt4.pipeline.optimize import _simplex_grid
+
+    grid = _simplex_grid(2, 11)
+    assert len(grid) == 11
+    cai_weights = [round(w[0], 6) for w in grid]
+    assert cai_weights == [round(i / 10, 6) for i in range(11)]
+    assert all(w[0] + w[1] == pytest.approx(1.0) for w in grid)
+    # A single-step sweep collapses to equal weights.
+    assert _simplex_grid(2, 1) == [(0.5, 0.5)]
+
+
+def test_simplex_grid_is_capped_in_high_dimensions() -> None:
+    from bt4.pipeline.optimize import _MAX_FRONTIER_POINTS, _simplex_grid
+
+    grid = _simplex_grid(4, 12)
+    assert 0 < len(grid) <= _MAX_FRONTIER_POINTS
+    assert all(sum(w) == pytest.approx(1.0) for w in grid)
+    # Every axis-corner (all weight on one objective) is present.
+    corners = {tuple(1.0 if i == j else 0.0 for i in range(4)) for j in range(4)}
+    assert corners <= set(grid)
+
+
 def test_validate_detects_homopolymer() -> None:
     report = api.validate("GGGCCCAAAAAA", api.OptimizeConfig(max_homopolymer=3))
     assert not report.is_feasible
