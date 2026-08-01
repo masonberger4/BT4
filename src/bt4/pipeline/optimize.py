@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from bt4 import __version__
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
+from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
 from bt4.domain import (
@@ -46,6 +47,7 @@ from bt4.domain import (
     validate_protein,
 )
 from bt4.objectives.dinucleotide import DinucleotideTerm
+from bt4.objectives.minmax import MinMaxTerm
 from bt4.objectives.ramp import RampTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 from bt4.optimize import SolveResult, solve_exact
@@ -84,6 +86,19 @@ class OptimizeConfig:
         cpg_weight: Weight on the CpG-dinucleotide term (0 disables it).
         cpg_mode: ``"deplete"`` (fewer CpGs, stealth) or ``"elevate"`` (more,
             immunostimulatory) -- only used when ``cpg_weight`` is non-zero.
+        minmax_weight: Weight on the %MinMax codon-commonness term (0 disables
+            it). Positive values push the sequence toward the ``minmax_direction``
+            end of the synonymous-usage range.
+        minmax_direction: ``"max"`` (favour common codons) or ``"min"`` (favour
+            rare codons) -- only used when ``minmax_weight`` is non-zero.
+        tandem_unit: Repeated-unit length whose ``tandem_copies``-fold tandem
+            repeat is banned, or ``None`` to disable the tandem-repeat constraint.
+        tandem_copies: Number of back-to-back copies that constitutes a banned
+            tandem repeat (only used when ``tandem_unit`` is set).
+        inverted_stem: Arm length of a banned hairpin (stem-loop) inverted
+            repeat, or ``None`` to disable the inverted-repeat constraint.
+        inverted_loop: Maximum loop length between the hairpin arms (only used
+            when ``inverted_stem`` is set).
         gc_min: Optional lower bound on the total GC nucleotide count. Setting a
             GC budget routes the solve through the OR-Tools CP-SAT backend.
         gc_max: Optional upper bound on the total GC nucleotide count.
@@ -104,6 +119,12 @@ class OptimizeConfig:
     ramp_codons: int = 35
     cpg_weight: float = 0.0
     cpg_mode: str = "deplete"
+    minmax_weight: float = 0.0
+    minmax_direction: str = "max"
+    tandem_unit: int | None = None
+    tandem_copies: int = 3
+    inverted_stem: int | None = None
+    inverted_loop: int = 0
     gc_min: int | None = None
     gc_max: int | None = None
     beam: int | None = None
@@ -165,6 +186,10 @@ def _active_terms(
         active.append((RampTerm(w, config.ramp_codons), config.ramp_weight))
     if config.cpg_weight != 0.0:
         active.append((DinucleotideTerm("CG", config.cpg_mode), config.cpg_weight))
+    if config.minmax_weight != 0.0:
+        active.append(
+            (MinMaxTerm(table.frequency, config.minmax_direction), config.minmax_weight)
+        )
     return active
 
 
@@ -182,6 +207,14 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
     if config.restriction_enzymes:
         constraints.append(
             RestrictionSiteConstraint(enzymes=tuple(config.restriction_enzymes))
+        )
+    if config.tandem_unit is not None:
+        constraints.append(
+            TandemRepeatConstraint(config.tandem_unit, config.tandem_copies)
+        )
+    if config.inverted_stem is not None:
+        constraints.append(
+            InvertedRepeatConstraint(config.inverted_stem, config.inverted_loop)
         )
     return constraints
 
@@ -228,6 +261,12 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "ramp_codons": config.ramp_codons,
         "cpg_weight": config.cpg_weight,
         "cpg_mode": config.cpg_mode,
+        "minmax_weight": config.minmax_weight,
+        "minmax_direction": config.minmax_direction,
+        "tandem_unit": config.tandem_unit,
+        "tandem_copies": config.tandem_copies,
+        "inverted_stem": config.inverted_stem,
+        "inverted_loop": config.inverted_loop,
         "gc_min": config.gc_min,
         "gc_max": config.gc_max,
         "beam": config.beam,

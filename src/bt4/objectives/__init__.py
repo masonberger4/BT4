@@ -10,6 +10,7 @@ from __future__ import annotations
 from bt4.objectives.base import ObjectiveTerm, iter_codons
 from bt4.objectives.codon_pair import CpbTerm
 from bt4.objectives.dinucleotide import DinucleotideTerm
+from bt4.objectives.minmax import MinMaxTerm, min_max_profile
 from bt4.objectives.ramp import RampTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 
@@ -18,7 +19,9 @@ __all__ = [
     "CpbTerm",
     "DinucleotideTerm",
     "GcProximityTerm",
+    "MinMaxTerm",
     "ObjectiveTerm",
     "RampTerm",
     "iter_codons",
+    "min_max_profile",
 ]

@@ -130,6 +130,25 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.cpg_combo.setAccessibleName("CpG dinucleotide mode")
         self._add_row(form, "CpG", self.cpg_combo)
 
+        self.minmax_combo = QtWidgets.QComboBox()
+        self.minmax_combo.addItems(["off", "max", "min"])
+        self.minmax_combo.setAccessibleName("%MinMax codon-commonness mode")
+        self._add_row(form, "%MinMax", self.minmax_combo)
+
+        self.tandem_spin = QtWidgets.QSpinBox()
+        self.tandem_spin.setRange(0, 12)
+        self.tandem_spin.setValue(0)
+        self.tandem_spin.setSpecialValueText("off")
+        self.tandem_spin.setAccessibleName("Tandem-repeat unit length (0 = off)")
+        self._add_row(form, "Tandem unit", self.tandem_spin)
+
+        self.inverted_spin = QtWidgets.QSpinBox()
+        self.inverted_spin.setRange(0, 20)
+        self.inverted_spin.setValue(0)
+        self.inverted_spin.setSpecialValueText("off")
+        self.inverted_spin.setAccessibleName("Inverted-repeat stem length (0 = off)")
+        self._add_row(form, "Hairpin stem", self.inverted_spin)
+
         self.steps_spin = QtWidgets.QSpinBox()
         self.steps_spin.setRange(1, 25)
         self.steps_spin.setValue(9)
@@ -243,6 +262,9 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.motifs_edit,
             self.enzymes_edit,
             self.cpg_combo,
+            self.minmax_combo,
+            self.tandem_spin,
+            self.inverted_spin,
             self.steps_spin,
             self.beam_spin,
             self.optimize_btn,
@@ -268,6 +290,11 @@ class StudioWindow(QtWidgets.QMainWindow):
         cpg = self.cpg_combo.currentText()
         cpg_weight = 0.0 if cpg == "off" else 1.0
         cpg_mode = "deplete" if cpg == "off" else cpg
+        minmax = self.minmax_combo.currentText()
+        minmax_weight = 0.0 if minmax == "off" else 1.0
+        minmax_direction = "max" if minmax == "off" else minmax
+        tandem = self.tandem_spin.value()
+        inverted = self.inverted_spin.value()
         config = api.OptimizeConfig(
             organism=self.organism_combo.currentText(),
             gc_target=self.gc_spin.value(),
@@ -277,6 +304,10 @@ class StudioWindow(QtWidgets.QMainWindow):
             restriction_enzymes=enzymes,
             cpg_weight=cpg_weight,
             cpg_mode=cpg_mode,
+            minmax_weight=minmax_weight,
+            minmax_direction=minmax_direction,
+            tandem_unit=tandem if tandem > 0 else None,
+            inverted_stem=inverted if inverted > 0 else None,
             beam=beam if beam > 0 else None,
             seed=0,
         )

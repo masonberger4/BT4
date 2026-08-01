@@ -139,3 +139,45 @@ def test_gc_budget_via_cpsat() -> None:
 def test_gc_budget_with_cpg_raises() -> None:
     with pytest.raises(ValueError):
         api.optimize(_RICH, api.OptimizeConfig(gc_min=30, cpg_weight=1.0))
+
+
+def test_minmax_term_participates() -> None:
+    result = api.optimize(_RICH, api.OptimizeConfig(minmax_weight=2.0, minmax_direction="max"))
+    assert "minmax_max" in result.metrics.objective.terms()
+    assert translate(result.dna) == result.protein + "*"
+    assert result.certificate.is_proven_optimal
+
+
+def test_minmax_min_favours_rarer_codons_than_max() -> None:
+    common = api.optimize(_RICH, api.OptimizeConfig(cai_weight=0.0, minmax_weight=5.0))
+    rare = api.optimize(
+        _RICH, api.OptimizeConfig(cai_weight=0.0, minmax_weight=5.0, minmax_direction="min")
+    )
+    table = load_table("homo_sapiens")
+    # Favouring common codons must not yield a lower CAI than favouring rare ones.
+    assert table.cai(common.dna) >= table.cai(rare.dna)
+
+
+def test_tandem_repeat_constraint_enforced() -> None:
+    # A unit-3 tandem repeated 3x (9 nt of period 3) must not appear in the output.
+    result = api.optimize(_RICH, api.OptimizeConfig(tandem_unit=3, tandem_copies=3))
+    assert result.metrics.hard_violations == 0
+    assert not any(v.constraint == "tandem_repeat" for v in result.violations)
+    assert result.certificate.is_proven_optimal
+
+
+def test_inverted_repeat_constraint_enforced() -> None:
+    result = api.optimize(_RICH, api.OptimizeConfig(inverted_stem=4, inverted_loop=1))
+    assert result.metrics.hard_violations == 0
+    assert not any(v.constraint == "inverted_repeat" for v in result.violations)
+    assert result.certificate.is_proven_optimal
+
+
+def test_repeat_constraints_surface_in_validation() -> None:
+    # A pure poly-A run is both a homopolymer and a unit-1 tandem repeat; the
+    # tandem constraint must flag it via validate (ok_suffix <=> validate).
+    report = api.validate(
+        "GCTGCTGCTGCT", api.OptimizeConfig(max_homopolymer=None, tandem_unit=3, tandem_copies=3)
+    )
+    assert not report.is_feasible
+    assert any(v.constraint == "tandem_repeat" for v in report.violations)
