@@ -136,9 +136,47 @@ def test_gc_budget_via_cpsat() -> None:
     assert translate(result.dna) == result.protein + "*"
 
 
-def test_gc_budget_with_cpg_raises() -> None:
-    with pytest.raises(ValueError):
-        api.optimize(_RICH, api.OptimizeConfig(gc_min=30, cpg_weight=1.0))
+def test_gc_budget_with_cpg_uses_lagrangian() -> None:
+    from bt4._accel import gc_count
+
+    # A pairwise CpG term is exactly what CP-SAT cannot encode; a GC budget
+    # alongside it must route through the Lagrangian backend, which keeps the term
+    # by dualizing the budget into the exact DP. Use the no-budget CpG optimum's
+    # own GC as the (guaranteed feasible) upper bound.
+    base = api.optimize(_RICH, api.OptimizeConfig(cpg_weight=1.0, max_homopolymer=None))
+    base_gc = gc_count(base.dna)
+    result = api.optimize(
+        _RICH, api.OptimizeConfig(cpg_weight=1.0, max_homopolymer=None, gc_max=base_gc)
+    )
+    assert result.certificate.solver == "lagrangian"
+    assert gc_count(result.dna) <= base_gc
+    assert "dinuc_cg_deplete" in result.metrics.objective.terms()
+    assert translate(result.dna) == result.protein + "*"
+
+
+def test_gc_budget_with_local_constraint_uses_lagrangian() -> None:
+    from bt4._accel import gc_count, max_homopolymer_run
+
+    # CP-SAT drops local sequence constraints; the Lagrangian route keeps the
+    # homopolymer bound while honoring the GC budget. A no-budget solve under the
+    # same homopolymer bound witnesses joint feasibility of its own GC as the cap.
+    tight = api.optimize(_RICH, api.OptimizeConfig(max_homopolymer=4))
+    tight_gc = gc_count(tight.dna)
+    result = api.optimize(_RICH, api.OptimizeConfig(max_homopolymer=4, gc_max=tight_gc))
+    assert result.certificate.solver == "lagrangian"
+    assert gc_count(result.dna) <= tight_gc
+    assert max_homopolymer_run(result.dna) <= 4
+    assert result.metrics.hard_violations == 0
+    assert translate(result.dna) == result.protein + "*"
+
+
+def test_gc_budget_infeasible_raises() -> None:
+    from bt4.optimize import InfeasibleError
+
+    # An impossibly low GC cap under a local constraint has no assignment; the
+    # Lagrangian backend proves infeasibility rather than returning a bad answer.
+    with pytest.raises(InfeasibleError):
+        api.optimize(_RICH, api.OptimizeConfig(max_homopolymer=4, gc_max=0))
 
 
 def test_minmax_term_participates() -> None:

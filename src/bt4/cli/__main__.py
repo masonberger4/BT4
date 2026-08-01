@@ -80,9 +80,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--inverted-loop", type=int, default=0, dest="inverted_loop",
                         help="max hairpin loop length between arms (default 0)")
     parser.add_argument("--gc-min", type=int, default=None, dest="gc_min",
-                        help="min total GC count (routes through the ILP backend)")
+                        help="min total GC count (CP-SAT, or Lagrangian with local/pairwise terms)")
     parser.add_argument("--gc-max", type=int, default=None, dest="gc_max",
-                        help="max total GC count (routes through the ILP backend)")
+                        help="max total GC count (CP-SAT, or Lagrangian with local/pairwise terms)")
     parser.add_argument("--beam", type=int, default=0, help="beam width (0 = exact DP)")
     parser.add_argument("--seed", type=int, default=0)
 

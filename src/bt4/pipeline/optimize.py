@@ -35,7 +35,6 @@ from bt4.domain import (
     ObjectiveTerm,
     ObjectiveVector,
     OptimalityCertificate,
-    OptimalityStatus,
     Result,
     Scope,
     Severity,
@@ -342,19 +341,40 @@ def _solve_with_gc_budget(
     constraints: Sequence[Constraint],
     config: OptimizeConfig,
 ) -> tuple[SolveResult, OptimalityCertificate]:
-    """Solve with a global GC budget via the CP-SAT backend (see cpsat.py).
+    """Solve with a global GC-count budget, choosing an honest backend.
 
-    The ILP backend handles only additive, context-free objectives, and does not
-    encode local sequence constraints; if the delivered sequence violates any,
-    the certificate is downgraded to ``RELAXED`` rather than claiming optimality.
+    With neither a local sequence constraint nor a pairwise/positional objective
+    term, the problem is a pure additive, context-free objective under a linear
+    budget: the CP-SAT backend (see cpsat.py) solves it and proves optimality of
+    the integer-scaled objective. When a local constraint or a pairwise term is in
+    force -- which CP-SAT cannot encode -- the Lagrangian backend (see
+    lagrangian.py) dualizes the GC budget into the exact DP so those constraints
+    and terms stay honored, at the cost of a gap-bounded (not proven-optimal)
+    certificate. Both backends recompute the delivered metrics from the DNA, so a
+    budget is always honestly reported.
     """
-    # Validate the objective is ILP-compatible before importing OR-Tools, so the
-    # error is a clear ValueError even when the [ilp] extra is not installed.
-    if any(term.scope() is Scope.PAIRWISE or term.context_len() > 0 for term, _ in active):
-        raise ValueError(
-            "a GC budget (gc_min/gc_max) routes through the ILP backend, which does "
-            "not support pairwise objective terms (e.g. the CpG term) yet"
+    non_local = any(
+        term.scope() is Scope.PAIRWISE or term.context_len() > 0 for term, _ in active
+    )
+    if constraints or non_local:
+        # Local constraints and pairwise terms are exactly what CP-SAT drops; the
+        # Lagrangian backend keeps them by dualizing the budget into the exact DP.
+        from bt4._accel import gc_count  # lazy: matches the accel import site
+        from bt4.optimize.lagrangian import solve_lagrangian
+
+        solve = solve_lagrangian(
+            residues,
+            scalar_delta=_scalar_delta(active),
+            constraints=constraints,
+            amount=gc_count,
+            budget_min=config.gc_min,
+            budget_max=config.gc_max,
+            beam=config.beam,
+            objective_context=max((term.context_len() for term, _ in active), default=0),
+            budget_name="gc_budget",
         )
+        return solve, solve.certificate
+
     from bt4.optimize.cpsat import solve_cpsat  # lazy: keeps OR-Tools optional
 
     pairs = tuple(active)
@@ -365,31 +385,22 @@ def _solve_with_gc_budget(
     solve = solve_cpsat(
         residues, codon_score=codon_score, gc_min=config.gc_min, gc_max=config.gc_max
     )
-    hard = sorted(
-        {v.constraint for v in _violations(solve.dna, constraints) if v.severity is Severity.HARD}
-    )
-    if hard:
-        certificate = OptimalityCertificate(
-            status=OptimalityStatus.RELAXED,
-            solver="cpsat",
-            relaxed_terms=tuple(hard),
-            detail="ILP backend does not enforce local sequence constraints",
-        )
-    else:
-        certificate = solve.certificate
-    return solve, certificate
+    return solve, solve.certificate
 
 
 def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     """Optimize ``protein`` into a coding sequence under ``config`` (single solve).
 
-    A GC budget (``gc_min``/``gc_max``) routes the solve through the OR-Tools
-    CP-SAT backend; otherwise the exact codon-trellis DP is used.
+    A GC budget (``gc_min``/``gc_max``) routes the solve through a budget backend:
+    the OR-Tools CP-SAT backend for a pure additive, context-free objective with
+    no local constraints (proven optimal), or the Lagrangian backend when a local
+    constraint or pairwise term is in force (gap-bounded, but those are honored).
+    With no GC budget the exact codon-trellis DP is used.
 
     Raises:
-        ValueError: On an invalid protein, or a GC budget combined with a
-            pairwise objective term.
-        bt4.optimize.InfeasibleError: If no feasible sequence exists.
+        ValueError: On an invalid protein.
+        bt4.optimize.InfeasibleError: If no feasible sequence exists (including a
+            GC budget that admits no assignment).
     """
     config = config or OptimizeConfig()
     p = validate_protein(protein)
