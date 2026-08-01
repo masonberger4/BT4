@@ -18,7 +18,8 @@ here; nothing above ``pipeline`` is referenced.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import math
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 from bt4 import __version__
@@ -63,6 +64,11 @@ __all__ = [
 ]
 
 _NON_SCORED_AA = frozenset({"M", "W"})
+
+# Cap on the number of scalarization points swept for a multi-objective frontier.
+# Each point is a full exact solve, so this bounds the frontier's runtime; the
+# grid resolution is reduced to stay under it (see _simplex_grid).
+_MAX_FRONTIER_POINTS = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,23 +174,16 @@ class ValidationReport:
 def _active_terms(
     table: CodonUsageTable,
     config: OptimizeConfig,
-    *,
-    cai_weight: float | None = None,
-    gc_weight: float | None = None,
 ) -> list[tuple[ObjectiveTerm, float]]:
     """Objective terms active for this config, paired with their weights.
 
-    CAI and GC-proximity are always present; the 5' ramp and CpG terms join only
-    when their weight is non-zero. ``cai_weight``/``gc_weight`` override the config
-    values (used by the frontier sweep).
+    CAI and GC-proximity are always present; the 5' ramp, CpG, and %MinMax terms
+    join only when their weight is non-zero.
     """
     w = table.relative_adaptiveness()
     active: list[tuple[ObjectiveTerm, float]] = [
-        (CaiTerm(w), config.cai_weight if cai_weight is None else cai_weight),
-        (
-            GcProximityTerm(config.gc_target),
-            config.gc_weight if gc_weight is None else gc_weight,
-        ),
+        (CaiTerm(w), config.cai_weight),
+        (GcProximityTerm(config.gc_target), config.gc_weight),
     ]
     if config.ramp_weight != 0.0:
         active.append((RampTerm(w, config.ramp_codons), config.ramp_weight))
@@ -195,6 +194,51 @@ def _active_terms(
             (MinMaxTerm(table.frequency, config.minmax_direction), config.minmax_weight)
         )
     return active
+
+
+def _frontier_axes(table: CodonUsageTable, config: OptimizeConfig) -> list[ObjectiveTerm]:
+    """The objective terms the frontier sweep trades off, in a stable order.
+
+    Exactly the terms :func:`_active_terms` activates -- CAI and GC-proximity
+    always, plus any ramp/CpG/%MinMax term whose config weight is non-zero -- but
+    stripped of their config weights, because the sweep assigns its own simplex
+    weights to each axis.
+    """
+    return [term for term, _ in _active_terms(table, config)]
+
+
+def _compositions(total: int, parts: int) -> Iterator[tuple[int, ...]]:
+    """Yield every non-negative integer ``parts``-tuple summing to ``total``."""
+    if parts == 1:
+        yield (total,)
+        return
+    for first in range(total + 1):
+        for rest in _compositions(total - first, parts - 1):
+            yield (first, *rest)
+
+
+def _simplex_grid(n_axes: int, steps: int) -> list[tuple[float, ...]]:
+    """Weight vectors on the ``n_axes`` unit simplex, at resolution ``steps``.
+
+    Each vector is a normalized integer composition of ``steps - 1`` into
+    ``n_axes`` non-negative parts, so the grid includes every axis-corner (all
+    weight on one objective) plus the interior mixtures. For two axes this is
+    exactly the classic ``[0, 1]`` alpha sweep ``(alpha, 1 - alpha)``, so the
+    CAI/GC frontier is unchanged. For three or more axes the raw grid grows
+    combinatorially, so the resolution is reduced until the point count is at
+    most :data:`_MAX_FRONTIER_POINTS`; each surviving point is still an exact,
+    proven-optimal solve -- only the sampling of the trade-off surface is
+    coarser, never the optimality of any point.
+    """
+    if n_axes < 1:
+        return []
+    if steps <= 1:
+        return [tuple(1.0 / n_axes for _ in range(n_axes))]
+    res = steps
+    while res > 2 and math.comb(res - 1 + n_axes - 1, n_axes - 1) > _MAX_FRONTIER_POINTS:
+        res -= 1
+    total = res - 1
+    return [tuple(c / total for c in comp) for comp in _compositions(total, n_axes)]
 
 
 def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
@@ -458,15 +502,22 @@ def _nondominated_indices(vectors: Sequence[ObjectiveVector]) -> list[int]:
 def run_frontier(
     protein: str, config: OptimizeConfig | None = None, steps: int = 11
 ) -> FrontierResult:
-    """Sweep the CAI/GC trade-off and return the Pareto frontier of exact solves.
+    """Sweep the objective trade-offs and return the Pareto frontier of exact solves.
 
-    For each ``alpha`` in a uniform grid over ``[0, 1]`` the CAI weight is
-    ``alpha`` and the GC-proximity weight is ``1 - alpha`` (any ramp/CpG terms
-    keep their configured weights); each point is an exact (or beam-capped) solve.
-    Duplicate sequences are collapsed and the non-dominated subset is returned,
-    with the delivered point set to the highest-CAI frontier member. The frontier
-    uses the exact DP; a GC budget (``gc_min``/``gc_max``) applies to
-    :func:`run_optimize` only, not here.
+    The frontier trades off every *active* objective term: CAI and GC-proximity
+    always, plus any 5' ramp, CpG, or %MinMax term whose config weight is
+    non-zero. Scalarization weights are drawn from a uniform grid on the unit
+    simplex over those axes (see :func:`_simplex_grid`); with only CAI and GC
+    active this is exactly the classic ``(alpha, 1 - alpha)`` sweep, so the
+    two-objective frontier is unchanged, while three or more active objectives
+    now trace a genuine multi-dimensional trade-off surface rather than holding
+    the extra terms at a fixed weight.
+
+    Each grid point is an exact (or beam-capped) solve; duplicate sequences are
+    collapsed and the non-dominated subset (over the *full* objective vector) is
+    returned, with the delivered point set to the highest-CAI frontier member.
+    The frontier uses the exact DP; a GC budget (``gc_min``/``gc_max``) applies
+    to :func:`run_optimize` only, not here.
 
     Raises:
         ValueError: On an invalid protein or ``steps < 1``.
@@ -480,27 +531,29 @@ def run_frontier(
     constraints = _build_constraints(config)
     residues = [*p, STOP]
 
-    alphas = [0.5] if steps == 1 else [i / (steps - 1) for i in range(steps)]
+    axes = _frontier_axes(table, config)
+    objective_context = max((term.context_len() for term in axes), default=0)
+    grid = _simplex_grid(len(axes), steps)
     by_dna: dict[str, Result] = {}
-    for alpha in alphas:
-        active = _active_terms(table, config, cai_weight=alpha, gc_weight=1.0 - alpha)
+    for weights in grid:
+        active = list(zip(axes, weights, strict=True))
         solve = solve_exact(
             residues,
             scalar_delta=_scalar_delta(active),
             constraints=constraints,
             beam=config.beam,
-            objective_context=max((term.context_len() for term, _ in active), default=0),
+            objective_context=objective_context,
         )
         if solve.dna not in by_dna:
             by_dna[solve.dna] = _make_result(
                 protein=p,
                 dna=solve.dna,
                 table=table,
-                terms=[term for term, _ in active],
+                terms=axes,
                 constraints=constraints,
                 certificate=solve.certificate,
                 config=config,
-                alpha=alpha,
+                alpha=weights[0],
             )
 
     uniq = list(by_dna.values())
@@ -512,7 +565,9 @@ def run_frontier(
     return FrontierResult(
         frontier=frontier,
         results=tuple(kept),
-        manifest=_manifest(config, {"frontier_steps": steps}),
+        manifest=_manifest(
+            config, {"frontier_steps": steps, "frontier_objectives": len(axes)}
+        ),
     )
 
 

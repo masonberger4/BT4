@@ -31,7 +31,8 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   for speed. BT4 never claims optimality it didn't earn.
 - **Objectives:** CAI, GC-target proximity, a 5′ translation ramp, CpG
   deplete/elevate, codon-pair bias, and a **%MinMax** codon-commonness term —
-  returned as a **CAI/GC Pareto frontier**, not a single magic-weighted number.
+  returned as a **multi-objective Pareto frontier** (a simplex sweep over every
+  active axis, not just CAI/GC), never a single magic-weighted number.
 - **Global GC budget, two honest backends:** an OR-Tools **CP-SAT** backend for
   the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
@@ -139,7 +140,8 @@ the sequence context each constraint declares it needs, and finds the assignment
 that maximizes the (weighted) additive objective while every hard constraint's
 `ok_suffix` veto holds. Because the state carries the *true* per-constraint
 context, the result is **exactly optimal** for that objective — and the certificate
-says so. Sweeping the CAI-vs-GC weighting traces the **Pareto frontier**; the
+says so. Sweeping the objective weights over the unit simplex — CAI vs GC, and
+any ramp/CpG/%MinMax axes you activate — traces the **Pareto frontier**; the
 delivered point is the trade-off you chose.
 
 The whole system is a **strict, acyclic layering** (`domain` → pure layers →

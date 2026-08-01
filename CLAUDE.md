@@ -417,7 +417,12 @@ is a requirement, not a nice-to-have.
   full trellis inner loop to Rust and adding `build-table` remain. *This alone
   already beats BT3* (honest optimality, correct incremental GC).
 - **Phase 2 — Multi-objective, richer biology & first app.** 🔶 **In progress.**
-  Delivered: the **CAI/GC Pareto-frontier API**; the **BT4 Studio desktop MVP
+  Delivered: the **multi-objective Pareto-frontier API** (a unit-simplex
+  scalarization sweep over *every* active objective axis - CAI and GC always,
+  plus ramp/CpG/%MinMax when weighted - so 3+ objectives trace a real trade-off
+  surface, with the CAI/GC two-objective case unchanged; each point stays an
+  exact proven-optimal solve, the frontier a bounded sample of the surface); the
+  **BT4 Studio desktop MVP
   (PySide6)** (§6.6) calling `bt4.api` on a background thread, with the frontier
   plot and honest certificate badge; **restriction-site constraints** (REBASE-
   style catalog, IUPAC-aware, auto reverse-complement); **more organisms**
