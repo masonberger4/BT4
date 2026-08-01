@@ -29,10 +29,11 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 - **A real optimality certificate** on every result: `proven_optimal` when the
   full state space was explored, or honestly `beam_truncated` when you traded it
   for speed. BT4 never claims optimality it didn't earn.
-- **Objectives:** CAI, GC-target proximity, a 5′ translation ramp, CpG
-  deplete/elevate, codon-pair bias, and a **%MinMax** codon-commonness term —
-  returned as a **multi-objective Pareto frontier** (a simplex sweep over every
-  active axis, not just CAI/GC), never a single magic-weighted number.
+- **Objectives:** CAI, **tAI** (real human tRNA copy numbers via the dos Reis
+  wobble model), GC-target proximity, a 5′ translation ramp, CpG deplete/elevate,
+  codon-pair bias, and a **%MinMax** codon-commonness term — returned as a
+  **multi-objective Pareto frontier** (a simplex sweep over every active axis, not
+  just CAI/GC), never a single magic-weighted number.
 - **Global GC budget, two honest backends:** an OR-Tools **CP-SAT** backend for
   the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
@@ -59,11 +60,10 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   clearly-labeled uncalibrated proxy and says so — BT4 never presents the
   baseline as calibrated thermodynamics.
 
-> **Honest about scope.** BT4's design aims wider still — tAI, SpliceAI/Pangolin-
-> class splice models, and a learned expression head. The splice/expression
-> models are on the roadmap and **not shipped yet**; BT4 refuses to present an
-> unbuilt or uncalibrated model as if it were real. See
-> [`CLAUDE.md`](./CLAUDE.md) §9 for the full plan.
+> **Honest about scope.** BT4's design aims wider still — SpliceAI/Pangolin-class
+> splice models and a learned expression head. Those are on the roadmap and **not
+> shipped yet**; BT4 refuses to present an unbuilt or uncalibrated model as if it
+> were real. See [`CLAUDE.md`](./CLAUDE.md) §9 for the full plan.
 
 ---
 

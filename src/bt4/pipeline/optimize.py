@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from bt4 import __version__
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
+from bt4.biomodels.codon.tai import load_tai_provenance, load_tai_table
 from bt4.constraints.kozak import InternalStartConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint
@@ -50,6 +51,7 @@ from bt4.domain import (
 from bt4.objectives.dinucleotide import DinucleotideTerm
 from bt4.objectives.minmax import MinMaxTerm
 from bt4.objectives.ramp import RampTerm
+from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 from bt4.optimize import SolveResult, solve_exact
 from bt4.provenance import Manifest, build_manifest
@@ -79,6 +81,9 @@ class OptimizeConfig:
         organism: Codon-usage table key or alias (default human).
         gc_target: Desired GC fraction in ``[0, 1]`` for the GC-proximity term.
         cai_weight: Weight on the CAI (log-w) objective in a single solve.
+        tai_weight: Weight on the tRNA-adaptation-index (log-w) objective (0
+            disables it). Requires a bundled tAI table for ``organism`` (human
+            ships one); other organisms raise until their tRNA data is added.
         gc_weight: Weight on the GC-proximity objective in a single solve.
         max_homopolymer: Longest allowed single-base run, or ``None`` to disable.
         forbidden_motifs: Substrings (and, when enabled, their reverse
@@ -128,6 +133,7 @@ class OptimizeConfig:
     organism: str = "homo_sapiens"
     gc_target: float = 0.55
     cai_weight: float = 1.0
+    tai_weight: float = 0.0
     gc_weight: float = 0.0
     max_homopolymer: int | None = 6
     forbidden_motifs: tuple[str, ...] = ()
@@ -197,6 +203,10 @@ def _active_terms(
         (CaiTerm(w), config.cai_weight),
         (GcProximityTerm(config.gc_target), config.gc_weight),
     ]
+    if config.tai_weight != 0.0:
+        # Raises a clear ValueError if the organism has no bundled tRNA data.
+        tai_table = load_tai_table(config.organism)
+        active.append((TaiTerm(tai_table.relative_adaptiveness()), config.tai_weight))
     if config.ramp_weight != 0.0:
         active.append((RampTerm(w, config.ramp_codons), config.ramp_weight))
     if config.cpg_weight != 0.0:
@@ -314,6 +324,7 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "organism": config.organism,
         "gc_target": config.gc_target,
         "cai_weight": config.cai_weight,
+        "tai_weight": config.tai_weight,
         "gc_weight": config.gc_weight,
         "max_homopolymer": config.max_homopolymer,
         "forbidden_motifs": list(config.forbidden_motifs),
@@ -344,10 +355,14 @@ def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
     prov = load_provenance(config.organism)
     cfg = _config_dict(config)
     cfg.update(extra)
+    inputs: dict[str, str] = {"codon_table_sha256": prov.sha256}
+    if config.tai_weight != 0.0:
+        # tAI in play => the tRNA-count table's content hash enters the stamp too.
+        inputs["trna_table_sha256"] = load_tai_provenance(config.organism).sha256
     return build_manifest(
         bt4_version=__version__,
         config=cfg,
-        inputs={"codon_table_sha256": prov.sha256},
+        inputs=inputs,
         seed=config.seed,
     )
 
@@ -391,6 +406,8 @@ def _make_result(
         "seed": config.seed,
         "manifest": _manifest(config, {} if alpha is None else {"alpha": alpha}).to_dict(),
     }
+    if config.tai_weight != 0.0:
+        audit["tai"] = load_tai_table(config.organism).tai(dna)
     if alpha is not None:
         audit["alpha"] = alpha
     if extra_audit:

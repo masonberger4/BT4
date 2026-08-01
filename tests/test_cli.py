@@ -110,6 +110,14 @@ def test_optimize_refine(capsys: pytest.CaptureFixture[str]) -> None:
     assert "folding" in out
 
 
+def test_optimize_with_tai(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MAALKHETQWSNDECFGR", "--tai-weight", "2"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "proven_optimal" in out
+    assert "tAI" in out
+
+
 def test_build_table(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from pathlib import Path
 
