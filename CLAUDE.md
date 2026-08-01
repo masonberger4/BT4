@@ -492,9 +492,12 @@ is a requirement, not a nice-to-have.
   bacterial lysidine path gated on `sking=1`). `TaiTerm` is the exact-DP
   `tai_logw` objective (additive, `delta==score`), wired through `tai_weight` in
   the pipeline/CLI/app and as a frontier axis, with the tRNA table's hash entering
-  the provenance stamp when tAI is active. Real **mouse and yeast** tRNA tables
-  now ship alongside human (all from GtRNAdb, re-counted, content-hashed);
-  organisms without bundled tRNA data raise -- no fabricated tables.
+  the provenance stamp when tAI is active. Real tRNA tables for **eight
+  organisms** now ship (human, mouse, rat, zebrafish, *Drosophila*, *C. elegans*,
+  *Arabidopsis*, and *S. cerevisiae* -- all from GtRNAdb, independently
+  re-counted, content-hashed, and stamped citation-gated academic use, not
+  CC/public-domain); organisms without bundled tRNA data raise -- no fabricated
+  tables.
 - **Phase 4 — Learned expression & polished app.** Expression predictor head,
   frontier reranking with calibration/uncertainty. Polish BT4 Studio (theming,
   accessibility) and ship **packaged installers** (PyInstaller/Briefcase) for

@@ -8,6 +8,7 @@ solver -- never anything above it.
 
 from __future__ import annotations
 
+from bt4.optimize import InfeasibleError
 from bt4.pipeline.optimize import (
     FrontierResult,
     OptimizeConfig,
@@ -19,6 +20,7 @@ from bt4.pipeline.optimize import (
 
 __all__ = [
     "FrontierResult",
+    "InfeasibleError",
     "OptimizeConfig",
     "ValidationReport",
     "run_frontier",

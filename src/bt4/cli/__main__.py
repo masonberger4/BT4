@@ -5,6 +5,8 @@ Subcommands:
 * ``bt4 optimize PROTEIN`` -- back-translate and optimize a protein.
 * ``bt4 validate DNA`` -- audit a coding sequence against the constraints.
 * ``bt4 organisms`` -- list bundled codon-usage tables.
+* ``bt4 enzymes`` -- list known restriction enzymes.
+* ``bt4 build-table CDS.fasta`` -- build a codon table from a CDS FASTA.
 * ``bt4 --version`` -- print the single-sourced BT4 version.
 
 Only this module prints; everything else returns data.
@@ -17,7 +19,7 @@ import sys
 from collections.abc import Sequence
 
 from bt4 import __version__, api
-from bt4.optimize import InfeasibleError
+from bt4.api import InfeasibleError
 
 __all__ = ["main"]
 

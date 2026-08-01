@@ -17,6 +17,7 @@ from bt4.domain import Result
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
 from bt4.pipeline import (
     FrontierResult,
+    InfeasibleError,
     OptimizeConfig,
     ValidationReport,
     run_frontier,
@@ -26,6 +27,7 @@ from bt4.pipeline import (
 
 __all__ = [
     "FrontierResult",
+    "InfeasibleError",
     "OptimizeConfig",
     "Result",
     "ValidationReport",
@@ -66,12 +68,17 @@ def optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
 def frontier(
     protein: str, config: OptimizeConfig | None = None, steps: int = 11
 ) -> FrontierResult:
-    """Compute the CAI/GC Pareto frontier for ``protein``.
+    """Compute the multi-objective Pareto frontier for ``protein``.
+
+    Trades off every active objective axis (CAI and GC always, plus any
+    ramp/CpG/%MinMax/tAI term whose config weight is non-zero); with only CAI and
+    GC active this is the classic CAI-vs-GC frontier.
 
     Args:
         protein: A stop-free single-letter amino-acid string.
         config: Run configuration; defaults to :class:`OptimizeConfig`.
-        steps: Number of scalarization weights swept across ``[0, 1]``.
+        steps: Resolution of the scalarization weight grid on the objective
+            simplex (for two objectives, the ``[0, 1]`` alpha sweep).
 
     Returns:
         A :class:`FrontierResult`: the non-dominated frontier plus the full

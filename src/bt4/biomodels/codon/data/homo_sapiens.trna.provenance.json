@@ -5,5 +5,5 @@
   "total_genes": 431,
   "retrieved": "2026-08-01",
   "sha256": "2d6dfaa6794f7b8b0c72de8d8aeb6f445c53d33851059fc867625f6a2cfeba72",
-  "note": "Real tRNA gene copy numbers by anticodon. tAI relative adaptiveness is derived via the dos Reis et al. (2004) wobble model (optimised s-values) as in the tai R package; see bt4.biomodels.codon.tai. Reproducible from this file's SHA-256."
+  "note": "Real tRNA gene copy numbers by anticodon. tAI relative adaptiveness is derived via the dos Reis et al. (2004) wobble model (optimised s-values) as in the tai R package; see bt4.biomodels.codon.tai. Reproducible from this file's SHA-256. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE 2.0 (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant."
 }

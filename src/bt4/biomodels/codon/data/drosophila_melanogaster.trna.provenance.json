@@ -1,0 +1,9 @@
+{
+  "source": "GtRNAdb (UCSC Lowe Lab), Drosophila melanogaster tRNA gene set",
+  "build": "tRNAscan-SE predicted nuclear tRNA gene set from dm6-tRNAs.fa (GtRNAdb Dmela6, https://gtrnadb.ucsc.edu/genomes/eukaryota/Dmela6/dm6-tRNAs.tar.gz; source FASTA sha256 0dc620e61df366f27a593fb271297fa833725f8c5e63ea0584a930ad53f82b01). SeC (selenocysteine, anticodon TCA) excluded; genes counted per anticodon (initiator iMet + elongator Met merged at CAT). No pseudogene / Undet / Sup entries are present in this source set. Independently re-counted from the sha256-pinned FASTA with zero mismatches; each name-field anticodon was verified against the parenthetical (ANTICODON). Eukaryote (sking=0).",
+  "genome": "BDGP6 / dm6 (nuclear only; no mitochondrial tRNAs)",
+  "total_genes": 289,
+  "retrieved": "2026-08-01",
+  "sha256": "e75ab079821514cd97a883129744040816899f61ff4840ee71b188492934f0eb",
+  "note": "Real tRNA gene copy numbers by anticodon. tAI relative adaptiveness is derived via the dos Reis et al. (2004) wobble model (optimised s-values) as in the tai R package; see bt4.biomodels.codon.tai. Reproducible from this file's SHA-256. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE 2.0 (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant."
+}

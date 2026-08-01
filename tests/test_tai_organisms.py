@@ -19,7 +19,15 @@ from bt4.biomodels.codon.tai import (
     load_tai_table,
 )
 
-_NEW_ORGANISMS = ("mus_musculus", "saccharomyces_cerevisiae")
+_NEW_ORGANISMS = (
+    "mus_musculus",
+    "saccharomyces_cerevisiae",
+    "rattus_norvegicus",
+    "danio_rerio",
+    "drosophila_melanogaster",
+    "caenorhabditis_elegans",
+    "arabidopsis_thaliana",
+)
 
 
 @pytest.mark.parametrize("organism", _NEW_ORGANISMS)
@@ -51,7 +59,24 @@ def test_provenance_total_genes_matches_tsv_sum(organism: str) -> None:
     assert "GtRNAdb" in prov.source
 
 
+@pytest.mark.parametrize("organism", _NEW_ORGANISMS)
+def test_provenance_is_citation_gated_not_public_domain(organism: str) -> None:
+    """GtRNAdb has no explicit data license; the note must say so, honestly."""
+    note = load_tai_provenance(organism).note
+    assert "citation-gated" in note
+    assert "tRNAscan-SE" in note
+
+
 def test_known_new_organism_gene_totals() -> None:
     """Pin the re-counted GtRNAdb totals so a table swap changes this assertion."""
-    assert sum(load_tai_table("mus_musculus").anticodon_counts.values()) == 404
-    assert sum(load_tai_table("saccharomyces_cerevisiae").anticodon_counts.values()) == 273
+    totals = {
+        "mus_musculus": 404,
+        "saccharomyces_cerevisiae": 273,
+        "rattus_norvegicus": 416,
+        "danio_rerio": 8846,
+        "drosophila_melanogaster": 289,
+        "caenorhabditis_elegans": 580,
+        "arabidopsis_thaliana": 584,
+    }
+    for organism, expected in totals.items():
+        assert sum(load_tai_table(organism).anticodon_counts.values()) == expected, organism

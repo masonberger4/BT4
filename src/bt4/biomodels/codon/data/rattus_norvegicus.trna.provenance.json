@@ -1,0 +1,9 @@
+{
+  "source": "GtRNAdb (UCSC Lowe Lab), Rattus norvegicus tRNA gene set; source FASTA rn7-tRNAs.fa from https://gtrnadb.ucsc.edu/genomes/eukaryota/Rnorv7/ (FASTA sha256 4e4c3a6948bb4a8f10a1a90cf4a00a9b818315f775424b550b0f6f3cf9177182, 82813 bytes). No explicit data license stated on the site; academic use with requested citation Chan & Lowe (2016) GtRNAdb 2.0, Nucl. Acids Res.; predictions by tRNAscan-SE 2.0.",
+  "build": "tRNAscan-SE 2.0 nuclear tRNA gene set from rn7-tRNAs.fa (417 gene records); SeC (selenocysteine, anticodon TCA) excluded (1 gene); no pseudogene/Undet/Sup records present in this FASTA; genes counted per anticodon (initiator iMet + elongator Met merged at CAT). 416 genes across 45 anticodons. Anticodon parsed from the name field and verified against the descriptive parenthetical (0 mismatches); independently re-counted via a separate parser with zero discrepancy.",
+  "genome": "mRatBN7.2 / rn7 (Rnorv7; nuclear only; no mitochondrial tRNAs)",
+  "total_genes": 416,
+  "retrieved": "2026-08-01",
+  "sha256": "32c0a86f5a0ac252c0c7f8f9c21f1a3e7c750d2cb93a235978650e795203d902",
+  "note": "Real tRNA gene copy numbers by anticodon for Rattus norvegicus. tAI relative adaptiveness is derived via the dos Reis et al. (2004) wobble model (optimised s-values, sking=0 eukaryote) as in the tai R package; see bt4.biomodels.codon.tai. Reproducible from this file's SHA-256. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE 2.0 (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant."
+}
