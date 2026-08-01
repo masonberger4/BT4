@@ -17,13 +17,18 @@ from bt4.pipeline.optimize import (
     run_optimize,
     run_validate,
 )
+from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 
 __all__ = [
     "FrontierResult",
     "InfeasibleError",
     "OptimizeConfig",
+    "Track",
+    "TracksResult",
     "ValidationReport",
     "run_frontier",
     "run_optimize",
+    "run_tracks",
     "run_validate",
+    "summarize",
 ]

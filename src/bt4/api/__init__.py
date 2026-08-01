@@ -19,10 +19,14 @@ from bt4.pipeline import (
     FrontierResult,
     InfeasibleError,
     OptimizeConfig,
+    Track,
+    TracksResult,
     ValidationReport,
     run_frontier,
     run_optimize,
+    run_tracks,
     run_validate,
+    summarize,
 )
 
 __all__ = [
@@ -30,6 +34,8 @@ __all__ = [
     "InfeasibleError",
     "OptimizeConfig",
     "Result",
+    "Track",
+    "TracksResult",
     "ValidationReport",
     "available_enzymes",
     "available_organisms",
@@ -41,7 +47,9 @@ __all__ = [
     "read_fasta",
     "result_to_dict",
     "result_to_json",
+    "summarize",
     "to_fasta",
+    "tracks",
     "validate",
     "write_table",
 ]
@@ -106,3 +114,31 @@ def validate(dna: str, config: OptimizeConfig | None = None) -> ValidationReport
         ValueError: On non-ACGT input or unknown organism.
     """
     return run_validate(dna, config)
+
+
+def tracks(
+    dna: str,
+    organism: str = "homo_sapiens",
+    *,
+    nt_window: int = 50,
+    codon_window: int = 18,
+) -> TracksResult:
+    """Compute per-site composition tracks for a coding sequence.
+
+    Sliding-window **reporting** profiles (GC fraction, CpG density, and -- when
+    codon-aligned -- %MinMax) so a delivered sequence's composition can be
+    audited or plotted position-by-position. Nothing here feeds the optimizer.
+
+    Args:
+        dna: An ACGT coding sequence (case-insensitive).
+        organism: Codon-usage table key/alias for the %MinMax reference.
+        nt_window: Window (nucleotides) for the GC and CpG tracks.
+        codon_window: Window (codons) for the %MinMax track.
+
+    Returns:
+        A :class:`~bt4.pipeline.tracks.TracksResult` bundling the named tracks.
+
+    Raises:
+        ValueError: On non-ACGT input, a non-positive window, or unknown organism.
+    """
+    return run_tracks(dna, organism, nt_window=nt_window, codon_window=codon_window)
