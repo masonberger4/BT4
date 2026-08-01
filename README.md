@@ -73,11 +73,33 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 
 ## Download and run it locally
 
-BT4 is a local desktop app — nothing is hosted, nothing phones home.
+BT4 is a local desktop app — nothing is hosted, nothing phones home. It needs
+**Python 3.11+**. The two source installs below work on any platform today; the
+packaged "no Python required" bundle is a convenience that rides on tagged
+releases (see Option C for the caveat).
 
-### Option A — install with `pipx` (recommended)
+### Option A — from source (most reliable)
 
-Get an isolated install and both the app and the CLI on your `PATH`:
+```bash
+git clone https://github.com/masonberger4/BT4
+cd BT4
+pip install -e '.[app]'     # core + PySide6 + pyqtgraph
+bt4-studio                  # launch the desktop app  (or:  python -m bt4.app)
+bt4 --help                  # or use the command line
+```
+
+On **Linux**, Qt needs a few system libraries for the GUI to open. If launching
+`bt4-studio` fails with `libEGL.so.1: cannot open shared object file`, install
+them once (Debian/Ubuntu shown):
+
+```bash
+sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3
+```
+
+macOS and Windows need no extra system packages. A virtual environment
+(`python -m venv .venv && source .venv/bin/activate`) is recommended but optional.
+
+### Option B — install with `pipx` (isolated, app + CLI on your `PATH`)
 
 ```bash
 pipx install "bt4[app] @ git+https://github.com/masonberger4/BT4"
@@ -85,21 +107,19 @@ bt4-studio        # launch the desktop app
 bt4 --help        # or use the command line
 ```
 
-### Option B — packaged app from a release
+### Option C — packaged app from a release (no Python required)
 
-Tagged releases publish a standalone **BT4 Studio** bundle (macOS / Windows /
-Linux) plus the Python wheel + sdist on the
-[Releases page](https://github.com/masonberger4/BT4/releases). Download the
-bundle for your OS, unzip, and run — no Python required.
+The [release pipeline](.github/workflows/release.yml) builds a standalone
+**BT4 Studio** bundle for macOS / Windows / Linux (plus the Python wheel + sdist)
+and attaches them to each tagged release on the
+[Releases page](https://github.com/masonberger4/BT4/releases). When a release has
+those assets, download the bundle for your OS, unzip, and run — no Python needed.
 
-### Option C — from source
-
-```bash
-git clone https://github.com/masonberger4/BT4
-cd BT4
-pip install -e '.[app]'
-bt4-studio                 # or:  python -m bt4.app
-```
+> **Heads-up:** not every existing release has bundles attached yet (an early
+> release may have been cut before the packaging pipeline ran to completion). If
+> a release shows no OS bundle, use **Option A** or **B** above — they always
+> work. Maintainers can (re)attach bundles to an existing tag with the
+> [packaging guide](packaging/README.md#repairing-a-release).
 
 ---
 

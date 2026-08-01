@@ -2,12 +2,30 @@ name: Release
 
 # On a version tag (e.g. v0.1.0) build the Python sdist + wheel and a standalone
 # BT4 Studio desktop bundle for Linux / macOS / Windows, then publish them all as
-# assets on a GitHub Release. `workflow_dispatch` builds the same artifacts for
-# testing without publishing a release.
+# assets on a GitHub Release.
+#
+# `workflow_dispatch` can do two things:
+#   * with no `ref`  -> build the dispatched branch's artifacts WITHOUT publishing
+#     (a smoke test of the packaging), and
+#   * with `ref` set to an existing tag (e.g. v0.2.0) -> rebuild THAT TAG's source
+#     and idempotently attach the bundles to its release. This is the honest,
+#     non-destructive way to repair a release that has no assets (for example one
+#     created in the UI before this pipeline existed, or a run whose publish step
+#     failed): it checks out the exact tagged source, so the bundles match the
+#     version they are published under.
+#
+# Note: GitHub only exposes `workflow_dispatch` once this workflow file exists on
+# the repository's DEFAULT branch. Until then, the tag-push trigger is the only
+# way this workflow runs.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Existing tag to rebuild and attach bundles to (e.g. v0.2.0). Leave blank to build the dispatched branch without publishing."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -18,6 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Empty on a tag push -> checkout uses the triggering tag. Set on a
+          # dispatch -> build that exact tag's source.
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -45,6 +67,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -82,7 +106,9 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/')
+    # Publish on a tag push, or on a manual dispatch that names an existing tag to
+    # repair. A dispatch with no `ref` just builds artifacts and stops here.
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.ref != '')
     needs: [dist, bundle]
     runs-on: ubuntu-latest
     steps:
@@ -92,18 +118,27 @@ jobs:
       - name: Create or update release and attach assets
         env:
           GH_TOKEN: ${{ github.token }}
+          # The tag to publish under: the dispatched tag, else the pushed tag.
+          TAG: ${{ inputs.ref || github.ref_name }}
         run: |
           assets=$(find artifacts -type f \( -name '*.zip' -o -name '*.whl' -o -name '*.tar.gz' \))
+          # Fail loudly rather than publish an empty release: an asset-less release
+          # is exactly the broken state this pipeline exists to avoid.
+          if [ -z "$assets" ]; then
+            echo "::error::no build artifacts found to attach to ${TAG}"
+            exit 1
+          fi
           # Idempotent: if the release already exists (e.g. created in the UI, which
-          # also creates the tag that triggered this run), upload assets to it
-          # instead of failing on "release already exists".
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "release ${GITHUB_REF_NAME} already exists; uploading assets"
-            gh release upload "${GITHUB_REF_NAME}" $assets --repo "${GITHUB_REPOSITORY}" --clobber
+          # also creates the tag that triggered this run, or a prior asset-less
+          # release being repaired), upload assets to it instead of failing on
+          # "release already exists".
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists; uploading assets"
+            gh release upload "${TAG}" $assets --repo "${GITHUB_REPOSITORY}" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "${GITHUB_REF_NAME}" \
+              --title "${TAG}" \
               --generate-notes \
               $assets
           fi

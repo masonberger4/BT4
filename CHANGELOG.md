@@ -21,6 +21,21 @@ its first tagged release.
 - CLI flags for all of the above (`--ramp-weight`, `--cpg-weight`, `--cpg-mode`,
   `--gc-min`, `--gc-max`) and a CpG control in BT4 Studio.
 
+### Changed
+- **Release pipeline is now re-drivable and self-healing.** `release.yml` accepts
+  a `workflow_dispatch` `ref` input to rebuild an existing tag's source and
+  idempotently (re)attach the macOS/Windows/Linux bundles + wheel/sdist to its
+  release — the honest, non-destructive way to repair a release that has no
+  assets. The publish step now also fails loudly instead of publishing an empty,
+  asset-less release. See [`packaging/README.md`](packaging/README.md#repairing-a-release).
+
+### Fixed
+- **Honest "Download and run it locally" docs.** The README now leads with the
+  from-source and `pipx` installs (which always work) and documents the Linux Qt
+  runtime libraries needed to launch BT4 Studio (`libEGL.so.1` &c.); the packaged
+  bundle is described as a release-time convenience with an explicit note that a
+  release may not have bundles attached yet.
+
 ## [0.2.0] - 2026-07-31
 
 Richer biology and surfaces on top of the exact-DP core.
