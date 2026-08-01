@@ -73,6 +73,8 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 
 ## Install BT4 Studio (no coding required)
 
+> New to installing apps? See the **[full step-by-step install & troubleshooting guide](docs/INSTALL.md)**.
+
 BT4 Studio is a normal desktop app: **you download one file and open it.** No
 terminal, no Python, no setup. Everything runs on your own machine and nothing is
 uploaded anywhere.
