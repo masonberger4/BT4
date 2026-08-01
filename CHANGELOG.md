@@ -7,6 +7,12 @@ its first tagged release.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-01
+
+First release with a **downloadable, double-clickable BT4 Studio app** for
+Windows / macOS / Linux, plus a wave of Phase 2/3 objectives, constraints, and
+solver backends.
+
 ### Added
 - **5' translation-ramp objective** (`RampTerm`) -- a heuristic that prefers
   slower codons in the first N codons (`ramp_weight` / `ramp_codons`).

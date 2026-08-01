@@ -8,5 +8,5 @@ lazily by the layers that need them.
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 """Single source of truth for the BT4 version (surfaced via ``bt4 --version``)."""
