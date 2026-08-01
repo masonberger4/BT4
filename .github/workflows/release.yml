@@ -1,18 +1,22 @@
 name: Release
 
-# On a version tag (e.g. v0.1.0) build the Python sdist + wheel and a standalone
-# BT4 Studio desktop bundle for Linux / macOS / Windows, then publish them all as
-# assets on a GitHub Release.
+# On a version tag (e.g. v0.1.0) build the Python sdist + wheel and a standalone,
+# double-clickable BT4 Studio app for each OS, then publish them all as assets on
+# a GitHub Release. The per-OS artifacts are chosen so a non-technical user can
+# just download one thing and open it:
+#
+#   * Windows -> BT4-Studio-Windows.exe        (one-file, double-click)
+#   * macOS   -> BT4-Studio-macOS.dmg          (drag to Applications)
+#   * Linux   -> BT4-Studio-Linux-x86_64       (one-file, mark executable + run)
 #
 # `workflow_dispatch` can do two things:
 #   * with no `ref`  -> build the dispatched branch's artifacts WITHOUT publishing
 #     (a smoke test of the packaging), and
 #   * with `ref` set to an existing tag (e.g. v0.2.0) -> rebuild THAT TAG's source
-#     and idempotently attach the bundles to its release. This is the honest,
-#     non-destructive way to repair a release that has no assets (for example one
-#     created in the UI before this pipeline existed, or a run whose publish step
-#     failed): it checks out the exact tagged source, so the bundles match the
-#     version they are published under.
+#     and idempotently attach the assets to its release. This is the honest,
+#     non-destructive way to repair a release that has no assets: it checks out
+#     the exact tagged source, so the app matches the version it is published
+#     under.
 #
 # Note: GitHub only exposes `workflow_dispatch` once this workflow file exists on
 # the repository's DEFAULT branch. Until then, the tag-push trigger is the only
@@ -23,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Existing tag to rebuild and attach bundles to (e.g. v0.2.0). Leave blank to build the dispatched branch without publishing."
+        description: "Existing tag to rebuild and attach assets to (e.g. v0.2.0). Leave blank to build the dispatched branch without publishing."
         required: false
         default: ""
 
@@ -53,17 +57,20 @@ jobs:
           path: dist/*
 
   bundle:
-    name: BT4 Studio bundle (${{ matrix.os }})
+    name: BT4 Studio app (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             artifact: bt4-studio-linux
+            asset: BT4-Studio-Linux-x86_64
           - os: macos-latest
             artifact: bt4-studio-macos
+            asset: BT4-Studio-macOS.dmg
           - os: windows-latest
             artifact: bt4-studio-windows
+            asset: BT4-Studio-Windows.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -81,28 +88,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[app,packaging]'
-      - name: Build the bundle
+      - name: Build the app
         working-directory: packaging
         run: pyinstaller --clean --noconfirm bt4-studio.spec
-      - name: Archive the bundle
+      - name: Package the double-clickable asset
         shell: bash
         working-directory: packaging/dist
         run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            target="BT4 Studio.app"
-          else
-            target="BT4 Studio"
-          fi
-          out="${{ github.workspace }}/${{ matrix.artifact }}.zip"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a -tzip "$out" "$target"
-          else
-            zip -r "$out" "$target"
-          fi
+          case "${{ runner.os }}" in
+            Windows)
+              # PyInstaller emits a single "BT4 Studio.exe"; give it a friendly name.
+              mv "BT4 Studio.exe" "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
+              ;;
+            macOS)
+              # Wrap the .app in a compressed, drag-to-Applications .dmg.
+              mkdir dmgroot
+              cp -R "BT4 Studio.app" dmgroot/
+              ln -s /Applications dmgroot/Applications
+              hdiutil create -volname "BT4 Studio" -srcfolder dmgroot -ov \
+                -format UDZO "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
+              ;;
+            Linux)
+              # PyInstaller emits a single "BT4 Studio" executable; friendly name.
+              mv "BT4 Studio" "${GITHUB_WORKSPACE}/${{ matrix.asset }}"
+              ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.zip
+          path: ${{ matrix.asset }}
 
   release:
     name: Publish GitHub Release
@@ -121,7 +135,7 @@ jobs:
           # The tag to publish under: the dispatched tag, else the pushed tag.
           TAG: ${{ inputs.ref || github.ref_name }}
         run: |
-          assets=$(find artifacts -type f \( -name '*.zip' -o -name '*.whl' -o -name '*.tar.gz' \))
+          assets=$(find artifacts -type f \( -name 'BT4-Studio-*' -o -name '*.whl' -o -name '*.tar.gz' \))
           # Fail loudly rather than publish an empty release: an asset-less release
           # is exactly the broken state this pipeline exists to avoid.
           if [ -z "$assets" ]; then

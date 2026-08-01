@@ -22,19 +22,27 @@ its first tagged release.
   `--gc-min`, `--gc-max`) and a CpG control in BT4 Studio.
 
 ### Changed
+- **Idiot-proof, double-clickable app packaging.** The PyInstaller spec now emits
+  a *single* file per desktop OS instead of a one-folder zip: a one-file
+  `BT4-Studio-Windows.exe`, a one-file `BT4-Studio-Linux-x86_64`, and (on macOS) a
+  `.app` that CI wraps in a drag-to-Applications `BT4-Studio-macOS.dmg`. Verified
+  end-to-end on Linux: the one-file build launches BT4 Studio and runs its event
+  loop. The README's install section is rewritten for non-technical users
+  (download-one-file table + how to click past the unsigned-app OS warnings), with
+  the from-source/CLI install moved to a "for developers" section.
 - **Release pipeline is now re-drivable and self-healing.** `release.yml` accepts
   a `workflow_dispatch` `ref` input to rebuild an existing tag's source and
-  idempotently (re)attach the macOS/Windows/Linux bundles + wheel/sdist to its
-  release — the honest, non-destructive way to repair a release that has no
-  assets. The publish step now also fails loudly instead of publishing an empty,
-  asset-less release. See [`packaging/README.md`](packaging/README.md#repairing-a-release).
+  idempotently (re)attach the per-OS app + wheel/sdist to its release — the
+  honest, non-destructive way to repair a release that has no assets. The publish
+  step now also fails loudly instead of publishing an empty, asset-less release.
+  See [`packaging/README.md`](packaging/README.md#repairing-a-release).
 
 ### Fixed
-- **Honest "Download and run it locally" docs.** The README now leads with the
-  from-source and `pipx` installs (which always work) and documents the Linux Qt
-  runtime libraries needed to launch BT4 Studio (`libEGL.so.1` &c.); the packaged
-  bundle is described as a release-time convenience with an explicit note that a
-  release may not have bundles attached yet.
+- The only tagged release (`v0.2.0`) had **no downloadable app**: its publish step
+  ran the pre-idempotency workflow and `gh release create` failed on "release
+  already exists" (the tag/release were made in the UI first), so the built
+  bundles never attached. The pipeline is now idempotent and re-drivable, and the
+  docs no longer point users at an empty Releases page.
 
 ## [0.2.0] - 2026-07-31
 
