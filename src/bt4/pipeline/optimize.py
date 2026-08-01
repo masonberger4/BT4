@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from bt4 import __version__
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
+from bt4.constraints.kozak import InternalStartConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
@@ -98,6 +99,9 @@ class OptimizeConfig:
             repeat, or ``None`` to disable the inverted-repeat constraint.
         inverted_loop: Maximum loop length between the hairpin arms (only used
             when ``inverted_stem`` is set).
+        avoid_internal_start: When ``True``, forbid any internal ATG (past the
+            first codon) sitting in a strong Kozak context (purine at -3 and G at
+            +4) to suppress spurious re-initiation. Off by default.
         gc_min: Optional lower bound on the total GC nucleotide count. Setting a
             GC budget routes the solve through the OR-Tools CP-SAT backend.
         gc_max: Optional upper bound on the total GC nucleotide count.
@@ -124,6 +128,7 @@ class OptimizeConfig:
     tandem_copies: int = 3
     inverted_stem: int | None = None
     inverted_loop: int = 0
+    avoid_internal_start: bool = False
     gc_min: int | None = None
     gc_max: int | None = None
     beam: int | None = None
@@ -215,6 +220,8 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
         constraints.append(
             InvertedRepeatConstraint(config.inverted_stem, config.inverted_loop)
         )
+    if config.avoid_internal_start:
+        constraints.append(InternalStartConstraint())
     return constraints
 
 
@@ -266,6 +273,7 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "tandem_copies": config.tandem_copies,
         "inverted_stem": config.inverted_stem,
         "inverted_loop": config.inverted_loop,
+        "avoid_internal_start": config.avoid_internal_start,
         "gc_min": config.gc_min,
         "gc_max": config.gc_max,
         "beam": config.beam,

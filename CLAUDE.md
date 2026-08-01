@@ -438,10 +438,19 @@ is a requirement, not a nice-to-have.
   constraints and pairwise objective terms** honored under the budget — reporting
   an honest gap-bounded certificate from its subgradient dual bound. The pipeline
   now routes a GC budget to CP-SAT for the pure-additive case and to the
-  Lagrangian backend whenever a local constraint or pairwise term is present.
-  Remaining: tAI (needs authentic tRNA data); CpG/whole-sequence *count* budgets
-  (not per-codon-decomposable, so out of the current Lagrangian `amount` shape);
-  and the published comparison vs GeneOptimizer/IDT.
+  Lagrangian backend whenever a local constraint or pairwise term is present. Also
+  landed: an **internal-ATG strong-Kozak constraint**
+  (`constraints/kozak.py`, LOCAL, `ok_suffix⇔validate`-tested) that forbids
+  internal `ATG` in a strong Kozak context (purine at -3, G at +4) — with the
+  genuinely non-local **uORF pairing** part *honestly deferred* to Phase 3, not
+  faked with a padded window; an **enriched benchmark harness** reporting CpG,
+  tandem-repeat, and %MinMax alongside GC/homopolymer/CAI (still naive-vs-BT4, no
+  fabricated competitor numbers); and BT4's first **performance/scaling
+  regression test** (`tests/test_performance.py`, §7) asserting sub-quadratic
+  exact-DP runtime under a wall-clock ceiling. Remaining: tAI (needs authentic
+  tRNA data); uORF pairing and CpG/whole-sequence *count* budgets (both non-local
+  / not per-codon-decomposable, deferred); and the published comparison vs
+  GeneOptimizer/IDT.
 - **Phase 3 — Non-local models & refinement done right.** ViennaRNA folding (5′
   ΔG objective + constraint); incremental SA / parallel-tempering with block
   moves; SpliceAI/Pangolin-class model trained on real GENCODE, Δsplicing
