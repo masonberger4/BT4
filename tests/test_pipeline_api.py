@@ -219,3 +219,23 @@ def test_repeat_constraints_surface_in_validation() -> None:
     )
     assert not report.is_feasible
     assert any(v.constraint == "tandem_repeat" for v in report.violations)
+
+
+def test_avoid_internal_start_enforced() -> None:
+    result = api.optimize(_RICH, api.OptimizeConfig(avoid_internal_start=True))
+    assert result.metrics.hard_violations == 0
+    assert not any(v.constraint == "internal_start" for v in result.violations)
+    assert result.certificate.is_proven_optimal
+
+
+def test_internal_start_flags_strong_kozak_atg() -> None:
+    # "GCCACCATGGCC": an internal ATG at index 6 with a purine at -3 (A) and G at
+    # +4 -- the strong Kozak consensus -- must be flagged when the guard is on.
+    report = api.validate(
+        "GCCACCATGGCC", api.OptimizeConfig(avoid_internal_start=True, max_homopolymer=None)
+    )
+    assert not report.is_feasible
+    assert any(v.constraint == "internal_start" for v in report.violations)
+    # With the guard off it is not flagged.
+    clean = api.validate("GCCACCATGGCC", api.OptimizeConfig(max_homopolymer=None))
+    assert not any(v.constraint == "internal_start" for v in clean.violations)

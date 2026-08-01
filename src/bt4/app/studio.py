@@ -149,6 +149,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.inverted_spin.setAccessibleName("Inverted-repeat stem length (0 = off)")
         self._add_row(form, "Hairpin stem", self.inverted_spin)
 
+        self.internal_start_check = QtWidgets.QCheckBox("avoid strong-Kozak internal ATG")
+        self.internal_start_check.setAccessibleName("Avoid internal start codons")
+        self._add_row(form, "Internal ATG", self.internal_start_check)
+
         self.steps_spin = QtWidgets.QSpinBox()
         self.steps_spin.setRange(1, 25)
         self.steps_spin.setValue(9)
@@ -265,6 +269,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.minmax_combo,
             self.tandem_spin,
             self.inverted_spin,
+            self.internal_start_check,
             self.steps_spin,
             self.beam_spin,
             self.optimize_btn,
@@ -308,6 +313,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             minmax_direction=minmax_direction,
             tandem_unit=tandem if tandem > 0 else None,
             inverted_stem=inverted if inverted > 0 else None,
+            avoid_internal_start=self.internal_start_check.isChecked(),
             beam=beam if beam > 0 else None,
             seed=0,
         )

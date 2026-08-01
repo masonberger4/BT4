@@ -94,6 +94,14 @@ def test_optimize_with_repeats(capsys: pytest.CaptureFixture[str]) -> None:
     assert "0 hard" in out
 
 
+def test_optimize_avoid_internal_start(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MAALKHETQWSNDECFGR", "--avoid-internal-start"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "proven_optimal" in out
+    assert "0 hard" in out
+
+
 def test_build_table(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from pathlib import Path
 

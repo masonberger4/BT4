@@ -43,6 +43,7 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         tandem_copies=args.tandem_copies,
         inverted_stem=args.inverted_stem,
         inverted_loop=args.inverted_loop,
+        avoid_internal_start=args.avoid_internal_start,
         gc_min=args.gc_min,
         gc_max=args.gc_max,
         beam=None if args.beam <= 0 else args.beam,
@@ -79,6 +80,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
                         help="ban hairpins with this stem/arm length (off unless set)")
     parser.add_argument("--inverted-loop", type=int, default=0, dest="inverted_loop",
                         help="max hairpin loop length between arms (default 0)")
+    parser.add_argument("--avoid-internal-start", action="store_true",
+                        dest="avoid_internal_start",
+                        help="forbid internal ATG in a strong Kozak context")
     parser.add_argument("--gc-min", type=int, default=None, dest="gc_min",
                         help="min total GC count (CP-SAT, or Lagrangian with local/pairwise terms)")
     parser.add_argument("--gc-max", type=int, default=None, dest="gc_max",

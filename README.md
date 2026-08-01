@@ -37,8 +37,8 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
   constraints and pairwise terms honored, with a gap-bounded certificate.
 - **Hard constraints:** maximum homopolymer run, forbidden motifs, **tandem &
-  inverted-repeat** (hairpin) bans, and a **restriction-enzyme catalog**
-  (IUPAC-aware, auto reverse-complement).
+  inverted-repeat** (hairpin) bans, an **internal strong-Kozak ATG** guard, and a
+  **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* out of the box,
   and `bt4 build-table` builds an authentic table from your own CDS FASTA.
 - **Honest metrics:** every reported number (CAI, GC, violations) is recomputed
