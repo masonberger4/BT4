@@ -10,11 +10,15 @@ This layer never prints; it raises on error and returns immutable results.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import available_organisms
+from bt4.biomodels.codon.tai import available_tai_organisms
 from bt4.constraints import available_enzymes
-from bt4.domain import Result
+from bt4.domain import AMINO_ACIDS, Result, validate_protein
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
+from bt4.optimize import InfeasibleError
 from bt4.pipeline import (
     FrontierResult,
     OptimizeConfig,
@@ -25,12 +29,15 @@ from bt4.pipeline import (
 )
 
 __all__ = [
+    "AMINO_ACIDS",
     "FrontierResult",
+    "InfeasibleError",
     "OptimizeConfig",
     "Result",
     "ValidationReport",
     "available_enzymes",
     "available_organisms",
+    "available_tai_organisms",
     "build_table",
     "count_codons",
     "frontier",
@@ -41,6 +48,7 @@ __all__ = [
     "result_to_json",
     "to_fasta",
     "validate",
+    "validate_protein",
     "write_table",
 ]
 
@@ -64,7 +72,12 @@ def optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
 
 
 def frontier(
-    protein: str, config: OptimizeConfig | None = None, steps: int = 11
+    protein: str,
+    config: OptimizeConfig | None = None,
+    steps: int = 11,
+    *,
+    on_progress: Callable[[int, int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> FrontierResult:
     """Compute the CAI/GC Pareto frontier for ``protein``.
 
@@ -72,16 +85,25 @@ def frontier(
         protein: A stop-free single-letter amino-acid string.
         config: Run configuration; defaults to :class:`OptimizeConfig`.
         steps: Number of scalarization weights swept across ``[0, 1]``.
+        on_progress: Optional callback invoked as ``on_progress(done, total)``
+            after each frontier grid point completes. Lets a UI show progress
+            without blocking the engine.
+        should_cancel: Optional predicate polled before each grid point; when it
+            returns ``True`` the sweep stops early and returns the frontier of the
+            points computed so far (raising only if none completed).
 
     Returns:
         A :class:`FrontierResult`: the non-dominated frontier plus the full
         result behind each point and a top-level manifest.
 
     Raises:
-        ValueError: On an invalid protein, unknown organism, or ``steps < 1``.
+        ValueError: On an invalid protein, unknown organism, ``steps < 1``, or a
+            cancellation before any point completed.
         bt4.optimize.InfeasibleError: If the constraints admit no feasible codon.
     """
-    return run_frontier(protein, config, steps)
+    return run_frontier(
+        protein, config, steps, on_progress=on_progress, should_cancel=should_cancel
+    )
 
 
 def validate(dna: str, config: OptimizeConfig | None = None) -> ValidationReport:

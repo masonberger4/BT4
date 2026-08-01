@@ -591,7 +591,12 @@ def _nondominated_indices(vectors: Sequence[ObjectiveVector]) -> list[int]:
 
 
 def run_frontier(
-    protein: str, config: OptimizeConfig | None = None, steps: int = 11
+    protein: str,
+    config: OptimizeConfig | None = None,
+    steps: int = 11,
+    *,
+    on_progress: Callable[[int, int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> FrontierResult:
     """Sweep the objective trade-offs and return the Pareto frontier of exact solves.
 
@@ -625,8 +630,14 @@ def run_frontier(
     axes = _frontier_axes(table, config)
     objective_context = max((term.context_len() for term in axes), default=0)
     grid = _simplex_grid(len(axes), steps)
+    total = len(grid)
     by_dna: dict[str, Result] = {}
-    for weights in grid:
+    for i, weights in enumerate(grid):
+        if should_cancel is not None and should_cancel():
+            # Cooperative cancellation: stop the sweep and return whatever points
+            # completed. Each computed point is a real exact solve, so a partial
+            # frontier is honest -- just a coarser sample of the trade-off surface.
+            break
         active = list(zip(axes, weights, strict=True))
         solve = solve_exact(
             residues,
@@ -646,6 +657,12 @@ def run_frontier(
                 config=config,
                 alpha=weights[0],
             )
+        if on_progress is not None:
+            on_progress(i + 1, total)
+
+    if not by_dna:
+        # Only reachable if cancelled before the first grid point completed.
+        raise ValueError("optimization was cancelled before any result was produced")
 
     uniq = list(by_dna.values())
     vectors = [r.metrics.objective for r in uniq]

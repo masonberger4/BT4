@@ -7,6 +7,40 @@ its first tagged release.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-01
+
+BT4 Studio first-run polish: the desktop app now guides a non-technical user
+through mistakes with plain-language messages instead of raw Python errors, and
+never leaves a stale result behind a failed run.
+
+### Added
+- **Cancel button + live progress** for BT4 Studio. The frontier sweep now
+  reports per-point progress (`solving frontier point 3 of 9`) and can be stopped
+  mid-run; cancelling returns the partial frontier computed so far. `api.frontier`
+  / `run_frontier` gained optional `on_progress` and `should_cancel` hooks.
+- A one-time **warning before optimizing a very long protein** (it may take a
+  while, and the run is cancelable).
+- `bt4.api` now re-exports `InfeasibleError`, `validate_protein`, `AMINO_ACIDS`,
+  and `available_tai_organisms` so frontends can validate input and translate
+  failures without reaching past the API layer.
+
+### Changed
+- **Plain-language input handling in BT4 Studio.** Pasting a FASTA record strips
+  its header automatically; an empty box, a trailing `*` stop, or non-amino-acid
+  characters get a clear, specific message (not a Python `repr`); restriction-
+  enzyme names are matched case-insensitively and unknown ones list the valid
+  catalog; an infeasible constraint set explains which knobs to relax instead of
+  saying "no feasible codon". The **tAI** checkbox is now labelled correctly and
+  enabled only for organisms that ship a tRNA table.
+
+### Fixed
+- **A failed run no longer leaves a stale, exportable result on screen** — the
+  results panel (and the delivered result behind Export) is cleared on failure,
+  so Export can't silently write the previous sequence.
+- `scripts/sensitivity.py` detected tAI availability via the pre-0.3.0 organism-
+  list quirk and silently returned `None` for every organism after that quirk was
+  fixed; it now uses `api.available_tai_organisms()`.
+
 ## [0.3.0] - 2026-08-01
 
 First release with a **downloadable, double-clickable BT4 Studio app** for

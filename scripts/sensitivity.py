@@ -89,8 +89,8 @@ def tai_logw(dna: str, organism: str) -> float | None:
 
     tAI is defined only for organisms that ship a tRNA gene-copy-number table.
     Availability is detected purely through the public surface: organism ``X``
-    has tAI data iff ``f"{X}.trna"`` appears in
-    :func:`bt4.api.available_organisms`. When available, the value is recomputed
+    has tAI data iff it appears in :func:`bt4.api.available_tai_organisms`. When
+    available, the value is recomputed
     on the exact ``dna`` by :func:`bt4.api.validate` with the tAI term switched on
     (the weight value does not affect the recomputed score, only whether the term
     is active).
@@ -103,7 +103,7 @@ def tai_logw(dna: str, organism: str) -> float | None:
         The ``tai_logw`` objective value (larger, i.e. closer to zero, is
         better), or ``None`` when ``organism`` ships no tRNA table.
     """
-    if f"{organism}.trna" not in api.available_organisms():
+    if organism not in api.available_tai_organisms():
         return None
     report = api.validate(dna, api.OptimizeConfig(organism=organism, tai_weight=1.0))
     if "tai_logw" not in report.metrics.objective.terms():

@@ -38,6 +38,10 @@ _METRIC_ROWS = (
     "Solver",
 )
 
+# Above this residue count, warn before starting: the exact frontier sweep can
+# take a noticeable amount of time (the run is cancelable either way).
+_LONG_PROTEIN_WARN = 500
+
 
 def _is_dark() -> bool:
     """Guess whether the running app uses a dark theme from its window colour."""
@@ -62,6 +66,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._thread: QtCore.QThread | None = None
         self._worker: OptimizeWorker | None = None
         self._msgbox: QtWidgets.QMessageBox | None = None
+        self._cancel_requested = False
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_controls())
@@ -153,8 +158,8 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.internal_start_check.setAccessibleName("Avoid internal start codons")
         self._add_row(form, "Internal ATG", self.internal_start_check)
 
-        self.tai_check = QtWidgets.QCheckBox("add tAI axis (human tRNA)")
-        self.tai_check.setAccessibleName("Add tRNA-adaptation-index objective (human only)")
+        self.tai_check = QtWidgets.QCheckBox("add tAI axis (tRNA adaptation)")
+        self.tai_check.setAccessibleName("Add tRNA-adaptation-index objective")
         self._add_row(form, "tAI", self.tai_check)
 
         self.steps_spin = QtWidgets.QSpinBox()
@@ -173,7 +178,21 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.optimize_btn = QtWidgets.QPushButton("Optimize")
         self.optimize_btn.setAccessibleName("Run optimization")
         self.optimize_btn.clicked.connect(self._start_optimize)
-        form.addRow(self.optimize_btn)
+        self.cancel_btn = QtWidgets.QPushButton("Cancel")
+        self.cancel_btn.setAccessibleName("Cancel the running optimization")
+        self.cancel_btn.clicked.connect(self._cancel_optimize)
+        self.cancel_btn.setEnabled(False)
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addWidget(self.optimize_btn)
+        buttons.addWidget(self.cancel_btn)
+        form.addRow(buttons)
+
+        # tAI is only meaningful for organisms with a bundled tRNA table; keep the
+        # checkbox enabled/disabled in step with the chosen organism.
+        self.organism_combo.currentTextChanged.connect(
+            lambda *_: self._update_tai_availability()
+        )
+        self._update_tai_availability()
 
         return box
 
@@ -278,6 +297,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.steps_spin,
             self.beam_spin,
             self.optimize_btn,
+            self.cancel_btn,
             self.export_fasta_btn,
             self.export_json_btn,
         )
@@ -286,16 +306,112 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     # ---- run --------------------------------------------------------------
 
-    def _read_config(self) -> tuple[str, api.OptimizeConfig, int]:
-        """Read the controls into a protein, an OptimizeConfig, and a step count."""
-        protein = "".join(self.protein_edit.toPlainText().split()).upper()
+    def _update_tai_availability(self) -> None:
+        """Enable the tAI axis only for organisms that ship a tRNA table."""
+        organism = self.organism_combo.currentText()
+        available = organism in api.available_tai_organisms()
+        self.tai_check.setEnabled(available)
+        if available:
+            self.tai_check.setToolTip("Add a tRNA-adaptation-index (tAI) objective axis.")
+        else:
+            self.tai_check.setChecked(False)
+            self.tai_check.setToolTip(
+                f"No tRNA data is bundled for {organism}, so tAI is unavailable "
+                "for this organism."
+            )
+
+    def _prepare_protein(self) -> str | None:
+        """Read, clean, and validate the protein box; show a friendly note on error.
+
+        Returns the upper-cased amino-acid string, or ``None`` (after explaining
+        the problem) if the box is empty, holds a pasted FASTA header, ends in a
+        stop, or contains non-amino-acid characters.
+        """
+        raw = self.protein_edit.toPlainText()
+        if any(line.lstrip().startswith(">") for line in raw.splitlines()):
+            # They pasted a FASTA record -- take the first sequence for them.
+            records = api.parse_fasta(raw)
+            if not records or not records[0][1]:
+                self._warn(
+                    "That looks like a FASTA file",
+                    "Paste just the amino-acid sequence, or remove the '>' header line.",
+                )
+                self.protein_edit.setFocus()
+                return None
+            protein = records[0][1]
+        else:
+            protein = "".join(raw.split()).upper()
+
+        if not protein:
+            self._warn(
+                "No protein yet",
+                "Paste a protein sequence (for example MAALKHETQW) to optimize.",
+            )
+            self.protein_edit.setFocus()
+            return None
+        if protein.endswith("*") and set(protein[:-1]) <= api.AMINO_ACIDS:
+            self._warn(
+                "Remove the trailing stop",
+                "This sequence ends in '*'. BT4 adds the stop codon itself -- paste "
+                "the protein without the trailing stop.",
+            )
+            self.protein_edit.setFocus()
+            return None
+        bad = sorted({ch for ch in protein if ch not in api.AMINO_ACIDS})
+        if bad:
+            shown = ", ".join(repr(ch) for ch in bad)
+            self._warn(
+                "That isn't a valid protein",
+                f"These characters aren't amino acids: {shown}. Use single-letter "
+                "amino-acid codes (A, C, D, E, F, ...).",
+            )
+            self.protein_edit.setFocus()
+            return None
+        return protein
+
+    def _prepare_enzymes(self) -> tuple[str, ...] | None:
+        """Canonicalize the restriction-enzyme field case-insensitively.
+
+        Returns the tuple of catalog-cased enzyme names, or ``None`` (after
+        listing the valid names) if any entry is not in the catalog.
+        """
+        raw = [e.strip() for e in self.enzymes_edit.text().split(",") if e.strip()]
+        catalog = {name.lower(): name for name in api.available_enzymes()}
+        canonical: list[str] = []
+        unknown: list[str] = []
+        for entry in raw:
+            name = catalog.get(entry.lower())
+            (canonical if name else unknown).append(name or entry)
+        if unknown:
+            self._warn(
+                "Unknown restriction enzyme",
+                f"Not in the catalog: {', '.join(unknown)}.",
+                f"Available enzymes: {', '.join(api.available_enzymes())}.",
+            )
+            self.enzymes_edit.setFocus()
+            return None
+        return tuple(canonical)
+
+    def _confirm_long_run(self, protein: str) -> bool:
+        """Warn before optimizing a long protein; return whether to proceed."""
+        if len(protein) <= _LONG_PROTEIN_WARN:
+            return True
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Long protein",
+            f"This protein has {len(protein)} residues, so the frontier sweep may "
+            "take a while. You can press Cancel while it runs.\n\nStart anyway?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+    def _build_config(self, enzymes: tuple[str, ...]) -> tuple[api.OptimizeConfig, int]:
+        """Read the design controls into an OptimizeConfig and a frontier step count."""
         homo = self.homo_spin.value()
         beam = self.beam_spin.value()
         motifs = tuple(
             m.strip().upper() for m in self.motifs_edit.text().split(",") if m.strip()
-        )
-        enzymes = tuple(
-            e.strip() for e in self.enzymes_edit.text().split(",") if e.strip()
         )
         cpg = self.cpg_combo.currentText()
         cpg_weight = 0.0 if cpg == "off" else 1.0
@@ -323,15 +439,21 @@ class StudioWindow(QtWidgets.QMainWindow):
             beam=beam if beam > 0 else None,
             seed=0,
         )
-        return protein, config, self.steps_spin.value()
+        return config, self.steps_spin.value()
 
     def _start_optimize(self) -> None:
-        """Launch a frontier optimization on a background thread."""
-        protein, config, steps = self._read_config()
-        if not protein:
-            self.statusBar().showMessage("Enter a protein sequence to optimize.")
+        """Validate the inputs, then launch a frontier optimization off-thread."""
+        protein = self._prepare_protein()
+        if protein is None:
             return
+        enzymes = self._prepare_enzymes()
+        if enzymes is None:
+            return
+        if not self._confirm_long_run(protein):
+            return
+        config, steps = self._build_config(enzymes)
 
+        self._cancel_requested = False
         self._set_running(True)
         self.statusBar().showMessage("Optimizing...")
 
@@ -352,10 +474,33 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._worker = worker
         thread.start()
 
+    def _cancel_optimize(self) -> None:
+        """Ask the running worker to stop after its current frontier point."""
+        if self._worker is not None:
+            self._cancel_requested = True
+            self._worker.cancel()
+            self.cancel_btn.setEnabled(False)
+            self.statusBar().showMessage("Cancelling...")
+
+    def _warn(self, title: str, text: str, detail: str = "") -> None:
+        """Show a non-blocking, plain-language warning and mirror it to the status bar."""
+        self.statusBar().showMessage(text)
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(text)
+        if detail:
+            box.setInformativeText(detail)
+        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        # show() (not exec()) so the app never blocks -- important headless too.
+        self._msgbox = box
+        box.show()
+
     def _set_running(self, running: bool) -> None:
         """Toggle controls while a run is in flight so the UI stays consistent."""
         self.optimize_btn.setEnabled(not running)
         self.optimize_btn.setText("Optimizing..." if running else "Optimize")
+        self.cancel_btn.setEnabled(running)
 
     # ---- slots ------------------------------------------------------------
 
@@ -370,26 +515,55 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._last = result
         self._set_running(False)
         self._populate(result)
+        if self._cancel_requested:
+            self.statusBar().showMessage(
+                "Cancelled -- showing the partial frontier computed so far."
+            )
 
-    @QtCore.Slot(str)
-    def _on_failed(self, message: str) -> None:
-        """Re-enable controls and show a non-blocking warning on any engine error."""
+    @QtCore.Slot(object)
+    def _on_failed(self, error: object) -> None:
+        """Clear the results and show a plain-language message on any engine error."""
         self._set_running(False)
-        self.statusBar().showMessage(f"Optimization failed: {message}")
+        # Never leave a stale, still-exportable result behind a failed run (P9):
+        # a subsequent export would silently write the previous sequence.
+        self._reset_results()
+        if self._cancel_requested:
+            self.statusBar().showMessage("Optimization cancelled.")
+            return
+        headline, detail = self._friendly_error(error)
+        self.statusBar().showMessage(headline)
         box = QtWidgets.QMessageBox(self)
         box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
-        box.setWindowTitle("Optimization failed")
-        box.setText("The optimization could not complete.")
-        box.setInformativeText(message)
+        box.setWindowTitle("Couldn't optimize")
+        box.setText(headline)
+        if detail:
+            box.setInformativeText(detail)
         box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
         # show() (not exec()) so the app never blocks -- important headless too.
         self._msgbox = box
         box.show()
 
+    def _friendly_error(self, error: object) -> tuple[str, str]:
+        """Translate an engine exception into (headline, detail) plain language."""
+        if isinstance(error, api.InfeasibleError):
+            names = (
+                ", ".join(error.constraints) if error.constraints else "the active limits"
+            )
+            return (
+                "No sequence can satisfy these settings.",
+                f"Nothing works under {names}. Try increasing Max homopolymer, removing "
+                "forbidden motifs or restriction sites, or relaxing the GC target and the "
+                "tandem/hairpin limits.",
+            )
+        return ("The optimization couldn't complete.", str(error))
+
     # ---- rendering --------------------------------------------------------
 
     def _reset_results(self) -> None:
         """Clear the results panel to an honest empty state."""
+        # Drop the delivered result too, so nothing stale stays exportable via
+        # _delivered() after a cleared/failed run (P9).
+        self._last = None
         self.badge.setText("No optimization run yet.")
         self.badge.setStyleSheet(theme.badge_qss(""))
         self.metrics_table.setRowCount(0)
