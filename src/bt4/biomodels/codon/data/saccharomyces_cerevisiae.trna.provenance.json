@@ -1,0 +1,9 @@
+{
+  "source": "GtRNAdb (UCSC Lowe Lab), Saccharomyces cerevisiae tRNA gene set",
+  "build": "tRNAscan-SE 2.0 nuclear tRNA gene set from sacCer3-tRNAs.fa; undetermined-isotype tRNAs (Und, anticodon NNN) excluded; genes counted per anticodon (initiator + elongator Met merged at CAT). Independently re-counted from a sha256-pinned FASTA with zero mismatches (275 predicted loci minus 2 Und = 273 sense tRNA genes).",
+  "genome": "sacCer3 / S288C R64 (Apr 2011; nuclear only; no mitochondrial tRNAs)",
+  "total_genes": 273,
+  "retrieved": "2026-08-01",
+  "sha256": "41b46d1e6cf276ec6ea7e8ecd10e4f85864dd504b01f0c165d4dbe34b103e8ac",
+  "note": "Real tRNA gene copy numbers by anticodon. tAI relative adaptiveness is derived via the dos Reis et al. (2004) wobble model (optimised s-values, sking=0 eukaryota) as in the tai R package; see bt4.biomodels.codon.tai. Reproducible from this file's SHA-256."
+}

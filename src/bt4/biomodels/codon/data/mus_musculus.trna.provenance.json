@@ -1,0 +1,9 @@
+{
+  "source": "GtRNAdb (UCSC Lowe Lab), Mus musculus tRNA gene set",
+  "build": "tRNAscan-SE 2.0 nuclear tRNA gene set from mm39-tRNAs.fa; SeC (selenocysteine, anticodon TCA) and suppressor (Sup, anticodons TCA/TTA) tRNAs excluded as non-sense decoders; genes counted per anticodon (initiator + elongator Met merged at CAT). Independently re-counted from a sha256-pinned FASTA with zero mismatches (407 predicted loci minus 1 SeC minus 2 Sup = 404 sense tRNA genes).",
+  "genome": "GRCm39 / mm39 (nuclear only; no mitochondrial tRNAs)",
+  "total_genes": 404,
+  "retrieved": "2026-08-01",
+  "sha256": "aacc88df9dac6be7725f5af34305aba00610b9197d2de553af3e5d4a781d5b6e",
+  "note": "Real tRNA gene copy numbers by anticodon. tAI relative adaptiveness is derived via the dos Reis et al. (2004) wobble model (optimised s-values, sking=0 eukaryota) as in the tai R package; see bt4.biomodels.codon.tai. Reproducible from this file's SHA-256."
+}

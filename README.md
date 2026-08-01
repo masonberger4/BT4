@@ -41,8 +41,12 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 - **Hard constraints:** maximum homopolymer run, forbidden motifs, **tandem &
   inverted-repeat** (hairpin) bans, an **internal strong-Kozak ATG** guard, and a
   **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
-- **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* out of the box,
-  and `bt4 build-table` builds an authentic table from your own CDS FASTA.
+- **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* codon tables out
+  of the box, plus real **tAI** tables for human, mouse, and yeast (GtRNAdb tRNA
+  counts); `bt4 build-table` builds an authentic codon table from your own CDS FASTA.
+- **Benchmarked against real tools:** `scripts/compare_tools.py` places BT4 next
+  to GeneOptimizer / IDT / Twist / GenScript on a cited, CC BY 4.0 panel — every
+  metric recomputed from the sequence, and BT4 never claimed "better", just placed.
 - **Honest metrics:** every reported number (CAI, GC, violations) is recomputed
   from the delivered sequence, never trusted from the solver.
 - **Reproducible provenance:** a content-hashed manifest (codon-table SHA-256 +
