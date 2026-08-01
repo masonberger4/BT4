@@ -482,8 +482,12 @@ is a requirement, not a nice-to-have.
   `folding_calibrated=False` when the baseline is used (per §6/§10.6). Still
   ahead: the SpliceAI/Pangolin-class model trained on real GENCODE (Δsplicing
   objective, held-out-chromosome gate, hash-pinned artifact), parallel-tempering
-  / block moves, the opt-in **ASSP** cross-check (§6) with offline fixtures, and
-  per-site risk tracks in the UI. The **`SplicePredictor` contract**
+  / block moves, and the opt-in **ASSP** cross-check (§6) with offline fixtures.
+  The **per-site risk tracks** now ship as honest reporting profiles through
+  `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
+  each recomputed from the sequence, never fed to the solver) - wiring them into
+  the desktop app as plotted tracks is the remaining UI step. The
+  **`SplicePredictor` contract**
   (`biomodels/splice/`) has now landed with an honestly-labeled uncalibrated
   **consensus/PWM baseline** (`calibrated=False`, top-k/log-odds Δsplicing pooling
   -- never noisy-OR, §10.14) and a `default()` that never crashes; it is the

@@ -125,6 +125,7 @@ bt4 optimize MAALKHETQW --max-homopolymer 5 --enzyme EcoRI    # summary
 bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest
 bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
+bt4 tracks ATGGCC...TAA --nt-window 50                        # per-site GC/CpG/%MinMax tracks
 bt4 organisms         # list codon tables      bt4 enzymes    # list restriction enzymes
 bt4 build-table my_cds.fasta --organism my_species --out .    # table from real CDS
 ```

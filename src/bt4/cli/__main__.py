@@ -15,6 +15,7 @@ Only this module prints; everything else returns data.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 
@@ -150,6 +151,37 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tracks(args: argparse.Namespace) -> int:
+    result = api.tracks(
+        args.dna, args.organism, nt_window=args.nt_window, codon_window=args.codon_window
+    )
+    if args.json:
+        payload = {
+            "dna": result.dna,
+            "tracks": [
+                {
+                    "name": t.name,
+                    "window": t.window,
+                    "window_unit": t.window_unit,
+                    "unit": t.unit,
+                    "values": list(t.values),
+                }
+                for t in result.tracks
+            ],
+        }
+        sys.stdout.write(json.dumps(payload) + "\n")
+        return 0
+    print(f"dna     {len(result.dna)} nt")
+    print(f"{'track':14} {'window':>8} {'n':>5} {'min':>8} {'max':>8} {'mean':>8}")
+    for row in api.summarize(result.tracks):
+        win = f"{row['window']} {row['window_unit']}"
+        mn = "-" if row["min"] is None else f"{float(row['min']):.3f}"  # type: ignore[arg-type]
+        mx = "-" if row["max"] is None else f"{float(row['max']):.3f}"  # type: ignore[arg-type]
+        mean = "-" if row["mean"] is None else f"{float(row['mean']):.3f}"  # type: ignore[arg-type]
+        print(f"{row['name']!s:14} {win:>8} {row['n']:>5} {mn:>8} {mx:>8} {mean:>8}")
+    return 0
+
+
 def _cmd_organisms(_args: argparse.Namespace) -> int:
     for name in api.available_organisms():
         print(name)
@@ -206,6 +238,16 @@ def _parser() -> argparse.ArgumentParser:
 
     p_enz = sub.add_parser("enzymes", help="list known restriction enzymes")
     p_enz.set_defaults(func=_cmd_enzymes)
+
+    p_trk = sub.add_parser("tracks", help="per-site composition tracks (GC/CpG/%MinMax)")
+    p_trk.add_argument("dna", help="ACGT coding sequence")
+    p_trk.add_argument("--organism", default="homo_sapiens", help="table for the %MinMax track")
+    p_trk.add_argument("--nt-window", type=int, default=50, dest="nt_window",
+                       help="nucleotide window for the GC/CpG tracks")
+    p_trk.add_argument("--codon-window", type=int, default=18, dest="codon_window",
+                       help="codon window for the %%MinMax track")
+    p_trk.add_argument("--json", action="store_true", help="emit full per-window arrays as JSON")
+    p_trk.set_defaults(func=_cmd_tracks)
 
     p_bt = sub.add_parser("build-table", help="build a codon table from a CDS FASTA")
     p_bt.add_argument("cds", help="path to a FASTA of coding sequences")
