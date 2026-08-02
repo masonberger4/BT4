@@ -257,12 +257,17 @@ optimality**.
 
 ### Constraints (each a new file + registry entry)
 
-GC, homopolymer, tandem **and reverse-complement/inverted** repeats,
-forbidden-motif, **restriction sites (REBASE-style, auto reverse-complement +
-IUPAC)**, internal-ATG → proper **Kozak context** + **uORF pairing** (out-of-frame
-ATG..in-frame stop), **CpG content** (elevate for vaccines / deplete for stealth),
-**5′ folding**, splice. Hard constraints degrade gracefully via `relax()` and
-report *which* constraints conflict rather than aborting with "no feasible codon".
+GC, homopolymer, **max GC-run** (longest run of consecutive G/C, the "max GC
+length" knob — LOCAL, exact), tandem **and reverse-complement/inverted** repeats,
+**max repeat length** (any dispersed direct/inverted/palindromic repeat, anywhere,
+RC-aware — genuinely GLOBAL, so refinement-enforced and honestly reported, *never*
+merged into the trellis, §10.1), forbidden-motif (with named, documented
+**forbidden-sequence presets**), **restriction sites (REBASE-style, auto
+reverse-complement + IUPAC)**, internal-ATG → proper **Kozak context** + **uORF
+pairing** (out-of-frame ATG..in-frame stop), **CpG content** (elevate for vaccines
+/ deplete for stealth), **5′ folding**, splice. Hard constraints degrade
+gracefully via `relax()` and report *which* constraints conflict rather than
+aborting with "no feasible codon".
 
 ### ML models (real or explicitly labeled baseline)
 
@@ -326,10 +331,13 @@ cross-check).
 What the app does (design targets):
 
 - **Input:** paste a protein or upload FASTA; pick target organism; name the job.
-- **Design controls:** toggle each constraint with real controls — GC window
-  slider, max homopolymer, CpG mode (elevate/deplete), forbidden motifs,
-  **restriction-enzyme picker** (REBASE catalog); choose objective **weights**
-  *or* **ε-budgets** per term.
+- **Design controls:** toggle each constraint with real controls — GC target,
+  max homopolymer, **max GC length** (GC-run) and **max repeat length**
+  spinboxes, CpG mode (elevate/deplete), %MinMax, tandem/hairpin repeats,
+  internal-ATG, tAI, forbidden motifs, a **checkbox per named forbidden-sequence
+  preset**, and the **restriction-enzyme picker** (REBASE catalog); choose
+  objective **weights** *or* **ε-budgets** per term. **Every control carries a
+  hover tooltip** explaining what its variable does.
 - **Run & watch:** live progress from the background worker; the
   **optimality-certificate badge** (proven-optimal vs gap-bounded vs
   beam-truncated) shown honestly, not hidden.
@@ -467,7 +475,24 @@ is a requirement, not a nice-to-have.
   over Ranaghan Table 4 (three proteins x three *anonymized* algorithms x ten
   repeat runs, CC BY 4.0) - kept deliberately separate from the named-tool board
   (anonymized tools, repeat runs = a determinism axis, not a scoreboard), with
-  BT4 shown as a zero-spread deterministic reference.
+  BT4 shown as a zero-spread deterministic reference. Also landed (BT3
+  `almost-there` parity): a **max GC-run** constraint (`constraints/gc_run.py`,
+  the "max GC length" - LOCAL, exact in the trellis, `ok_suffix⇔validate`-tested);
+  a **max repeat length** constraint (`constraints/max_repeat.py`) that bans any
+  dispersed direct/inverted/palindromic repeat longer than the limit anywhere in
+  the sequence (RC-aware, `k = max_length + 1` sufficiency proof) - genuinely
+  GLOBAL, so it is **never merged into the exact DP** (that would silently
+  over-merge, §10.1); instead the exact-DP seed is polished by the SA refinement
+  engine (extended with a `global_constraints` gate that re-counts whole-sequence
+  hard violations per move and never lets the count rise, invariant #5), with any
+  residual repeats reported honestly and the certificate degraded to heuristic
+  only when refinement actually runs; and named, documented **forbidden-sequence
+  presets** (`constraints/forbidden.py`, e.g. poly-A signals, TATA box, telomere
+  repeat, BT3 synthesis artifacts). All three are wired through `OptimizeConfig`,
+  the `bt4` CLI (`--max-gc-run`, `--max-repeat-length`, `--forbid-preset`, `bt4
+  presets`), the `service` schema, and **BT4 Studio** - which now also renders a
+  **hover tooltip on every design control** explaining what each variable does,
+  the two new spinboxes, and a checkbox per forbidden preset.
 - **Phase 3 — Non-local models & refinement done right.** 🔶 **Groundwork
   landed.** The **`FoldingModel` contract** (`biomodels/folding/`) ships with a
   lazy **ViennaRNA** backend (`calibrated=True`, behind the `bt4[fold]` extra) and

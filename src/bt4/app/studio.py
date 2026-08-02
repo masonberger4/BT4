@@ -64,7 +64,13 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._msgbox: QtWidgets.QMessageBox | None = None
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        splitter.addWidget(self._build_controls())
+        controls_scroll = QtWidgets.QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setWidget(self._build_controls())
+        controls_scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        splitter.addWidget(controls_scroll)
         splitter.addWidget(self._build_results())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -80,7 +86,11 @@ class StudioWindow(QtWidgets.QMainWindow):
     # ---- construction -----------------------------------------------------
 
     def _build_controls(self) -> QtWidgets.QWidget:
-        """Build the left input/control panel."""
+        """Build the left input/control panel.
+
+        Every control carries a hover tooltip explaining what its variable does,
+        so a user can discover the design knobs without leaving the app.
+        """
         box = QtWidgets.QGroupBox("Design")
         form = QtWidgets.QFormLayout(box)
         form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
@@ -89,100 +99,234 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.protein_edit.setPlaceholderText("Paste a protein, e.g. MAALKHETQW")
         self.protein_edit.setAccessibleName("Protein sequence")
         self.protein_edit.setMinimumHeight(120)
-        self._add_row(form, "Protein", self.protein_edit)
+        self._add_row(
+            form, "Protein", self.protein_edit,
+            "The amino-acid sequence to back-translate (one-letter codes; "
+            "whitespace is ignored). A stop codon is appended automatically.",
+        )
 
         self.organism_combo = QtWidgets.QComboBox()
         self.organism_combo.addItems(list(api.available_organisms()))
         self.organism_combo.setAccessibleName("Target organism")
-        self._add_row(form, "Organism", self.organism_combo)
+        self._add_row(
+            form, "Organism", self.organism_combo,
+            "Codon-usage table used for CAI and codon choice; it decides which "
+            "synonymous codons are preferred for the target organism.",
+        )
 
         self.jobname_edit = QtWidgets.QLineEdit()
         self.jobname_edit.setPlaceholderText("optional job name")
         self.jobname_edit.setAccessibleName("Job name")
-        self._add_row(form, "Job name", self.jobname_edit)
+        self._add_row(
+            form, "Job name", self.jobname_edit,
+            "Optional label for this run, used only for your reference and in "
+            "exported file headers.",
+        )
 
         self.gc_spin = QtWidgets.QDoubleSpinBox()
         self.gc_spin.setRange(0.0, 1.0)
         self.gc_spin.setSingleStep(0.05)
         self.gc_spin.setValue(0.55)
         self.gc_spin.setAccessibleName("GC target fraction")
-        self._add_row(form, "GC target", self.gc_spin)
+        self._add_row(
+            form, "GC target", self.gc_spin,
+            "Desired overall GC fraction (0-1); the GC-proximity objective pulls "
+            "the sequence toward this value.",
+        )
 
         self.homo_spin = QtWidgets.QSpinBox()
         self.homo_spin.setRange(0, 20)
         self.homo_spin.setValue(6)
         self.homo_spin.setSpecialValueText("off")
         self.homo_spin.setAccessibleName("Maximum homopolymer run (0 = off)")
-        self._add_row(form, "Max homopolymer", self.homo_spin)
+        self._add_row(
+            form, "Max homopolymer", self.homo_spin,
+            "Longest allowed run of a single repeated base (e.g. AAAA). Long "
+            "single-base runs cause synthesis errors and polymerase slippage. "
+            "0 = off.",
+        )
+
+        self.gc_run_spin = QtWidgets.QSpinBox()
+        self.gc_run_spin.setRange(0, 40)
+        self.gc_run_spin.setValue(0)
+        self.gc_run_spin.setSpecialValueText("off")
+        self.gc_run_spin.setAccessibleName("Maximum GC-run length (0 = off)")
+        self._add_row(
+            form, "Max GC length", self.gc_run_spin,
+            "Longest allowed run of consecutive strong (G or C) bases, mixed runs "
+            "included (e.g. GCGCGC counts as 6). Long GC stretches form stable "
+            "structure and are hard to synthesize. 0 = off.",
+        )
+
+        self.repeat_spin = QtWidgets.QSpinBox()
+        self.repeat_spin.setRange(0, 40)
+        self.repeat_spin.setValue(0)
+        self.repeat_spin.setSpecialValueText("off")
+        self.repeat_spin.setAccessibleName("Maximum repeat length (0 = off)")
+        self._add_row(
+            form, "Max repeat length", self.repeat_spin,
+            "Longest allowed repeated substring anywhere in the sequence -- "
+            "direct, inverted, or palindromic (reverse-complement aware). Longer "
+            "internal repeats mis-prime PCR and seed recombination. This is a "
+            "non-local rule enforced by a refinement pass, so the result is "
+            "labeled heuristic (not proven-optimal), and any repeats it cannot "
+            "remove are reported honestly. 0 = off.",
+        )
 
         self.motifs_edit = QtWidgets.QLineEdit()
         self.motifs_edit.setPlaceholderText("comma-separated, e.g. GAATTC,GGATCC")
         self.motifs_edit.setAccessibleName("Forbidden motifs")
-        self._add_row(form, "Forbidden motifs", self.motifs_edit)
+        self._add_row(
+            form, "Forbidden motifs", self.motifs_edit,
+            "Extra DNA substrings to ban, comma-separated; each motif's reverse "
+            "complement is banned too.",
+        )
+
+        self._add_forbidden_presets(form)
 
         self.enzymes_edit = QtWidgets.QLineEdit()
         self.enzymes_edit.setPlaceholderText("comma-separated, e.g. EcoRI,BamHI")
         self.enzymes_edit.setAccessibleName("Restriction enzymes to avoid")
-        self._add_row(form, "Restriction sites", self.enzymes_edit)
+        self._add_row(
+            form, "Restriction sites", self.enzymes_edit,
+            "Restriction enzymes whose recognition sites (and reverse "
+            "complements) must not appear, comma-separated (e.g. EcoRI,BamHI).",
+        )
 
         self.cpg_combo = QtWidgets.QComboBox()
         self.cpg_combo.addItems(["off", "deplete", "elevate"])
         self.cpg_combo.setAccessibleName("CpG dinucleotide mode")
-        self._add_row(form, "CpG", self.cpg_combo)
+        self._add_row(
+            form, "CpG", self.cpg_combo,
+            "CpG dinucleotide handling: 'deplete' for fewer CpGs (stealth / "
+            "reduced innate-immune signal), 'elevate' for more (immunostimulatory). "
+            "'off' adds no CpG objective.",
+        )
 
         self.minmax_combo = QtWidgets.QComboBox()
         self.minmax_combo.addItems(["off", "max", "min"])
         self.minmax_combo.setAccessibleName("%MinMax codon-commonness mode")
-        self._add_row(form, "%MinMax", self.minmax_combo)
+        self._add_row(
+            form, "%MinMax", self.minmax_combo,
+            "Codon-commonness bias: 'max' favours common codons, 'min' favours "
+            "rare codons. 'off' adds no %MinMax objective.",
+        )
 
         self.tandem_spin = QtWidgets.QSpinBox()
         self.tandem_spin.setRange(0, 12)
         self.tandem_spin.setValue(0)
         self.tandem_spin.setSpecialValueText("off")
         self.tandem_spin.setAccessibleName("Tandem-repeat unit length (0 = off)")
-        self._add_row(form, "Tandem unit", self.tandem_spin)
+        self._add_row(
+            form, "Tandem unit", self.tandem_spin,
+            "Ban a tandem repeat of this unit length -- a short motif repeated "
+            "back-to-back (e.g. unit 3 bans CAGCAGCAG). 0 = off.",
+        )
 
         self.inverted_spin = QtWidgets.QSpinBox()
         self.inverted_spin.setRange(0, 20)
         self.inverted_spin.setValue(0)
         self.inverted_spin.setSpecialValueText("off")
         self.inverted_spin.setAccessibleName("Inverted-repeat stem length (0 = off)")
-        self._add_row(form, "Hairpin stem", self.inverted_spin)
+        self._add_row(
+            form, "Hairpin stem", self.inverted_spin,
+            "Ban a hairpin (inverted repeat) with arms of this length -- a stem "
+            "that folds back on itself and can occlude ribosome loading. 0 = off.",
+        )
 
         self.internal_start_check = QtWidgets.QCheckBox("avoid strong-Kozak internal ATG")
         self.internal_start_check.setAccessibleName("Avoid internal start codons")
-        self._add_row(form, "Internal ATG", self.internal_start_check)
+        self._add_row(
+            form, "Internal ATG", self.internal_start_check,
+            "Forbid internal ATG codons sitting in a strong Kozak context "
+            "(purine at -3, G at +4), which could drive spurious re-initiation.",
+        )
 
-        self.tai_check = QtWidgets.QCheckBox("add tAI axis (human tRNA)")
-        self.tai_check.setAccessibleName("Add tRNA-adaptation-index objective (human only)")
-        self._add_row(form, "tAI", self.tai_check)
+        self.tai_check = QtWidgets.QCheckBox("add tAI axis (real tRNA)")
+        self.tai_check.setAccessibleName("Add tRNA-adaptation-index objective")
+        self._add_row(
+            form, "tAI", self.tai_check,
+            "Add a tRNA-adaptation-index objective axis, built from real tRNA "
+            "gene copy numbers; available only for organisms with bundled tRNA "
+            "data.",
+        )
 
         self.steps_spin = QtWidgets.QSpinBox()
         self.steps_spin.setRange(1, 25)
         self.steps_spin.setValue(9)
         self.steps_spin.setAccessibleName("Frontier steps")
-        self._add_row(form, "Frontier steps", self.steps_spin)
+        self._add_row(
+            form, "Frontier steps", self.steps_spin,
+            "Resolution of the objective trade-off (Pareto) sweep: more steps "
+            "trace a finer frontier but take longer.",
+        )
 
         self.beam_spin = QtWidgets.QSpinBox()
         self.beam_spin.setRange(0, 256)
         self.beam_spin.setValue(0)
         self.beam_spin.setSpecialValueText("exact")
         self.beam_spin.setAccessibleName("Beam width (0 = exact)")
-        self._add_row(form, "Beam width", self.beam_spin)
+        self._add_row(
+            form, "Beam width", self.beam_spin,
+            "0 = exact dynamic programming (proven-optimal). A positive value "
+            "caps the trellis beam for speed; the result is then labeled "
+            "beam-truncated.",
+        )
 
         self.optimize_btn = QtWidgets.QPushButton("Optimize")
         self.optimize_btn.setAccessibleName("Run optimization")
+        self.optimize_btn.setToolTip(
+            "Run the optimization and compute the Pareto frontier on a background "
+            "thread; the UI stays responsive."
+        )
         self.optimize_btn.clicked.connect(self._start_optimize)
         form.addRow(self.optimize_btn)
 
         return box
 
+    def _add_forbidden_presets(self, form: QtWidgets.QFormLayout) -> None:
+        """Add a row of checkboxes, one per named forbidden-sequence preset.
+
+        Each checkbox forbids its preset's motifs and shows the preset's
+        description as its hover tooltip (mirroring BT3's forbidden-sequence
+        options, made legible).
+        """
+        container = QtWidgets.QWidget()
+        vbox = QtWidgets.QVBoxLayout(container)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(2)
+        self.preset_checks: dict[str, QtWidgets.QCheckBox] = {}
+        for preset in api.available_forbidden_presets():
+            check = QtWidgets.QCheckBox(preset.label)
+            check.setToolTip(preset.description)
+            check.setAccessibleName(f"Forbid {preset.label}")
+            check.setAccessibleDescription(preset.description)
+            self.preset_checks[preset.key] = check
+            vbox.addWidget(check)
+        self._add_row(
+            form, "Forbidden presets", container,
+            "Tick named groups of sequences to forbid (their reverse complements "
+            "too). Hover each option for what it bans.",
+        )
+
     def _add_row(
-        self, form: QtWidgets.QFormLayout, text: str, widget: QtWidgets.QWidget
+        self,
+        form: QtWidgets.QFormLayout,
+        text: str,
+        widget: QtWidgets.QWidget,
+        tooltip: str = "",
     ) -> None:
-        """Add a labelled row whose label is the accessibility buddy of the widget."""
+        """Add a labelled row whose label is the accessibility buddy of the widget.
+
+        When ``tooltip`` is given it is set on both the label and the widget, so
+        hovering either shows the explanatory bubble.
+        """
         label = QtWidgets.QLabel(text)
         label.setBuddy(widget)
+        if tooltip:
+            label.setToolTip(tooltip)
+            widget.setToolTip(tooltip)
+            widget.setAccessibleDescription(tooltip)
         form.addRow(label, widget)
 
     def _build_results(self) -> QtWidgets.QWidget:
@@ -292,7 +436,10 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.jobname_edit,
             self.gc_spin,
             self.homo_spin,
+            self.gc_run_spin,
+            self.repeat_spin,
             self.motifs_edit,
+            *self.preset_checks.values(),
             self.enzymes_edit,
             self.cpg_combo,
             self.minmax_combo,
@@ -315,10 +462,13 @@ class StudioWindow(QtWidgets.QMainWindow):
         """Read the controls into a protein, an OptimizeConfig, and a step count."""
         protein = "".join(self.protein_edit.toPlainText().split()).upper()
         homo = self.homo_spin.value()
+        gc_run = self.gc_run_spin.value()
+        repeat = self.repeat_spin.value()
         beam = self.beam_spin.value()
         motifs = tuple(
             m.strip().upper() for m in self.motifs_edit.text().split(",") if m.strip()
         )
+        presets = tuple(key for key, check in self.preset_checks.items() if check.isChecked())
         enzymes = tuple(
             e.strip() for e in self.enzymes_edit.text().split(",") if e.strip()
         )
@@ -334,7 +484,10 @@ class StudioWindow(QtWidgets.QMainWindow):
             organism=self.organism_combo.currentText(),
             gc_target=self.gc_spin.value(),
             max_homopolymer=homo if homo > 0 else None,
+            max_gc_run=gc_run if gc_run > 0 else None,
+            max_repeat_length=repeat if repeat > 0 else None,
             forbidden_motifs=motifs,
+            forbidden_presets=presets,
             avoid_reverse_complement=True,
             restriction_enzymes=enzymes,
             cpg_weight=cpg_weight,

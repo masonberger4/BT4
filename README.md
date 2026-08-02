@@ -39,9 +39,13 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
   constraints and pairwise terms honored, with a gap-bounded certificate.
-- **Hard constraints:** maximum homopolymer run, forbidden motifs, **tandem &
-  inverted-repeat** (hairpin) bans, an **internal strong-Kozak ATG** guard, and a
-  **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
+- **Hard constraints:** maximum homopolymer run, **max GC-run** (the "max GC
+  length"), a whole-sequence **max repeat length** (direct/inverted/palindromic
+  repeats anywhere, reverse-complement aware — enforced by refinement and reported
+  honestly, since it is genuinely non-local), forbidden motifs with named
+  **forbidden-sequence presets** (poly-A signal, TATA box, telomere repeat, …),
+  **tandem & inverted-repeat** (hairpin) bans, an **internal strong-Kozak ATG**
+  guard, and a **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* codon tables out
   of the box, plus real **tAI** tables for human, mouse, and yeast (GtRNAdb tRNA
   counts); `bt4 build-table` builds an authentic codon table from your own CDS FASTA.
@@ -113,20 +117,24 @@ bt4-studio                 # or:  python -m bt4.app
 ### Desktop app
 
 `bt4-studio` (or `python -m bt4.app`): paste a protein, pick the organism, set a
-GC target / max-homopolymer / forbidden motifs, and click **Optimize**. You get
-the optimality badge, a recomputed-metrics table, the interactive CAI/GC frontier
-(the delivered point starred), the coding sequence, and one-click FASTA/JSON
-export. The optimization runs on a background thread, so the window never blocks.
+GC target / max-homopolymer / max GC length / max repeat length / forbidden
+motifs (and tick any forbidden-sequence presets), and click **Optimize**. **Hover
+any control for a tooltip explaining what it does.** You get the optimality badge,
+a recomputed-metrics table, the interactive CAI/GC frontier (the delivered point
+starred), the coding sequence, and one-click FASTA/JSON export. The optimization
+runs on a background thread, so the window never blocks.
 
 ### Command line
 
 ```bash
 bt4 optimize MAALKHETQW --max-homopolymer 5 --enzyme EcoRI    # summary
+bt4 optimize MAALKHETQW --max-gc-run 5 --max-repeat-length 10 # GC-run + repeat caps
+bt4 optimize MAALKHETQW --forbid-preset poly_a_signal         # ban a preset's motifs
 bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest
 bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
 bt4 tracks ATGGCC...TAA --nt-window 50                        # per-site GC/CpG/%MinMax tracks
-bt4 organisms         # list codon tables      bt4 enzymes    # list restriction enzymes
+bt4 organisms   # codon tables    bt4 enzymes   # enzymes    bt4 presets   # forbidden presets
 bt4 build-table my_cds.fasta --organism my_species --out .    # table from real CDS
 ```
 
