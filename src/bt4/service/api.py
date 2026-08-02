@@ -41,7 +41,10 @@ class ConfigModel(BaseModel):
     tai_weight: float = 0.0
     gc_weight: float = 0.0
     max_homopolymer: int | None = 6
+    max_gc_run: int | None = None
+    max_repeat_length: int | None = None
     forbidden_motifs: list[str] = []
+    forbidden_presets: list[str] = []
     avoid_reverse_complement: bool = True
     restriction_enzymes: list[str] = []
     ramp_weight: float = 0.0
@@ -76,7 +79,10 @@ class ConfigModel(BaseModel):
             tai_weight=self.tai_weight,
             gc_weight=self.gc_weight,
             max_homopolymer=self.max_homopolymer,
+            max_gc_run=self.max_gc_run,
+            max_repeat_length=self.max_repeat_length,
             forbidden_motifs=tuple(self.forbidden_motifs),
+            forbidden_presets=tuple(self.forbidden_presets),
             avoid_reverse_complement=self.avoid_reverse_complement,
             restriction_enzymes=tuple(self.restriction_enzymes),
             ramp_weight=self.ramp_weight,

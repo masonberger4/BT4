@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import available_organisms
-from bt4.constraints import available_enzymes
+from bt4.constraints import (
+    ForbiddenPreset,
+    available_enzymes,
+    available_forbidden_presets,
+)
 from bt4.domain import Result
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
 from bt4.pipeline import (
@@ -30,6 +34,7 @@ from bt4.pipeline import (
 )
 
 __all__ = [
+    "ForbiddenPreset",
     "FrontierResult",
     "InfeasibleError",
     "OptimizeConfig",
@@ -38,6 +43,7 @@ __all__ = [
     "TracksResult",
     "ValidationReport",
     "available_enzymes",
+    "available_forbidden_presets",
     "available_organisms",
     "build_table",
     "count_codons",
