@@ -52,6 +52,97 @@ def _is_dark() -> bool:
     return False
 
 
+class SequenceViewer(QtWidgets.QPlainTextEdit):
+    """Read-only monospaced DNA viewer that annotates constraint-violation spans.
+
+    Each :class:`~bt4.api.Violation` on the delivered result is drawn as a
+    coloured background over its ``[start, end)`` nucleotide span -- red for a
+    HARD (feasibility) violation, amber for a SOFT (quality) one -- and a hover
+    tooltip names the constraint, its severity, span, and detail. This is how
+    residual GLOBAL violations (e.g. a dispersed max-repeat or uORF that
+    refinement could not fully clear) become visible *where they occur*, not
+    just as a count in the metrics table.
+
+    The DNA text itself is never altered: highlights are Qt "extra selections"
+    layered on top, so the exported sequence stays exactly the delivered one
+    (invariant: what the app shows is reproducible from its stamp).
+    """
+
+    # Semi-transparent so the monospace bases stay legible over the band.
+    _HARD_LIGHT = QtGui.QColor(192, 57, 43, 70)
+    _HARD_DARK = QtGui.QColor(224, 90, 74, 95)
+    _SOFT_LIGHT = QtGui.QColor(185, 119, 14, 70)
+    _SOFT_DARK = QtGui.QColor(224, 150, 74, 95)
+
+    def __init__(self, dark: bool) -> None:
+        """Build an empty read-only viewer themed for ``dark`` or light mode."""
+        super().__init__()
+        self._dark = dark
+        self._violations: tuple[api.Violation, ...] = ()
+        self.setReadOnly(True)
+        self.setMouseTracking(True)
+
+    def set_sequence(
+        self, dna: str, violations: tuple[api.Violation, ...] = ()
+    ) -> None:
+        """Show ``dna`` and highlight every in-range violation span.
+
+        Spans outside ``[0, len(dna))`` are dropped defensively. HARD bands are
+        painted last so they sit visually on top of any overlapping SOFT band.
+        """
+        self.setPlainText(dna)
+        n = len(dna)
+        kept = tuple(v for v in violations if 0 <= v.start < v.end <= n)
+        self._violations = kept
+        # SOFT first, HARD last => HARD backgrounds win where spans overlap.
+        order = sorted(kept, key=lambda v: v.severity is api.Severity.HARD)
+        selections: list[QtWidgets.QTextEdit.ExtraSelection] = []
+        for violation in order:
+            selection = QtWidgets.QTextEdit.ExtraSelection()
+            fmt = QtGui.QTextCharFormat()
+            fmt.setBackground(self._colour(violation.severity))
+            selection.format = fmt
+            cursor = self.textCursor()
+            cursor.setPosition(violation.start)
+            cursor.setPosition(violation.end, QtGui.QTextCursor.MoveMode.KeepAnchor)
+            selection.cursor = cursor
+            selections.append(selection)
+        self.setExtraSelections(selections)
+
+    def _colour(self, severity: api.Severity) -> QtGui.QColor:
+        """The highlight colour for a severity, theme-aware."""
+        if severity is api.Severity.HARD:
+            return self._HARD_DARK if self._dark else self._HARD_LIGHT
+        return self._SOFT_DARK if self._dark else self._SOFT_LIGHT
+
+    def _violation_at(self, pos: int) -> api.Violation | None:
+        """The narrowest violation covering nucleotide ``pos`` (HARD wins ties)."""
+        hits = [v for v in self._violations if v.start <= pos < v.end]
+        if not hits:
+            return None
+        return min(
+            hits,
+            key=lambda v: (v.severity is not api.Severity.HARD, v.end - v.start),
+        )
+
+    def event(self, event: QtCore.QEvent) -> bool:
+        """Show a per-span tooltip naming the constraint under the cursor."""
+        if event.type() == QtCore.QEvent.Type.ToolTip and isinstance(
+            event, QtGui.QHelpEvent
+        ):
+            hit = self._violation_at(self.cursorForPosition(event.pos()).position())
+            if hit is None:
+                QtWidgets.QToolTip.hideText()
+            else:
+                severity = hit.severity.value.upper()
+                text = f"{hit.constraint} [{severity}] - nt {hit.start}-{hit.end}"
+                if hit.detail:
+                    text += f"\n{hit.detail}"
+                QtWidgets.QToolTip.showText(event.globalPos(), text, self)
+            return True
+        return super().event(event)
+
+
 class StudioWindow(QtWidgets.QMainWindow):
     """The BT4 Studio main window: controls on the left, results on the right."""
 
@@ -426,8 +517,7 @@ class StudioWindow(QtWidgets.QMainWindow):
 
         seq_label = QtWidgets.QLabel("Delivered coding DNA")
         layout.addWidget(seq_label)
-        self.sequence_view = QtWidgets.QPlainTextEdit()
-        self.sequence_view.setReadOnly(True)
+        self.sequence_view = SequenceViewer(self._dark)
         self.sequence_view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
         mono = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
         self.sequence_view.setFont(mono)
@@ -435,6 +525,15 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.sequence_view.setMaximumHeight(140)
         seq_label.setBuddy(self.sequence_view)
         layout.addWidget(self.sequence_view)
+
+        # Legend for the inline violation highlights; hidden until a delivered
+        # sequence actually carries a violation, so a clean run stays uncluttered.
+        self.violations_legend = QtWidgets.QLabel()
+        self.violations_legend.setWordWrap(True)
+        self.violations_legend.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.violations_legend.setAccessibleName("Violation legend")
+        self.violations_legend.hide()
+        layout.addWidget(self.violations_legend)
 
         tracks_label = QtWidgets.QLabel("Per-site composition tracks (GC / CpG density)")
         layout.addWidget(tracks_label)
@@ -827,7 +926,9 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.badge.setText("No optimization run yet.")
         self.badge.setStyleSheet(theme.badge_qss(""))
         self.metrics_table.setRowCount(0)
-        self.sequence_view.setPlainText("")
+        self.sequence_view.set_sequence("")
+        self.violations_legend.hide()
+        self.violations_legend.clear()
         self.plot.clear()
         self.tracks_plot.clear()
         self.export_fasta_btn.setEnabled(False)
@@ -845,7 +946,7 @@ class StudioWindow(QtWidgets.QMainWindow):
 
         self._render_badge(delivered)
         self._render_metrics(delivered)
-        self.sequence_view.setPlainText(delivered.dna)
+        self._render_sequence(delivered)
         self._render_frontier(result)
         self._render_tracks(delivered)
 
@@ -888,6 +989,39 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.metrics_table.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
             self.metrics_table.setItem(row, 1, QtWidgets.QTableWidgetItem(values[name]))
         self.metrics_table.resizeColumnsToContents()
+
+    def _render_sequence(self, delivered: api.Result) -> None:
+        """Show the delivered DNA with inline violation highlights and a legend.
+
+        The highlighted spans come straight from ``delivered.violations`` (the
+        whole-sequence audit), so a residual GLOBAL violation left after
+        refinement is marked exactly where it sits. The legend summarises the
+        HARD/SOFT counts and their colours, and stays hidden on a clean run.
+        """
+        violations = delivered.violations
+        self.sequence_view.set_sequence(delivered.dna, violations)
+        if not violations:
+            self.violations_legend.hide()
+            self.violations_legend.clear()
+            return
+
+        hard = sum(1 for v in violations if v.severity is api.Severity.HARD)
+        soft = len(violations) - hard
+        parts: list[str] = []
+        if hard:
+            parts.append(
+                f'<span style="color:#c0392b;">&#9632;</span> '
+                f"{hard} hard (feasibility)"
+            )
+        if soft:
+            parts.append(
+                f'<span style="color:#b9770e;">&#9632;</span> '
+                f"{soft} soft (quality)"
+            )
+        self.violations_legend.setText(
+            "Highlighted spans — " + " &nbsp; ".join(parts) + " · hover for detail"
+        )
+        self.violations_legend.show()
 
     def _render_frontier(self, result: api.FrontierResult) -> None:
         """Draw the CAI/GC frontier scatter with the delivered point highlighted."""

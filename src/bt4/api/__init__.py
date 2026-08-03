@@ -22,7 +22,7 @@ from bt4.constraints import (
     available_enzymes,
     available_forbidden_presets,
 )
-from bt4.domain import AMINO_ACIDS, Result, validate_protein
+from bt4.domain import AMINO_ACIDS, Result, Severity, Violation, validate_protein
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
 from bt4.pipeline import (
     FrontierResult,
@@ -51,9 +51,11 @@ __all__ = [
     "LibraryResult",
     "OptimizeConfig",
     "Result",
+    "Severity",
     "Track",
     "TracksResult",
     "ValidationReport",
+    "Violation",
     "available_enzymes",
     "available_forbidden_presets",
     "available_organisms",
