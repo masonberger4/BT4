@@ -7,6 +7,16 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **Code-signing pipeline** in `release.yml`, gated on repository secrets. When an
+  Apple Developer ID certificate + App Store Connect notary key are present the
+  macOS `.app` is signed with the hardened runtime and the `.dmg` is signed,
+  notarized, and stapled; when a Windows Authenticode certificate is present the
+  `.exe` is `signtool`-signed. Absent the secrets the steps are skipped and the
+  build stays green and unsigned, so nothing breaks until the certs are added. The
+  required secrets are documented in
+  [`packaging/README.md`](packaging/README.md#code-signing-so-the-warnings-go-away).
+
 ## [0.3.1] - 2026-08-01
 
 BT4 Studio first-run polish: the desktop app now guides a non-technical user

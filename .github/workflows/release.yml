@@ -72,6 +72,14 @@ jobs:
             artifact: bt4-studio-windows
             asset: BT4-Studio-Windows.exe
     runs-on: ${{ matrix.os }}
+    env:
+      # Code-signing activates automatically once these repository secrets exist;
+      # until then every signing step below is skipped and the apps ship unsigned
+      # (a green, no-op build). macOS needs BOTH a Developer ID cert AND
+      # notarization credentials to be useful -- Gatekeeper blocks a signed-but-
+      # unnotarized downloaded app. See packaging/README.md#code-signing.
+      SIGN_MACOS: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_NOTARY_API_KEY_P8 != '' }}
+      SIGN_WINDOWS: ${{ secrets.WINDOWS_CERTIFICATE_PFX != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,6 +117,33 @@ jobs:
             macOS)   "./BT4 Studio.app/Contents/MacOS/BT4 Studio" --self-test ;;
             Linux)   "./BT4 Studio" --self-test ;;
           esac
+      - name: Sign the macOS app (Developer ID + hardened runtime)
+        if: ${{ runner.os == 'macOS' && env.SIGN_MACOS == 'true' }}
+        working-directory: packaging/dist
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          # Import the Developer ID cert into a throwaway keychain, then codesign
+          # the .app with the hardened runtime (required for notarization).
+          KEYCHAIN="$RUNNER_TEMP/bt4-signing.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+          codesign --deep --force --options runtime --timestamp \
+            --sign "$MACOS_SIGN_IDENTITY" "BT4 Studio.app"
+          codesign --verify --strict --verbose=2 "BT4 Studio.app"
+          rm -f "$RUNNER_TEMP/cert.p12"
       - name: Package the double-clickable asset
         shell: bash
         working-directory: packaging/dist
@@ -131,6 +166,47 @@ jobs:
               mv "BT4 Studio" "${{ matrix.asset }}"
               ;;
           esac
+      - name: Notarize and staple the macOS DMG
+        if: ${{ runner.os == 'macOS' && env.SIGN_MACOS == 'true' }}
+        working-directory: packaging/dist
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_API_KEY_P8: ${{ secrets.MACOS_NOTARY_API_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          DMG="${{ matrix.asset }}"
+          # Sign the DMG, then notarize (Apple validates the signed .app inside) and
+          # staple the ticket so Gatekeeper passes even offline.
+          codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+          echo "$MACOS_NOTARY_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool submit "$DMG" \
+            --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$MACOS_NOTARY_KEY_ID" \
+            --issuer "$MACOS_NOTARY_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          rm -f "$RUNNER_TEMP/notary.p8"
+      - name: Sign the Windows exe (Authenticode)
+        if: ${{ runner.os == 'Windows' && env.SIGN_WINDOWS == 'true' }}
+        working-directory: packaging/dist
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pfx = Join-Path $env:RUNNER_TEMP "bt4-cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX))
+          # Newest installed Windows SDK signtool.
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            /fd sha256 /tr http://timestamp.digicert.com /td sha256 "${{ matrix.asset }}"
+          & $signtool.FullName verify /pa "${{ matrix.asset }}"
+          Remove-Item $pfx
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
