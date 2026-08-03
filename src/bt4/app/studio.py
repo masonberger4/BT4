@@ -242,6 +242,29 @@ class StudioWindow(QtWidgets.QMainWindow):
             "(purine at -3, G at +4), which could drive spurious re-initiation.",
         )
 
+        self.uorf_check = QtWidgets.QCheckBox("avoid out-of-frame uORFs")
+        self.uorf_check.setAccessibleName("Avoid out-of-frame uORFs")
+        self._add_row(
+            form, "uORFs", self.uorf_check,
+            "Suppress out-of-frame internal ATGs that pair with a downstream "
+            "in-frame stop -- short uORFs that divert ribosomes from the main ORF "
+            "and lower yield. Non-local, so enforced by a refinement pass (result "
+            "labeled heuristic; any it cannot remove are reported). A structural "
+            "flag, NOT a calibrated expression prediction.",
+        )
+
+        self.uorf_region_spin = QtWidgets.QSpinBox()
+        self.uorf_region_spin.setRange(3, 100000)
+        self.uorf_region_spin.setValue(100)
+        self.uorf_region_spin.setAccessibleName("uORF 5' scan window (nt)")
+        self._add_row(
+            form, "uORF window", self.uorf_region_spin,
+            "5'-proximal window (nucleotides) scanned for uORF-opening ATGs when "
+            "'avoid out-of-frame uORFs' is on. uORFs matter most near the start "
+            "(leaky scanning); a wider window is stricter but harder to satisfy. "
+            "Default 100 (~first 33 codons).",
+        )
+
         self.tai_check = QtWidgets.QCheckBox("add tAI axis (real tRNA)")
         self.tai_check.setAccessibleName("Add tRNA-adaptation-index objective")
         self._add_row(
@@ -446,6 +469,8 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.tandem_spin,
             self.inverted_spin,
             self.internal_start_check,
+            self.uorf_check,
+            self.uorf_region_spin,
             self.tai_check,
             self.steps_spin,
             self.beam_spin,
@@ -497,6 +522,8 @@ class StudioWindow(QtWidgets.QMainWindow):
             tandem_unit=tandem if tandem > 0 else None,
             inverted_stem=inverted if inverted > 0 else None,
             avoid_internal_start=self.internal_start_check.isChecked(),
+            avoid_uorf=self.uorf_check.isChecked(),
+            uorf_region_nt=self.uorf_region_spin.value(),
             tai_weight=1.0 if self.tai_check.isChecked() else 0.0,
             beam=beam if beam > 0 else None,
             seed=0,

@@ -32,6 +32,7 @@ from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
+from bt4.constraints.uorf import UorfConstraint
 from bt4.domain import (
     CODON_TABLE,
     STOP,
@@ -132,6 +133,17 @@ class OptimizeConfig:
         avoid_internal_start: When ``True``, forbid any internal ATG (past the
             first codon) sitting in a strong Kozak context (purine at -3 and G at
             +4) to suppress spurious re-initiation. Off by default.
+        avoid_uorf: When ``True``, suppress out-of-frame internal ATGs that pair
+            with a downstream in-frame stop -- short uORFs that divert ribosomes
+            from the main ORF. This is a genuinely non-local (GLOBAL) rule, so it
+            is enforced by the refinement pass (not the exact DP); residual uORFs
+            are reported honestly and the certificate becomes heuristic. It is a
+            *structural* rule and makes no calibrated expression claim. Off by
+            default. Not supported together with a GC budget.
+        uorf_region_nt: 5'-proximal scan window (nucleotides) for uORF-opening
+            ATGs when ``avoid_uorf`` is set. uORFs matter most near the start
+            (leaky scanning), and an unbounded ban is rarely feasible for a long
+            CDS. Default 100 (~first 33 codons).
         gc_min: Optional lower bound on the total GC nucleotide count. Setting a
             GC budget routes the solve through the OR-Tools CP-SAT backend.
         gc_max: Optional upper bound on the total GC nucleotide count.
@@ -172,6 +184,8 @@ class OptimizeConfig:
     inverted_stem: int | None = None
     inverted_loop: int = 0
     avoid_internal_start: bool = False
+    avoid_uorf: bool = False
+    uorf_region_nt: int = 100
     gc_min: int | None = None
     gc_max: int | None = None
     refine: bool = False
@@ -345,7 +359,32 @@ def _build_global_constraints(config: OptimizeConfig) -> list[Constraint]:
     globals_: list[Constraint] = []
     if config.max_repeat_length is not None and config.max_repeat_length > 0:
         globals_.append(MaxRepeatConstraint(config.max_repeat_length))
+    if config.avoid_uorf:
+        globals_.append(UorfConstraint(region_nt=config.uorf_region_nt))
     return globals_
+
+
+def _global_audit(
+    dna: str, global_constraints: Sequence[Constraint], config: OptimizeConfig
+) -> dict[str, object]:
+    """Honest per-constraint residual report for the non-local (GLOBAL) rules.
+
+    For each active global constraint, recompute its hard-violation count on the
+    delivered ``dna`` and report ``{name}_residual`` and ``{name}_enforced``
+    (``"clean"`` when zero, else ``"partial"``), plus the relevant config knob.
+    This is the truthful record of how well the refinement layer enforced a rule
+    that the exact DP cannot (CLAUDE.md §10.1).
+    """
+    audit: dict[str, object] = {}
+    for c in global_constraints:
+        residual = sum(1 for v in c.validate(dna) if v.severity is Severity.HARD)
+        audit[f"{c.name}_residual"] = residual
+        audit[f"{c.name}_enforced"] = "clean" if residual == 0 else "partial"
+    if config.max_repeat_length is not None:
+        audit["max_repeat_length"] = config.max_repeat_length
+    if config.avoid_uorf:
+        audit["uorf_region_nt"] = config.uorf_region_nt
+    return audit
 
 
 def _scalar_delta(
@@ -401,6 +440,8 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "inverted_stem": config.inverted_stem,
         "inverted_loop": config.inverted_loop,
         "avoid_internal_start": config.avoid_internal_start,
+        "avoid_uorf": config.avoid_uorf,
+        "uorf_region_nt": config.uorf_region_nt,
         "gc_min": config.gc_min,
         "gc_max": config.gc_max,
         "refine": config.refine,
@@ -621,12 +662,7 @@ def _refine(
         manifest_extra["folding_model"] = model.name
         manifest_extra["folding_calibrated"] = model.calibrated
     if globals_:
-        residual = sum(
-            1 for c in globals_ for v in c.validate(result.dna) if v.severity is Severity.HARD
-        )
-        extra_audit["max_repeat_length"] = config.max_repeat_length
-        extra_audit["max_repeat_residual"] = residual
-        extra_audit["max_repeat_enforced"] = "clean" if residual == 0 else "partial"
+        extra_audit.update(_global_audit(result.dna, globals_, config))
     return result.dna, result.certificate, extra_audit, manifest_extra
 
 
@@ -651,11 +687,11 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
             "refine is not supported together with a GC budget (gc_min/gc_max): "
             "the budget is a global constraint that refinement would not re-enforce"
         )
-    if config.max_repeat_length is not None and has_budget:
+    if (config.max_repeat_length is not None or config.avoid_uorf) and has_budget:
         raise ValueError(
-            "max_repeat_length is not supported together with a GC budget "
-            "(gc_min/gc_max): enforcing the (non-local) repeat rule needs a "
-            "refinement pass that would not re-enforce the GC budget"
+            "max_repeat_length / avoid_uorf are not supported together with a GC "
+            "budget (gc_min/gc_max): enforcing a non-local rule needs a refinement "
+            "pass that would not re-enforce the GC budget"
         )
     p = validate_protein(protein)
     table = load_table(config.organism)
@@ -701,11 +737,7 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     elif global_constraints:
         # A non-local constraint is active but the proven-optimal seed already
         # satisfied it, so no refinement was needed: report it as cleanly enforced.
-        extra_audit = {
-            "max_repeat_length": config.max_repeat_length,
-            "max_repeat_residual": 0,
-            "max_repeat_enforced": "clean",
-        }
+        extra_audit = _global_audit(dna, global_constraints, config)
     return _make_result(
         protein=p,
         dna=dna,

@@ -52,6 +52,8 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         inverted_stem=args.inverted_stem,
         inverted_loop=args.inverted_loop,
         avoid_internal_start=args.avoid_internal_start,
+        avoid_uorf=args.avoid_uorf,
+        uorf_region_nt=args.uorf_region_nt,
         refine=args.refine,
         refine_iterations=args.refine_iterations,
         folding_weight=args.folding_weight,
@@ -106,6 +108,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--avoid-internal-start", action="store_true",
                         dest="avoid_internal_start",
                         help="forbid internal ATG in a strong Kozak context")
+    parser.add_argument("--avoid-uorf", action="store_true", dest="avoid_uorf",
+                        help="suppress out-of-frame internal ATG..in-frame-stop uORFs "
+                        "(non-local, refinement-enforced -> HEURISTIC; structural, "
+                        "not a calibrated expression claim)")
+    parser.add_argument("--uorf-region-nt", type=int, default=100, dest="uorf_region_nt",
+                        help="5' scan window (nt) for uORF-opening ATGs (default 100)")
     parser.add_argument("--refine", action="store_true",
                         help="run a 5'-folding-aware SA refinement pass (HEURISTIC result)")
     parser.add_argument("--refine-iterations", type=int, default=2000, dest="refine_iterations",
@@ -149,6 +157,15 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
         if enforced == "partial":
             print("  NOTE: refinement could not remove every long repeat (the protein may "
                   "force some); residual repeats are reported in the violations above.")
+    if "uorf_enforced" in result.audit:
+        enforced = result.audit["uorf_enforced"]
+        region = result.audit.get("uorf_region_nt")
+        residual = result.audit.get("uorf_residual")
+        print(f"uORF       {enforced} (5' window {region} nt, residual {residual})")
+        if enforced == "partial":
+            print("  NOTE: refinement could not remove every out-of-frame uORF (the protein "
+                  "may force some); residual uORFs are reported in the violations above. "
+                  "This is a structural flag, not a calibrated expression prediction.")
     if "folding_model" in result.audit:
         model = result.audit.get("folding_model")
         dg = float(result.audit.get("folding_dg", 0.0))  # type: ignore[arg-type]

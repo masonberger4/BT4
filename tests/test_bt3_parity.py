@@ -100,7 +100,7 @@ def test_max_repeat_partial_is_reported_honestly() -> None:
 
 
 def test_max_repeat_with_gc_budget_raises() -> None:
-    with pytest.raises(ValueError, match="max_repeat_length is not supported"):
+    with pytest.raises(ValueError, match="not supported together with a GC budget"):
         api.optimize("MKAILV", OptimizeConfig(max_repeat_length=6, gc_min=5, gc_max=9))
 
 

@@ -58,6 +58,8 @@ class ConfigModel(BaseModel):
     inverted_stem: int | None = None
     inverted_loop: int = 0
     avoid_internal_start: bool = False
+    avoid_uorf: bool = False
+    uorf_region_nt: int = 100
     refine: bool = False
     refine_iterations: int = 2000
     folding_weight: float = 1.0
@@ -96,6 +98,8 @@ class ConfigModel(BaseModel):
             inverted_stem=self.inverted_stem,
             inverted_loop=self.inverted_loop,
             avoid_internal_start=self.avoid_internal_start,
+            avoid_uorf=self.avoid_uorf,
+            uorf_region_nt=self.uorf_region_nt,
             refine=self.refine,
             refine_iterations=self.refine_iterations,
             folding_weight=self.folding_weight,
