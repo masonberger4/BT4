@@ -10,5 +10,12 @@ from __future__ import annotations
 
 from bt4.optimize.anneal_refine import anneal_refine
 from bt4.optimize.exact_dp import InfeasibleError, SolveResult, solve_exact
+from bt4.optimize.sample import sample_sequences
 
-__all__ = ["InfeasibleError", "SolveResult", "anneal_refine", "solve_exact"]
+__all__ = [
+    "InfeasibleError",
+    "SolveResult",
+    "anneal_refine",
+    "sample_sequences",
+    "solve_exact",
+]

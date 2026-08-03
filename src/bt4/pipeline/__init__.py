@@ -9,6 +9,7 @@ solver -- never anything above it.
 from __future__ import annotations
 
 from bt4.optimize import InfeasibleError
+from bt4.pipeline.library import LibraryResult, run_library
 from bt4.pipeline.optimize import (
     FrontierResult,
     OptimizeConfig,
@@ -23,12 +24,14 @@ from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 __all__ = [
     "FrontierResult",
     "InfeasibleError",
+    "LibraryResult",
     "OptimizeConfig",
     "Track",
     "TracksResult",
     "ValidationReport",
     "rerank_by_expression",
     "run_frontier",
+    "run_library",
     "run_optimize",
     "run_tracks",
     "run_validate",

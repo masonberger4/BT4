@@ -569,10 +569,20 @@ is a requirement, not a nice-to-have.
   accessibility) and ship **packaged installers** (PyInstaller/Briefcase) for
   macOS/Windows/Linux; optionally expose the `service/` HTTP API. External-
   validation report vs real gene distributions and published tools.
-- **Phase 5 — Scale & ecosystem.** More organisms with authoritative provenance,
-  library/degenerate-design mode (sample the codon distribution, not just a
-  single MFC target), restriction-enzyme catalogs, tissue/condition-specific
-  tables.
+- **Phase 5 — Scale & ecosystem.** 🔶 **Opened.** **Library / degenerate-design
+  mode has landed** (`optimize/sample.py` + `pipeline/library.py`, exposed as
+  `api.library` and `bt4 library PROTEIN --n N`): instead of a single MFC
+  optimum it draws a library of sequences by **sampling** each residue's
+  synonymous-codon distribution (organism frequencies raised to `1/temperature`,
+  keeping only codons that pass every LOCAL constraint's `ok_suffix`). It is an
+  honest **stochastic sampler, not an optimizer** — every member round-trips
+  (#1), carries metrics recomputed from its own DNA (#2), is fully deterministic
+  from its seed (#7), and carries the new `OptimalityStatus.SAMPLED` certificate
+  that makes **no** optimality or expression claim (§1/§10.6). GLOBAL rules
+  (max-repeat, uORF) are not enforced during sampling but are validated and any
+  residual violation reported honestly per member. Still ahead: more organisms
+  with authoritative provenance, restriction-enzyme catalogs, tissue/condition-
+  specific tables.
 
 ---
 

@@ -118,6 +118,38 @@ def test_optimize_with_tai(capsys: pytest.CaptureFixture[str]) -> None:
     assert "tAI" in out
 
 
+def test_library_fasta(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["library", "MAALKHETQWSNDECFGR", "--n", "4", "--max-homopolymer", "5"]
+    assert main(argv) == 0
+    out = capsys.readouterr()
+    # Four FASTA records on stdout; the honest SAMPLED note goes to stderr.
+    assert out.out.count(">") == 4
+    assert ">bt4_lib_1" in out.out
+    assert "SAMPLED" in out.err
+    assert "not optimized" in out.err.lower() or "not optimized" in out.err
+
+
+def test_library_json(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["library", "MAALKHETQW", "--n", "3", "--seed", "7", "--json"]
+    assert main(argv) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["n"] == 3
+    assert payload["certificate"] == "sampled"
+    assert len(payload["sequences"]) == 3
+    assert "manifest" in payload
+    for seq in payload["sequences"]:
+        assert seq["certificate"]["status"] == "sampled"
+
+
+def test_library_deterministic_cli(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["library", "MAALKHETQW", "--n", "3", "--seed", "11", "--json"]
+    assert main(argv) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert main(argv) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert [s["dna"] for s in first["sequences"]] == [s["dna"] for s in second["sequences"]]
+
+
 def test_build_table(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]) -> None:
     from pathlib import Path
 
