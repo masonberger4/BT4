@@ -80,34 +80,85 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 
 ---
 
-## Download and run it locally
+## Install BT4 Studio (no coding required)
 
-BT4 is a local desktop app — nothing is hosted, nothing phones home.
+> New to installing apps? See the **[full step-by-step install & troubleshooting guide](docs/INSTALL.md)**.
 
-### Option A — install with `pipx` (recommended)
+BT4 Studio is a normal desktop app: **you download one file and open it.** No
+terminal, no Python, no setup. Everything runs on your own machine and nothing is
+uploaded anywhere.
 
-Get an isolated install and both the app and the CLI on your `PATH`:
+**Get the app:** open the
+[**Releases page**](https://github.com/masonberger4/BT4/releases), open the latest
+release, and under **Assets** download the one file for your computer:
 
-```bash
-pipx install "bt4[app] @ git+https://github.com/masonberger4/BT4"
-bt4-studio        # launch the desktop app
-bt4 --help        # or use the command line
-```
+| Your computer | Download this | Then |
+|---|---|---|
+| **Windows** | `BT4-Studio-Windows.exe` | Double-click it. |
+| **Mac** | `BT4-Studio-macOS.dmg` | Double-click it, then drag **BT4 Studio** into **Applications**. Open it from Applications. |
+| **Linux** | `BT4-Studio-Linux-x86_64` | Right-click → **Properties → Permissions → Allow executing as program**, then double-click. |
 
-### Option B — packaged app from a release
+That's it — BT4 Studio opens, you paste a protein, pick an organism, and click
+**Optimize**.
 
-Tagged releases publish a standalone **BT4 Studio** bundle (macOS / Windows /
-Linux) plus the Python wheel + sdist on the
-[Releases page](https://github.com/masonberger4/BT4/releases). Download the
-bundle for your OS, unzip, and run — no Python required.
+> **Mac note:** the `.dmg` is built for **Apple Silicon** Macs (M1/M2/M3/M4 — 2020
+> or later; check **Apple menu → About This Mac**). On an older **Intel** Mac, use
+> the developer install below for now.
 
-### Option C — from source
+<details>
+<summary><b>"Windows protected your PC" / "macOS cannot verify the developer" — how to open it anyway</b></summary>
+
+The app is safe, but it is **not yet code-signed**, so Windows and macOS show a
+one-time warning for apps they don't recognize. This is expected. To open it:
+
+- **Windows:** on the blue "Windows protected your PC" box, click **More info**,
+  then **Run anyway**.
+- **Mac:** if you see *"'BT4 Studio' cannot be opened because Apple cannot check
+  it for malicious software"*, **right-click (or Control-click) the app → Open →
+  Open**. You only need to do this the first time. (On recent macOS you can also
+  go to **System Settings → Privacy & Security** and click **Open Anyway**.)
+- **Linux:** if double-click does nothing, your file manager may not run
+  executables directly — open a file manager, right-click the file, and enable
+  "Allow executing as program" (wording varies by desktop).
+
+Signing these apps so the warnings disappear needs a paid Apple Developer ID and
+a Windows code-signing certificate; see [`packaging/README.md`](packaging/README.md#code-signing-so-the-warnings-go-away).
+
+</details>
+
+> **Note:** packaged downloads appear on a release only after its build has run.
+> If the latest release shows no `.exe` / `.dmg` / Linux file under **Assets**
+> yet, it hasn't been built — a maintainer can produce them with the
+> [packaging guide](packaging/README.md#repairing-a-release), or use the developer
+> install below.
+
+---
+
+## Install for developers (from source)
+
+BT4 is also a `bt4` CLI and a `bt4.api` Python library. It needs **Python 3.11+**.
 
 ```bash
 git clone https://github.com/masonberger4/BT4
 cd BT4
-pip install -e '.[app]'
-bt4-studio                 # or:  python -m bt4.app
+pip install -e '.[app]'     # core + PySide6 + pyqtgraph (drop [app] for just the CLI/API)
+bt4-studio                  # launch the desktop app  (or:  python -m bt4.app)
+bt4 --help                  # or use the command line
+```
+
+On **Linux**, Qt needs a few system libraries for the GUI to open. If launching
+`bt4-studio` fails with `libEGL.so.1: cannot open shared object file`, install
+them once (Debian/Ubuntu shown):
+
+```bash
+sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3
+```
+
+macOS and Windows need no extra system packages. Prefer an isolated install that
+puts both the app and CLI on your `PATH`? Use [`pipx`](https://pipx.pypa.io):
+
+```bash
+pipx install "bt4[app] @ git+https://github.com/masonberger4/BT4"
 ```
 
 ---
