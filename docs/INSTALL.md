@@ -8,11 +8,10 @@ A few reassurances before we start:
 
 - **Everything runs on your own computer.** BT4 Studio is 100% local and offline.
   Nothing you paste in is ever uploaded anywhere.
-- **The first-time security warning is normal.** The app isn't code-signed yet
-  (that needs a paid certificate — see the end of this guide), so the very first
-  time you open it, your operating system shows a one-time "we don't recognize
-  this app" message. This is expected and safe, and below we show you exactly,
-  click by click, how to get past it.
+- **The first-time security warning is normal.** The app isn't code-signed, so the
+  very first time you open it, your operating system shows a one-time "we don't
+  recognize this app" message. This is expected and safe, and below we show you
+  exactly, click by click, how to get past it.
 - **You only do the warning step once.** After the first launch, the app opens
   normally like anything else.
 
@@ -91,9 +90,9 @@ If your file manager doesn't have that option, see the
 
 ## Getting past the first-time warning
 
-Because the app isn't code-signed yet, the **first** time you open it your
-computer warns you that it doesn't recognize the developer. **This is expected
-and the app is safe.** Here's exactly how to open it anyway.
+Because the app isn't code-signed, the **first** time you open it your computer
+warns you that it doesn't recognize the developer. **This is expected and the app
+is safe.** Here's exactly how to open it anyway.
 
 ### Windows — "Windows protected your PC"
 
@@ -221,9 +220,8 @@ installer to run.
 
 ## A note on the security warnings
 
-To make the first-time warnings disappear entirely, the app would need to be
-**code-signed** with paid certificates (an Apple Developer ID for Mac, an
-Authenticode certificate for Windows). That isn't in place yet, so for now the
-one-time warning is unavoidable — but as shown above, clicking past it is quick
-and the app is safe. The technical details live in the
-[packaging guide](../packaging/README.md#code-signing-so-the-warnings-go-away).
+The one-time warning appears because the app isn't **code-signed**. Removing it
+would mean paying for certificates (an Apple Developer ID for Mac, an Authenticode
+certificate for Windows) just to silence a prompt you click past once — so BT4
+Studio is distributed unsigned on purpose. As shown above, getting past the warning
+takes a couple of clicks, and the app is safe.

@@ -108,7 +108,7 @@ That's it — BT4 Studio opens, you paste a protein, pick an organism, and click
 <details>
 <summary><b>"Windows protected your PC" / "macOS cannot verify the developer" — how to open it anyway</b></summary>
 
-The app is safe, but it is **not yet code-signed**, so Windows and macOS show a
+The app is safe, but it is **not code-signed**, so Windows and macOS show a
 one-time warning for apps they don't recognize. This is expected. To open it:
 
 - **Windows:** on the blue "Windows protected your PC" box, click **More info**,
@@ -121,8 +121,8 @@ one-time warning for apps they don't recognize. This is expected. To open it:
   executables directly — open a file manager, right-click the file, and enable
   "Allow executing as program" (wording varies by desktop).
 
-Signing these apps so the warnings disappear needs a paid Apple Developer ID and
-a Windows code-signing certificate; see [`packaging/README.md`](packaging/README.md#code-signing-so-the-warnings-go-away).
+These apps are intentionally unsigned -- code-signing would mean paying for Apple
+and Windows certificates just to remove a warning you click through once.
 
 </details>
 

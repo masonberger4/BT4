@@ -33,59 +33,21 @@ On a headless Linux box you'll need the Qt runtime libraries to launch it, e.g.
 `sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3`.
 The CI release job installs exactly these before building the Linux one-file app.
 
-## Code signing (so the warnings go away)
+## Code signing (intentionally skipped)
 
-Unsigned apps make first-time users see a one-time OS warning (Windows SmartScreen
-"Windows protected your PC"; macOS Gatekeeper "cannot verify the developer" /
-"damaged"). The [README](../README.md#install-bt4-studio-no-coding-required) and
-[`docs/INSTALL.md`](../docs/INSTALL.md) tell users how to click past it.
+BT4 Studio's releases are **not code-signed**, by choice. Signing would remove the
+one-time OS warning first-time users see (Windows SmartScreen "Windows protected
+your PC"; macOS Gatekeeper "cannot verify the developer" / "damaged"), but it needs
+a paid Apple Developer ID membership and a Windows code-signing certificate — an
+ongoing cost for a warning users click past once. The
+[README](../README.md#install-bt4-studio-no-coding-required) and
+[`docs/INSTALL.md`](../docs/INSTALL.md) walk users through that one-time step.
 
-**The signing pipeline is already wired into the `bundle` job of
-[`release.yml`](../.github/workflows/release.yml).** It stays a no-op (a green,
-unsigned build) until you add the certificate **secrets** below; the moment they
-exist, each release is signed and — on macOS — notarized and stapled automatically,
-and the warnings go away. The certificates cost money and are bound to your
-identity, so they can only live as encrypted GitHub Actions secrets, never in the
-repo.
-
-### macOS — Developer ID + notarization
-
-Requires an [Apple Developer Program](https://developer.apple.com/programs/)
-membership ($99/yr). The macOS steps activate only when **both** the certificate
-and the notary key are present. Add these repository secrets
-(**Settings → Secrets and variables → Actions**):
-
-| Secret | What it is / how to get it |
-|---|---|
-| `MACOS_CERTIFICATE_P12` | Your **Developer ID Application** cert exported from Keychain as a `.p12`, then base64-encoded: `base64 -i cert.p12 \| pbcopy`. |
-| `MACOS_CERTIFICATE_PASSWORD` | The password you set when exporting the `.p12`. |
-| `MACOS_SIGN_IDENTITY` | The identity string, e.g. `Developer ID Application: Your Name (TEAMID)` (see `security find-identity -v -p codesigning`). |
-| `MACOS_NOTARY_API_KEY_P8` | An **App Store Connect API key** (`.p8`, Role: Developer) from App Store Connect → Users and Access → Integrations → Keys, base64-encoded. |
-| `MACOS_NOTARY_KEY_ID` | The API key's Key ID. |
-| `MACOS_NOTARY_ISSUER_ID` | The Issuer ID shown on the same Keys page. |
-
-The workflow signs the `.app` with the hardened runtime, signs the `.dmg`,
-submits it with `xcrun notarytool submit --wait`, and staples the ticket so
-Gatekeeper opens it with no prompt, even offline.
-
-### Windows — Authenticode
-
-Requires a **code-signing certificate** from a CA (Sectigo, DigiCert, …). An
-**OV** cert removes "unknown publisher" but SmartScreen reputation still builds
-over downloads; an **EV** cert clears SmartScreen immediately. Add:
-
-| Secret | What it is |
-|---|---|
-| `WINDOWS_CERTIFICATE_PFX` | The signing cert as a `.pfx`/`.p12`, base64-encoded: `base64 -w0 cert.pfx`. |
-| `WINDOWS_CERTIFICATE_PASSWORD` | The `.pfx` password. |
-
-The workflow signs `BT4-Studio-Windows.exe` with `signtool` (SHA-256, RFC-3161
-timestamp) so it verifies with a trusted publisher.
-
-> **Note:** to sign an **already-published** release (e.g. re-sign `v0.3.1` after
-> adding the secrets), re-run its build — see [Repairing a release](#repairing-a-release).
-> The signing steps have no local prerequisites; a plain unsigned local
-> `pyinstaller` build (above) is unaffected.
+If you ever decide to sign the apps, add a signing step to the `bundle` job of
+[`release.yml`](../.github/workflows/release.yml), keyed on GitHub Actions secrets
+holding the certificates: macOS wants a Developer ID `codesign` (hardened runtime)
+plus `xcrun notarytool submit --wait` and `xcrun stapler staple` on the `.dmg`;
+Windows wants `signtool sign` (SHA-256 + RFC-3161 timestamp) on the `.exe`.
 
 ## Releases
 
