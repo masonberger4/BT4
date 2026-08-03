@@ -67,6 +67,9 @@ class ConfigModel(BaseModel):
     folding_weight: float = 1.0
     gc_min: int | None = None
     gc_max: int | None = None
+    dinuc_budget: str | None = None
+    dinuc_min: int | None = None
+    dinuc_max: int | None = None
     beam: int | None = None
     seed: int = 0
 
@@ -109,6 +112,9 @@ class ConfigModel(BaseModel):
             folding_weight=self.folding_weight,
             gc_min=self.gc_min,
             gc_max=self.gc_max,
+            dinuc_budget=self.dinuc_budget,
+            dinuc_min=self.dinuc_min,
+            dinuc_max=self.dinuc_max,
             beam=self.beam,
             seed=self.seed,
         )

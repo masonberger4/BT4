@@ -80,6 +80,31 @@ def test_optimize_gc_budget(capsys: pytest.CaptureFixture[str]) -> None:
     assert "cpsat" in capsys.readouterr().out
 
 
+def test_optimize_cpg_budget(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MARPGARSTKLE", "--cpg-max", "3"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    # The dinucleotide budget uses the exact bucketed DP -> proven optimal, and the
+    # recomputed CpG count is printed and within the cap.
+    assert "proven_optimal" in out
+    assert "lagrangian" in out
+    assert "CG count" in out
+
+
+def test_optimize_upa_budget(capsys: pytest.CaptureFixture[str]) -> None:
+    argv = ["optimize", "MYLIVFYLIV", "--upa-min", "1", "--upa-max", "4"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "proven_optimal" in out
+    assert "TA count" in out
+
+
+def test_optimize_both_dinuc_families_errors() -> None:
+    # Only one dinucleotide budget at a time: mixing --cpg-* and --upa-* is an error.
+    argv = ["optimize", "MAAL", "--cpg-max", "3", "--upa-max", "3"]
+    assert main(argv) == 2
+
+
 def test_optimize_with_minmax(capsys: pytest.CaptureFixture[str]) -> None:
     argv = ["optimize", "MAALKHETQWSNDECFGR", "--minmax-weight", "2", "--minmax-direction", "min"]
     assert main(argv) == 0

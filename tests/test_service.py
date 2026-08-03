@@ -72,6 +72,23 @@ def test_optimize_invalid_protein() -> None:
     assert response.status_code == 400
 
 
+def test_optimize_dinuc_budget() -> None:
+    """A CpG count budget routes through the exact bucketed DP over the service."""
+    response = client.post(
+        "/optimize",
+        json={
+            "protein": "MARPGARSTKLE",
+            "config": {"dinuc_budget": "CG", "dinuc_max": 3},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["certificate"]["status"] == "proven_optimal"
+    dna = body["dna"]
+    cpg = sum(1 for i in range(len(dna) - 1) if dna[i : i + 2] == "CG")
+    assert cpg <= 3
+
+
 def test_config_accepts_new_fields_and_rejects_unknown() -> None:
     """ConfigModel mirrors the full engine config and forbids unknown keys.
 

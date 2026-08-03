@@ -55,7 +55,7 @@ from bt4.domain import (
     validate_protein,
 )
 from bt4.objectives.codon_pair import CpbTerm
-from bt4.objectives.dinucleotide import DinucleotideTerm
+from bt4.objectives.dinucleotide import DinucleotideTerm, dinucleotide_amount
 from bt4.objectives.minmax import MinMaxTerm
 from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
@@ -160,6 +160,24 @@ class OptimizeConfig:
         gc_min: Optional lower bound on the total GC nucleotide count. Setting a
             GC budget routes the solve through the OR-Tools CP-SAT backend.
         gc_max: Optional upper bound on the total GC nucleotide count.
+        dinuc_budget: The dinucleotide (2-mer over ACGT, e.g. ``"CG"`` for CpG or
+            ``"TA"`` for UpA) whose *overlapping whole-sequence count* is budgeted,
+            or ``None`` to disable the dinucleotide budget. Dinucleotide content is
+            a real mRNA-design lever: depleting CpG makes a transcript stealthier
+            (evades innate-immunity sensing) while elevating it raises
+            immunogenicity for a vaccine, and UpA is a comparable stability/
+            translation knob. Unlike a per-base GC count, a 2-mer can straddle a
+            codon boundary, so the budget is enforced by the amount-bucketed
+            *exact* DP (:func:`bt4.optimize.lagrangian.solve_lagrangian` with
+            ``budget_context = 1``), never CP-SAT -- with a ``PROVEN_OPTIMAL``
+            certificate and every local constraint still honored. Mutually
+            exclusive with a GC budget, and (like the GC budget) not supported
+            together with ``refine`` / ``max_repeat_length`` / ``avoid_uorf``,
+            whose refinement pass would not re-enforce the budget.
+        dinuc_min: Optional lower bound on the total ``dinuc_budget`` count (only
+            used when ``dinuc_budget`` is set; e.g. a CpG floor for a vaccine).
+        dinuc_max: Optional upper bound on the total ``dinuc_budget`` count (only
+            used when ``dinuc_budget`` is set; e.g. a CpG cap for stealth).
         refine: When ``True``, run a simulated-annealing refinement pass over the
             exact-DP seed that also maximizes a 5' mRNA-folding score (opening up
             start-proximal structure). The result's certificate becomes
@@ -203,6 +221,9 @@ class OptimizeConfig:
     uorf_region_nt: int = 100
     gc_min: int | None = None
     gc_max: int | None = None
+    dinuc_budget: str | None = None
+    dinuc_min: int | None = None
+    dinuc_max: int | None = None
     refine: bool = False
     refine_iterations: int = 2000
     folding_weight: float = 1.0
@@ -471,6 +492,9 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "uorf_region_nt": config.uorf_region_nt,
         "gc_min": config.gc_min,
         "gc_max": config.gc_max,
+        "dinuc_budget": config.dinuc_budget,
+        "dinuc_min": config.dinuc_min,
+        "dinuc_max": config.dinuc_max,
         "refine": config.refine,
         "refine_iterations": config.refine_iterations,
         "folding_weight": config.folding_weight,
@@ -591,15 +615,21 @@ def _solve_with_gc_budget(
         from bt4._accel import gc_count  # lazy: matches the accel import site
         from bt4.optimize.lagrangian import solve_lagrangian
 
+        def gc_amount(prefix: str, codon: str) -> int:
+            # GC is a per-base count, so a G/C never straddles a codon boundary:
+            # the codon's contribution is context-free (budget_context == 0).
+            return gc_count(codon)
+
         solve = solve_lagrangian(
             residues,
             scalar_delta=_scalar_delta(active),
             constraints=constraints,
-            amount=gc_count,
+            amount=gc_amount,
             budget_min=config.gc_min,
             budget_max=config.gc_max,
             beam=config.beam,
             objective_context=max((term.context_len() for term, _ in active), default=0),
+            budget_context=0,
             budget_name="gc_budget",
         )
         return solve, solve.certificate
@@ -613,6 +643,42 @@ def _solve_with_gc_budget(
 
     solve = solve_cpsat(
         residues, codon_score=codon_score, gc_min=config.gc_min, gc_max=config.gc_max
+    )
+    return solve, solve.certificate
+
+
+def _solve_with_dinuc_budget(
+    residues: Sequence[str],
+    active: Sequence[tuple[ObjectiveTerm, float]],
+    constraints: Sequence[Constraint],
+    config: OptimizeConfig,
+) -> tuple[SolveResult, OptimalityCertificate]:
+    """Solve with a whole-sequence dinucleotide (CpG/UpA) count budget, exactly.
+
+    A dinucleotide count does not decompose per-codon -- a 2-mer can straddle a
+    codon boundary -- so this always routes through the amount-bucketed *exact* DP
+    (:func:`bt4.optimize.lagrangian.solve_lagrangian`) with a context-aware amount
+    (:func:`bt4.objectives.dinucleotide.dinucleotide_amount`) and
+    ``budget_context = 1``, never CP-SAT. Every LOCAL constraint and pairwise
+    objective term stays honored, and the budget is enforced with a
+    ``PROVEN_OPTIMAL`` certificate (or ``BEAM_TRUNCATED`` under a beam). The
+    delivered count is recomputed from the DNA by the caller (invariant #2).
+    """
+    from bt4.optimize.lagrangian import solve_lagrangian  # lazy: matches the GC route
+
+    assert config.dinuc_budget is not None  # guaranteed by the run_optimize routing
+    dinuc = config.dinuc_budget.upper()
+    solve = solve_lagrangian(
+        residues,
+        scalar_delta=_scalar_delta(active),
+        constraints=constraints,
+        amount=dinucleotide_amount(dinuc),
+        budget_min=config.dinuc_min,
+        budget_max=config.dinuc_max,
+        beam=config.beam,
+        objective_context=max((term.context_len() for term, _ in active), default=0),
+        budget_context=len(dinuc) - 1,
+        budget_name=f"{dinuc.lower()}_budget",
     )
     return solve, solve.certificate
 
@@ -706,25 +772,66 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     the OR-Tools CP-SAT backend for a pure additive, context-free objective with
     no local constraints (proven optimal), or the Lagrangian backend when a local
     constraint or pairwise term is in force (gap-bounded, but those are honored).
-    With no GC budget the exact codon-trellis DP is used.
+    A dinucleotide count budget (``dinuc_budget`` with ``dinuc_min``/``dinuc_max``)
+    always routes through the amount-bucketed exact DP (context-aware, since a
+    2-mer straddles codon boundaries) with a proven-optimal certificate. The two
+    budgets are mutually exclusive. With no budget the exact codon-trellis DP is
+    used.
 
     Raises:
-        ValueError: On an invalid protein.
+        ValueError: On an invalid protein, a malformed ``dinuc_budget``, both
+            budgets set at once, or a budget combined with
+            ``refine``/``max_repeat_length``/``avoid_uorf``.
         bt4.optimize.InfeasibleError: If no feasible sequence exists (including a
-            GC budget that admits no assignment).
+            budget that admits no assignment).
     """
     config = config or OptimizeConfig()
-    has_budget = config.gc_min is not None or config.gc_max is not None
+    # Validate the dinucleotide-budget shape up front, regardless of the bounds, so
+    # a malformed 2-mer is always rejected honestly rather than silently ignored.
+    if config.dinuc_budget is not None:
+        try:
+            dinuc = validate_dna(config.dinuc_budget)
+        except ValueError as exc:
+            raise ValueError(
+                "dinuc_budget must be a 2-mer over ACGT (e.g. 'CG' for CpG, 'TA' "
+                f"for UpA), got {config.dinuc_budget!r}"
+            ) from exc
+        if len(dinuc) != 2:
+            raise ValueError(
+                "dinuc_budget must be exactly two ACGT characters, got "
+                f"{config.dinuc_budget!r}"
+            )
+    elif config.dinuc_min is not None or config.dinuc_max is not None:
+        raise ValueError(
+            "dinuc_min/dinuc_max require dinuc_budget to name the 2-mer to budget "
+            "(e.g. dinuc_budget='CG')"
+        )
+    has_gc_budget = config.gc_min is not None or config.gc_max is not None
+    has_dinuc_budget = config.dinuc_budget is not None and (
+        config.dinuc_min is not None or config.dinuc_max is not None
+    )
+    if has_gc_budget and has_dinuc_budget:
+        raise ValueError(
+            "a GC budget (gc_min/gc_max) and a dinucleotide count budget "
+            "(dinuc_min/dinuc_max) cannot be combined: the amount-bucketed exact DP "
+            "tracks a single whole-sequence count budget at a time"
+        )
+    has_budget = has_gc_budget or has_dinuc_budget
+    budget_label = (
+        "GC budget (gc_min/gc_max)"
+        if has_gc_budget
+        else "dinucleotide count budget (dinuc_min/dinuc_max)"
+    )
     if config.refine and has_budget:
         raise ValueError(
-            "refine is not supported together with a GC budget (gc_min/gc_max): "
+            f"refine is not supported together with a {budget_label}: "
             "the budget is a global constraint that refinement would not re-enforce"
         )
     if (config.max_repeat_length is not None or config.avoid_uorf) and has_budget:
         raise ValueError(
-            "max_repeat_length / avoid_uorf are not supported together with a GC "
-            "budget (gc_min/gc_max): enforcing a non-local rule needs a refinement "
-            "pass that would not re-enforce the GC budget"
+            f"max_repeat_length / avoid_uorf are not supported together with a "
+            f"{budget_label}: enforcing a non-local rule needs a refinement "
+            "pass that would not re-enforce the budget"
         )
     p = validate_protein(protein)
     table = load_table(config.organism)
@@ -736,7 +843,9 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     # delivered result carries every violation, including any residual max-repeat.
     report_constraints = [*constraints, *global_constraints]
     residues = [*p, STOP]
-    if has_budget:
+    if has_dinuc_budget:
+        solve, certificate = _solve_with_dinuc_budget(residues, active, constraints, config)
+    elif has_gc_budget:
         solve, certificate = _solve_with_gc_budget(residues, active, constraints, config)
     else:
         solve = solve_exact(
@@ -750,6 +859,12 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     dna = solve.dna
     extra_audit: dict[str, object] | None = None
     manifest_extra: dict[str, object] | None = None
+    if has_dinuc_budget and config.dinuc_budget is not None:
+        # Recompute the delivered dinucleotide count from the DNA (invariant #2):
+        # the reported count is never trusted from the solver's accumulator.
+        dn = config.dinuc_budget.upper()
+        count = sum(1 for i in range(len(dna) - 1) if dna[i : i + 2] == dn)
+        extra_audit = {f"{dn.lower()}_count": count}
     # Refine when the caller asked for folding, or when a non-local constraint
     # (max-repeat) is active and the exact-DP seed actually violates it -- a clean
     # seed keeps its proven-optimal certificate and needs no perturbation.

@@ -25,14 +25,58 @@ codon that contains its second (end) base, so it is counted once and only once.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from bt4.domain.scope import Scope
 from bt4.domain.sequence import validate_dna
 
-__all__ = ["DinucleotideTerm"]
+__all__ = ["DinucleotideTerm", "dinucleotide_amount"]
 
 _DIRECTIONS: frozenset[str] = frozenset({"deplete", "elevate"})
+
+
+def dinucleotide_amount(dinucleotide: str) -> Callable[[str, str], int]:
+    """Build a context-aware per-codon count of a fixed 2-mer for a budget DP.
+
+    Returns an ``amount(prefix, codon)`` function giving the number of overlapping
+    occurrences of ``dinucleotide`` whose END base lies inside ``codon`` --
+    *including* the boundary occurrence formed by the prefix's last base and the
+    codon's first base. This is the *unsigned* counterpart of
+    :meth:`DinucleotideTerm.delta` (which multiplies the same count by a
+    sign): attributing every occurrence to the single codon holding its end base
+    counts it exactly once, so summing ``amount`` over the codons of a sequence
+    equals the whole-sequence overlapping count. That is precisely the invariant
+    the amount-bucketed budget DP (:func:`bt4.optimize.lagrangian.solve_lagrangian`)
+    needs to enforce a CpG/UpA count budget exactly, with ``budget_context == 1``.
+
+    Args:
+        dinucleotide: The 2-mer to count, exactly two ``ACGT`` characters
+            (case-insensitive; matched upper-cased).
+
+    Returns:
+        A function ``amount(prefix, codon) -> int`` reading only ``prefix[-1:]``.
+
+    Raises:
+        ValueError: If ``dinucleotide`` is not exactly two ``ACGT`` characters.
+    """
+    dinuc = validate_dna(dinucleotide)
+    if len(dinuc) != 2:
+        raise ValueError(
+            f"dinucleotide must be exactly 2 ACGT characters, got {dinucleotide!r}"
+        )
+
+    def amount(prefix: str, codon: str) -> int:
+        lead = prefix[-1:]
+        window = (lead + codon).upper()
+        offset = len(lead)  # index in ``window`` where the codon portion begins
+        return sum(
+            1
+            for start in range(len(window) - 1)
+            if window[start : start + 2] == dinuc and start + 1 >= offset
+        )
+
+    return amount
 
 
 @dataclass(frozen=True, slots=True)
