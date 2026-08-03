@@ -37,7 +37,11 @@ and green on `main`:
   `longest_repeat` (byte-identical Python fallbacks + equivalence tests);
   `max_gc_run` backs the GC-run `ok_suffix` veto.
 - **Surfaces:** stable `bt4.api`, the `bt4` CLI, BT4 Studio (PySide6, tooltips on
-  every control), an optional FastAPI service, content-hashed provenance manifests.
+  every control, and a sequence viewer that renders **inline violation
+  annotations** — each `Violation` highlighted over its `[start, end)` span,
+  HARD red / SOFT amber, with a hover tooltip and legend, so residual GLOBAL
+  violations show *where* they occur), an optional FastAPI service, content-hashed
+  provenance manifests.
 
 ## What's left (priority order — see CLAUDE.md §9 for the authoritative list)
 
