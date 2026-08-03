@@ -458,7 +458,16 @@ is a requirement, not a nice-to-have.
   constraints and pairwise objective terms** honored under the budget — reporting
   an honest gap-bounded certificate from its subgradient dual bound. The pipeline
   now routes a GC budget to CP-SAT for the pure-additive case and to the
-  Lagrangian backend whenever a local constraint or pairwise term is present. Also
+  Lagrangian backend whenever a local constraint or pairwise term is present. The
+  **CpG/UpA whole-sequence *count* budgets** — the last remaining Phase 2 item —
+  have now **landed** (`dinuc_budget`/`dinuc_min`/`dinuc_max`): a dinucleotide
+  count does *not* decompose per-codon (a 2-mer straddles the codon boundary), so
+  the amount-bucketed budget DP takes a **context-aware** per-codon `amount` that
+  attributes each occurrence to the codon holding its END base (exactly as
+  `DinucleotideTerm.delta` does), with `budget_context=1` folded into the state so
+  a straddling count stays exact — enforced by the same **exact bucketed DP** as
+  the GC budget with a `PROVEN_OPTIMAL` certificate, mutually exclusive with the
+  GC budget and (like it) incompatible with refinement-enforced rules. Also
   landed: an **internal-ATG strong-Kozak constraint**
   (`constraints/kozak.py`, LOCAL, `ok_suffix⇔validate`-tested) that forbids
   internal `ATG` in a strong Kozak context (purine at -3, G at +4) — with the
@@ -472,9 +481,10 @@ is a requirement, not a nice-to-have.
   builds the `CodonPairTable` at run time, PAIRWISE so exact in the trellis and a
   frontier axis, its reference-CDS content hash in the manifest) - honestly
   refusing when no reference CDS is given, since no default codon-pair table is
-  bundled (§8). Remaining (Phase 2): only the CpG/UpA whole-sequence *count*
-  budgets (non-local / not per-codon-decomposable, deferred). *(tAI and uORF
-  pairing have also landed - see their bullets.)* The **published comparison vs
+  bundled (§8). Remaining (Phase 2): none — the CpG/UpA whole-sequence *count*
+  budgets, previously the last deferred item, have now shipped as an exact
+  amount-bucketed DP budget (see the dinucleotide-budget note above). *(tAI and
+  uORF pairing have also landed - see their bullets.)* The **published comparison vs
   GeneOptimizer/IDT/Twist** has landed as `scripts/compare_tools.py` over a real,
   cited, CC BY 4.0 panel (Ranaghan et al. 2021, KRas4B) - every metric recomputed
   by BT4's own functions, BT4 never claimed "better", each tool's output

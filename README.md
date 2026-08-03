@@ -39,6 +39,11 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
   constraints and pairwise terms honored, with a gap-bounded certificate.
+- **CpG / UpA count budget:** cap or floor the whole-sequence CpG (`--cpg-max` /
+  `--cpg-min`) or UpA (`--upa-*`) count — CpG depletion for stealth, elevation for
+  immunogenicity. Enforced *exactly* by an amount-bucketed DP whose per-codon count
+  is boundary-aware (a CpG can straddle two codons), with a proven-optimal
+  certificate and every local constraint still honored.
 - **Hard constraints:** maximum homopolymer run, **max GC-run** (the "max GC
   length"), a whole-sequence **max repeat length** (direct/inverted/palindromic
   repeats anywhere, reverse-complement aware — enforced by refinement and reported

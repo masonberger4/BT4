@@ -8,6 +8,18 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **CpG / UpA whole-sequence count budget** (`dinuc_budget` + `dinuc_min` /
+  `dinuc_max`; CLI `--cpg-min/--cpg-max` and `--upa-min/--upa-max`) — the last
+  Phase 2 item. A dinucleotide count does not decompose per-codon (a 2-mer
+  straddles the codon boundary), so the amount-bucketed budget DP
+  (`bt4.optimize.lagrangian`) now takes a **context-aware** per-codon amount
+  (`bt4.objectives.dinucleotide.dinucleotide_amount`) attributing each occurrence
+  to the codon holding its END base, with a new `budget_context` folded into the
+  trellis state so a straddling count stays exact. Enforced by the same **exact
+  bucketed DP** as the GC budget, with a `proven_optimal` certificate and every
+  local constraint still honored. Mutually exclusive with the GC budget, and (like
+  it) not combinable with `refine` / `max_repeat_length` / `avoid_uorf`. Wired
+  through `OptimizeConfig`, the CLI, and the `service` request schema.
 - **Library / degenerate-design mode (opens Phase 5).** `api.library(protein,
   config, n, *, seed, temperature)` and `bt4 library PROTEIN --n N` sample a
   *library* of coding sequences by drawing from each residue's synonymous-codon

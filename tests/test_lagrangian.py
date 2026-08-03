@@ -29,6 +29,17 @@ from bt4.optimize.lagrangian import solve_lagrangian
 
 ScalarDelta = Callable[[str, str, int], float]
 
+
+def gc_amount(prefix: str, codon: str) -> int:
+    """GC count of ``codon`` in the context-aware ``amount(prefix, codon)`` shape.
+
+    GC is a per-base count that never straddles a codon boundary, so the prefix is
+    ignored and ``budget_context`` is 0 -- this simply adapts ``gc_count`` to the
+    signature :func:`~bt4.optimize.lagrangian.solve_lagrangian` now expects.
+    """
+    return gc_count(codon)
+
+
 # A protein whose achievable total GC count (including the trailing stop) spans
 # [17, 37]. The interior band [26, 28] excludes *both* extremes -- exactly the
 # case the old linear Lagrangian penalty jumped over and falsely called
@@ -87,7 +98,7 @@ def test_interior_two_sided_window_is_feasible_reproduction() -> None:
         residues,
         scalar_delta=zero_delta(),
         constraints=[],
-        amount=gc_count,
+        amount=gc_amount,
         budget_min=26,
         budget_max=28,
         budget_name="gc_budget",
@@ -129,7 +140,7 @@ def test_gc_upper_budget_is_respected_with_honest_certificate() -> None:
         residues,
         scalar_delta=delta,
         constraints=[],
-        amount=gc_count,
+        amount=gc_amount,
         budget_max=budget_max,
     )
 
@@ -165,7 +176,7 @@ def test_lower_budget_only_binds_and_is_proven() -> None:
         residues,
         scalar_delta=zero_delta(),
         constraints=[],
-        amount=gc_count,
+        amount=gc_amount,
         budget_min=budget_min,
         budget_name="gc_min",
     )
@@ -188,7 +199,7 @@ def test_both_bounds_interior_band_excludes_extremes() -> None:
         residues,
         scalar_delta=zero_delta(),
         constraints=[],
-        amount=gc_count,
+        amount=gc_amount,
         budget_min=band_lo,
         budget_max=band_hi,
         budget_name="gc_budget",
@@ -204,7 +215,7 @@ def test_no_budget_delegates_to_exact_dp_unchanged() -> None:
     delta = gc_reward()
 
     relaxed = solve_lagrangian(
-        residues, scalar_delta=delta, constraints=[], amount=gc_count
+        residues, scalar_delta=delta, constraints=[], amount=gc_amount
     )
     exact = solve_exact(residues, scalar_delta=delta, constraints=[])
 
@@ -228,7 +239,7 @@ def test_local_constraint_is_honored_alongside_budget() -> None:
         residues,
         scalar_delta=delta,
         constraints=[homopolymer],
-        amount=gc_count,
+        amount=gc_amount,
         budget_max=budget_max,
     )
 
@@ -248,10 +259,10 @@ def test_deterministic_identical_calls_match() -> None:
     budget_max = (min_achievable_gc(residues) + max_achievable_gc(residues)) // 2
 
     first = solve_lagrangian(
-        residues, scalar_delta=delta, constraints=[], amount=gc_count, budget_max=budget_max
+        residues, scalar_delta=delta, constraints=[], amount=gc_amount, budget_max=budget_max
     )
     second = solve_lagrangian(
-        residues, scalar_delta=delta, constraints=[], amount=gc_count, budget_max=budget_max
+        residues, scalar_delta=delta, constraints=[], amount=gc_amount, budget_max=budget_max
     )
 
     assert first.dna == second.dna
@@ -266,7 +277,7 @@ def test_certificate_proven_when_exact_but_never_proven_under_beam() -> None:
     budget_max = (min_achievable_gc(residues) + max_achievable_gc(residues)) // 2
 
     exact = solve_lagrangian(
-        residues, scalar_delta=delta, constraints=[], amount=gc_count, budget_max=budget_max
+        residues, scalar_delta=delta, constraints=[], amount=gc_amount, budget_max=budget_max
     )
     assert exact.certificate.status is OptimalityStatus.PROVEN_OPTIMAL
     assert gc_count(exact.dna) <= budget_max
@@ -277,7 +288,7 @@ def test_certificate_proven_when_exact_but_never_proven_under_beam() -> None:
         residues,
         scalar_delta=delta,
         constraints=[],
-        amount=gc_count,
+        amount=gc_amount,
         budget_max=budget_max,
         beam=1,
     )
@@ -299,7 +310,7 @@ def test_beam_never_falsely_infeasible_on_interior_window() -> None:
         residues,
         scalar_delta=zero_delta(),
         constraints=[],
-        amount=gc_count,
+        amount=gc_amount,
         budget_min=26,
         budget_max=28,
         beam=1,
@@ -325,7 +336,7 @@ def test_infeasible_budget_raises() -> None:
             residues,
             scalar_delta=delta,
             constraints=[],
-            amount=gc_count,
+            amount=gc_amount,
             budget_max=impossible,
             budget_name="gc_max",
         )
@@ -348,7 +359,7 @@ def test_infeasible_budget_still_raises_under_beam() -> None:
             residues,
             scalar_delta=gc_reward(),
             constraints=[],
-            amount=gc_count,
+            amount=gc_amount,
             budget_max=impossible,
             budget_name="gc_max",
             beam=1,
