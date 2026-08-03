@@ -18,11 +18,13 @@ here; nothing above ``pipeline`` is referenced.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 from bt4 import __version__
+from bt4.biomodels.codon.pairs import build_codon_pair_table
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
 from bt4.biomodels.codon.tai import load_tai_provenance, load_tai_table
 from bt4.constraints.forbidden import resolve_forbidden_motifs
@@ -52,6 +54,7 @@ from bt4.domain import (
     validate_dna,
     validate_protein,
 )
+from bt4.objectives.codon_pair import CpbTerm
 from bt4.objectives.dinucleotide import DinucleotideTerm
 from bt4.objectives.minmax import MinMaxTerm
 from bt4.objectives.ramp import RampTerm
@@ -89,6 +92,16 @@ class OptimizeConfig:
             disables it). Requires a bundled tAI table for ``organism`` (human
             ships one); other organisms raise until their tRNA data is added.
         gc_weight: Weight on the GC-proximity objective in a single solve.
+        cpb_weight: Weight on the codon-pair-bias (CPS) objective (0 disables it).
+            Positive prefers over-represented (natural) codon pairs; a negative
+            weight deoptimizes them (attenuated-vaccine design). PAIRWISE, so it is
+            solved exactly in the trellis. Requires ``cpb_reference_cds``: there is
+            no bundled default codon-pair table (CPS is only meaningful for the
+            organism it was counted over, §8), so a reference CDS set must be
+            supplied or the run raises.
+        cpb_reference_cds: Reference coding sequences from which the codon-pair
+            table is built at run time (via ``build_codon_pair_table``). Only used
+            when ``cpb_weight`` is non-zero; its content hash enters the manifest.
         max_homopolymer: Longest allowed single-base run, or ``None`` to disable.
         max_gc_run: Longest allowed run of consecutive strong (G or C) bases -- the
             "max GC length" knob (mixed runs like ``GCGC`` count), or ``None`` to
@@ -166,6 +179,8 @@ class OptimizeConfig:
     cai_weight: float = 1.0
     tai_weight: float = 0.0
     gc_weight: float = 0.0
+    cpb_weight: float = 0.0
+    cpb_reference_cds: tuple[str, ...] = ()
     max_homopolymer: int | None = 6
     max_gc_run: int | None = None
     max_repeat_length: int | None = None
@@ -231,8 +246,8 @@ def _active_terms(
 ) -> list[tuple[ObjectiveTerm, float]]:
     """Objective terms active for this config, paired with their weights.
 
-    CAI and GC-proximity are always present; the 5' ramp, CpG, and %MinMax terms
-    join only when their weight is non-zero.
+    CAI and GC-proximity are always present; the tAI, codon-pair-bias, 5' ramp,
+    CpG, and %MinMax terms join only when their weight is non-zero.
     """
     w = table.relative_adaptiveness()
     active: list[tuple[ObjectiveTerm, float]] = [
@@ -243,6 +258,16 @@ def _active_terms(
         # Raises a clear ValueError if the organism has no bundled tRNA data.
         tai_table = load_tai_table(config.organism)
         active.append((TaiTerm(tai_table.relative_adaptiveness()), config.tai_weight))
+    if config.cpb_weight != 0.0:
+        # No default codon-pair table is bundled (CPS is organism-specific, §8), so
+        # the caller must supply a reference CDS set; otherwise refuse, never fake.
+        if not config.cpb_reference_cds:
+            raise ValueError(
+                "cpb_weight is set but cpb_reference_cds is empty: codon-pair bias "
+                "needs a reference CDS set to build its table (no default is bundled)"
+            )
+        cpb_table = build_codon_pair_table(config.cpb_reference_cds)
+        active.append((CpbTerm(cpb_table.scores), config.cpb_weight))
     if config.ramp_weight != 0.0:
         active.append((RampTerm(w, config.ramp_codons), config.ramp_weight))
     if config.cpg_weight != 0.0:
@@ -422,6 +447,8 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "cai_weight": config.cai_weight,
         "tai_weight": config.tai_weight,
         "gc_weight": config.gc_weight,
+        "cpb_weight": config.cpb_weight,
+        "cpb_reference_cds_count": len(config.cpb_reference_cds),
         "max_homopolymer": config.max_homopolymer,
         "max_gc_run": config.max_gc_run,
         "max_repeat_length": config.max_repeat_length,
@@ -460,6 +487,12 @@ def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
     if config.tai_weight != 0.0:
         # tAI in play => the tRNA-count table's content hash enters the stamp too.
         inputs["trna_table_sha256"] = load_tai_provenance(config.organism).sha256
+    if config.cpb_weight != 0.0 and config.cpb_reference_cds:
+        # Codon-pair bias in play => the reference CDS set determines the table and
+        # so the objective, so its content hash enters the stamp (invariant #9): a
+        # swapped reference CDS must yield a different manifest.
+        joined = "\n".join(sorted(s.upper() for s in config.cpb_reference_cds))
+        inputs["codon_pair_cds_sha256"] = hashlib.sha256(joined.encode()).hexdigest()
     return build_manifest(
         bt4_version=__version__,
         config=cfg,

@@ -212,6 +212,26 @@ class StudioWindow(QtWidgets.QMainWindow):
             "rare codons. 'off' adds no %MinMax objective.",
         )
 
+        self.cpb_check = QtWidgets.QCheckBox("codon-pair bias (needs reference CDS)")
+        self.cpb_check.setAccessibleName("Codon-pair bias objective")
+        self._add_row(
+            form, "Codon-pair", self.cpb_check,
+            "Add a codon-pair-bias (CPS) objective axis, preferring naturally "
+            "over-represented adjacent codon pairs. There is no bundled default "
+            "table (codon-pair scores are organism-specific), so you must point "
+            "'Codon-pair CDS' at a reference coding-sequence FASTA.",
+        )
+
+        self.cpb_cds_edit = QtWidgets.QLineEdit()
+        self.cpb_cds_edit.setPlaceholderText("path to a reference CDS FASTA")
+        self.cpb_cds_edit.setAccessibleName("Codon-pair reference CDS FASTA path")
+        self._add_row(
+            form, "Codon-pair CDS", self.cpb_cds_edit,
+            "Path to a FASTA of reference coding sequences the codon-pair table is "
+            "built from (required when 'codon-pair bias' is ticked). The table's "
+            "content hash enters the run manifest.",
+        )
+
         self.tandem_spin = QtWidgets.QSpinBox()
         self.tandem_spin.setRange(0, 12)
         self.tandem_spin.setValue(0)
@@ -466,6 +486,8 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.enzymes_edit,
             self.cpg_combo,
             self.minmax_combo,
+            self.cpb_check,
+            self.cpb_cds_edit,
             self.tandem_spin,
             self.inverted_spin,
             self.internal_start_check,
@@ -503,6 +525,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         minmax = self.minmax_combo.currentText()
         minmax_weight = 0.0 if minmax == "off" else 1.0
         minmax_direction = "max" if minmax == "off" else minmax
+        cpb_weight, cpb_cds = self._read_cpb()
         tandem = self.tandem_spin.value()
         inverted = self.inverted_spin.value()
         config = api.OptimizeConfig(
@@ -517,6 +540,8 @@ class StudioWindow(QtWidgets.QMainWindow):
             restriction_enzymes=enzymes,
             cpg_weight=cpg_weight,
             cpg_mode=cpg_mode,
+            cpb_weight=cpb_weight,
+            cpb_reference_cds=cpb_cds,
             minmax_weight=minmax_weight,
             minmax_direction=minmax_direction,
             tandem_unit=tandem if tandem > 0 else None,
@@ -530,12 +555,39 @@ class StudioWindow(QtWidgets.QMainWindow):
         )
         return protein, config, self.steps_spin.value()
 
+    def _read_cpb(self) -> tuple[float, tuple[str, ...]]:
+        """Read the codon-pair controls into a (weight, reference-CDS) pair.
+
+        Returns ``(0.0, ())`` -- codon-pair bias off -- when the box is unticked,
+        or when it is ticked but the reference CDS FASTA is missing or unreadable
+        (a warning is recorded on ``self._cpb_warning`` for the status bar, since
+        there is no bundled default table to fall back on).
+        """
+        self._cpb_warning: str | None = None
+        if not self.cpb_check.isChecked():
+            return 0.0, ()
+        path = self.cpb_cds_edit.text().strip()
+        if not path:
+            self._cpb_warning = "Codon-pair bias needs a reference CDS FASTA; ignoring it."
+            return 0.0, ()
+        try:
+            cds = tuple(seq for _header, seq in api.read_fasta(path))
+        except (OSError, ValueError) as exc:
+            self._cpb_warning = f"Could not read codon-pair CDS ({exc}); ignoring it."
+            return 0.0, ()
+        if not cds:
+            self._cpb_warning = "Codon-pair CDS FASTA had no sequences; ignoring it."
+            return 0.0, ()
+        return 1.0, cds
+
     def _start_optimize(self) -> None:
         """Launch a frontier optimization on a background thread."""
         protein, config, steps = self._read_config()
         if not protein:
             self.statusBar().showMessage("Enter a protein sequence to optimize.")
             return
+        if self._cpb_warning:
+            self.statusBar().showMessage(self._cpb_warning)
 
         self._set_running(True)
         self.statusBar().showMessage("Optimizing...")

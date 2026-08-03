@@ -29,12 +29,19 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     motifs = tuple(m.strip().upper() for m in args.forbid) if args.forbid else ()
     enzymes = tuple(e.strip() for e in args.enzyme) if args.enzyme else ()
     presets = tuple(p.strip() for p in args.forbid_preset) if args.forbid_preset else ()
+    cpb_cds: tuple[str, ...] = ()
+    if args.cpb_cds:
+        # Read the reference CDS FASTA now (CLI layer); the engine builds the
+        # codon-pair table from it. No default table is bundled (§8 honesty).
+        cpb_cds = tuple(seq for _header, seq in api.read_fasta(args.cpb_cds))
     return api.OptimizeConfig(
         organism=args.organism,
         gc_target=args.gc_target,
         cai_weight=args.cai_weight,
         tai_weight=args.tai_weight,
         gc_weight=args.gc_weight,
+        cpb_weight=args.cpb_weight,
+        cpb_reference_cds=cpb_cds,
         max_homopolymer=None if args.max_homopolymer <= 0 else args.max_homopolymer,
         max_gc_run=None if args.max_gc_run <= 0 else args.max_gc_run,
         max_repeat_length=None if args.max_repeat_length <= 0 else args.max_repeat_length,
@@ -71,6 +78,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tai-weight", type=float, default=0.0, dest="tai_weight",
                         help="tRNA-adaptation-index weight (0 = off; human tRNA data only)")
     parser.add_argument("--gc-weight", type=float, default=0.0, dest="gc_weight")
+    parser.add_argument("--cpb-weight", type=float, default=0.0, dest="cpb_weight",
+                        help="codon-pair-bias weight (0 = off; needs --cpb-cds). "
+                        "Negative deoptimizes pairs (attenuated-vaccine design)")
+    parser.add_argument("--cpb-cds", default=None, dest="cpb_cds", metavar="FASTA",
+                        help="reference CDS FASTA to build the codon-pair table from "
+                        "(required when --cpb-weight is set; no default is bundled)")
     parser.add_argument("--max-homopolymer", type=int, default=6, dest="max_homopolymer",
                         help="longest allowed single-base run (<=0 = off)")
     parser.add_argument("--max-gc-run", type=int, default=0, dest="max_gc_run",

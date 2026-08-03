@@ -40,6 +40,8 @@ class ConfigModel(BaseModel):
     cai_weight: float = 1.0
     tai_weight: float = 0.0
     gc_weight: float = 0.0
+    cpb_weight: float = 0.0
+    cpb_reference_cds: list[str] = []
     max_homopolymer: int | None = 6
     max_gc_run: int | None = None
     max_repeat_length: int | None = None
@@ -80,6 +82,8 @@ class ConfigModel(BaseModel):
             cai_weight=self.cai_weight,
             tai_weight=self.tai_weight,
             gc_weight=self.gc_weight,
+            cpb_weight=self.cpb_weight,
+            cpb_reference_cds=tuple(self.cpb_reference_cds),
             max_homopolymer=self.max_homopolymer,
             max_gc_run=self.max_gc_run,
             max_repeat_length=self.max_repeat_length,
