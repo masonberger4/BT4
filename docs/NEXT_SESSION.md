@@ -8,8 +8,8 @@ it is the constitution and it overrides anything here that has drifted.**
 
 ## Where BT4 is right now
 
-Phases 0–1 complete; **Phase 2 essentially complete**; **Phase 3 groundwork
-landed**. Shipped and green on `main`:
+Phases 0–2 complete; **Phase 3 groundwork landed**; **Phase 5 opened**. Shipped
+and green on `main`:
 
 - **Honest exact-DP core** — codon trellis with true per-constraint context and a
   real optimality certificate; beam as an explicit knob.
@@ -20,13 +20,22 @@ landed**. Shipped and green on `main`:
   RC-aware, GLOBAL/refinement-enforced), tandem/inverted repeats, forbidden motifs
   + **named presets**, restriction sites (IUPAC, RC), strong-Kozak internal-ATG,
   and **out-of-frame uORF** (GLOBAL/refinement-enforced, structural).
-- **Budget backends:** OR-Tools CP-SAT and an honest Lagrangian/exact-budget DP.
+- **Budget backends:** OR-Tools CP-SAT and an honest Lagrangian/exact-bucketed
+  budget DP — now **context-aware**, so **CpG/UpA whole-sequence count budgets**
+  (`dinuc_budget`/`dinuc_min`/`dinuc_max`) ship as exact, proven-optimal
+  dinucleotide-count budgets (completed the last Phase 2 item).
+- **Library / degenerate-design mode (Phase 5):** `api.library` / `bt4 library` —
+  an honest deterministic codon-distribution sampler with a `SAMPLED` certificate
+  (not an optimizer; local-constraint-respecting; no optimality/expression claim).
 - **Phase 3 groundwork:** `FoldingModel` (ViennaRNA + labeled baseline),
   `SplicePredictor` (labeled PWM baseline), the SA refinement engine (with a
   global-constraint gate, invariant #5), per-site tracks plotted in BT4 Studio.
 - **`ExpressionPredictor` contract scaffolded** (`biomodels/expression/`) with a
   neutral, honestly-uncalibrated placeholder and a frontier-rerank hook that never
   steers delivery unless the predictor is calibrated.
+- **Native primitives:** `bt4_native` now also ships `max_gc_run` and
+  `longest_repeat` (byte-identical Python fallbacks + equivalence tests);
+  `max_gc_run` backs the GC-run `ok_suffix` veto.
 - **Surfaces:** stable `bt4.api`, the `bt4` CLI, BT4 Studio (PySide6, tooltips on
   every control), an optional FastAPI service, content-hashed provenance manifests.
 
@@ -44,15 +53,22 @@ landed**. Shipped and green on `main`:
    uORF/ribosome-load data is 5′UTR, but the tool controls the CDS (see the
    uORF-calibration analysis). Do **not** relabel a hand-weighted composite as
    "calibrated" (§10.5/§10.6).
-3. **Rust trellis port** (Phase 1 perf) — port the DP inner loop to `bt4_native`
-   (PyO3/maturin) with a numpy fallback; `abi3` wheels. Runtime is a first-class
-   concern (§7); keep the perf regression test green.
-4. **CpG / UpA whole-sequence count budgets** (Phase 2 remaining) — non-local
-   count budgets via the budget/Lagrangian or refinement path.
-5. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
+3. **Full Rust trellis port** (Phase 1 perf) — the DP inner loop still runs in
+   pure Python. The `bt4_native` primitive set has grown (`gc_count`,
+   `max_homopolymer_run`, `reverse_complement`, `max_gc_run`, `longest_repeat`),
+   but porting the **DP inner loop** to `bt4_native` (PyO3/maturin, numpy
+   fallback, `abi3` wheels) remains. Runtime is a first-class concern (§7); keep
+   the perf regression test green. *(Lesson from this wave: a whole-sequence
+   O(n²) native call on a per-move hot path is a pessimization in the
+   no-extension case — measure before wiring, and keep the pure-Python path
+   fast.)*
+4. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
    Linux; polish Studio theming/accessibility; optional external-validation report.
-6. **Phase 5** — library/degenerate-design mode (sample the codon distribution,
-   not one MFC target), more organisms with provenance, tissue-specific tables.
+5. **Phase 5 (continued)** — library/degenerate-design mode has **landed**;
+   remaining Phase 5 is **more organisms with authoritative provenance**,
+   restriction-enzyme catalog growth, and tissue/condition-specific tables. A
+   natural follow-up: add a library-mode control to BT4 Studio (kept out of this
+   wave to avoid touching the app layer).
 
 ## Working agreements (do not violate)
 
@@ -80,7 +96,11 @@ landed**. Shipped and green on `main`:
 
 ## Suggested first move
 
-Pick item 1 or 3 (both are self-contained and high-value). If data/GPU aren't
-available for the splice model, do the **Rust trellis port** (item 3) — it needs
-no external data and directly serves the runtime goal. Confirm scope with the
-maintainer before a large data-dependent effort.
+The self-contained, no-external-data option is the **full Rust trellis port**
+(item 3) — it directly serves the runtime goal and needs no GPU or data. The
+splice model (item 1) and expression head (item 2) are the highest-value items
+but both need **real held-out data + GPU**; confirm scope and data access with
+the maintainer before starting either, and never ship an uncalibrated model as
+if it were validated (§10.6). Packaged installers (item 4) can be advanced in
+the sandbox up to the point where signing/tag-pushing/release-cutting is needed
+(those are human-only here, HTTP 403).
