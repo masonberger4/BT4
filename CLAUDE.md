@@ -4,8 +4,8 @@ Guidance for Claude Code (and humans) building **BT4**, the from-scratch
 successor to BT3. This file is the constitution of the new repository: read it
 before writing code, and keep it current as the architecture evolves.
 
-> Status: **Phases 0-1 complete; Phase 2 substantially done; Phase 3 groundwork
-> landed.** The pure
+> Status: **Phases 0-2 complete; Phase 3 groundwork landed; Phase 5 opened.** The
+> pure
 > `domain` layer, provenance manifest, packaging, layering contract, and CI are
 > in place, and on top of them an **honest exact-DP core** now ships: a codon
 > trellis with true per-constraint context and a real optimality certificate,
@@ -16,14 +16,20 @@ before writing code, and keep it current as the architecture evolves.
 > added codon-pair/ramp/CpG/%MinMax objectives, tandem/inverted-repeat plus
 > **max-GC-run** and dispersed **max-repeat-length** constraints, named
 > **forbidden-sequence presets**, and **two budget backends** — OR-Tools CP-SAT
-> and an honest **Lagrangian relaxation** that keeps local constraints under a
-> global GC budget. **tAI has since landed on real GtRNAdb tRNA data for eight
-> organisms**, and Phase 3 groundwork is in: the `FoldingModel` (ViennaRNA +
-> labeled baseline) and `SplicePredictor` (labeled PWM baseline) contracts, the
-> incremental SA refinement engine (with a global-constraint gate), and per-site
-> risk tracks plotted in BT4 Studio. Still ahead: the **validated splice model**
-> (SpliceAI/Pangolin-class), the **learned expression head**, the **Rust trellis
-> port**, and packaged installers — see §9. This document was written
+> and an honest **Lagrangian/exact-bucketed budget DP** that keeps local
+> constraints under a global budget; that budget DP is now **context-aware**, so
+> the final Phase 2 item — **CpG/UpA whole-sequence count budgets** — ships as an
+> exact, proven-optimal dinucleotide-count budget. **tAI has since landed on real
+> GtRNAdb tRNA data for eight organisms**, and Phase 3 groundwork is in: the
+> `FoldingModel` (ViennaRNA + labeled baseline) and `SplicePredictor` (labeled PWM
+> baseline) contracts, the incremental SA refinement engine (with a
+> global-constraint gate), and per-site risk tracks plotted in BT4 Studio.
+> **Phase 5 has opened** with an honest **library / degenerate-design mode** (a
+> deterministic codon-distribution sampler with a `SAMPLED` certificate, not an
+> optimizer). Two more native `bt4_native` primitives (`max_gc_run`,
+> `longest_repeat`) also landed. Still ahead: the **validated splice model**
+> (SpliceAI/Pangolin-class), the **learned expression head**, the **full Rust
+> trellis port**, and packaged installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
@@ -438,7 +444,7 @@ is a requirement, not a nice-to-have.
   when the native extension is absent (§7). This is honest incremental native
   acceleration; porting the **full trellis inner loop** to Rust still remains.
   *This alone already beats BT3* (honest optimality, correct incremental GC).
-- **Phase 2 — Multi-objective, richer biology & first app.** 🔶 **In progress.**
+- **Phase 2 — Multi-objective, richer biology & first app.** ✅ **Complete.**
   Delivered: the **multi-objective Pareto-frontier API** (a unit-simplex
   scalarization sweep over *every* active objective axis - CAI and GC always,
   plus ramp/CpG/%MinMax when weighted - so 3+ objectives trace a real trade-off
