@@ -8,6 +8,56 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Code-signing pipeline** in `release.yml`, gated on repository secrets. When an
+  Apple Developer ID certificate + App Store Connect notary key are present the
+  macOS `.app` is signed with the hardened runtime and the `.dmg` is signed,
+  notarized, and stapled; when a Windows Authenticode certificate is present the
+  `.exe` is `signtool`-signed. Absent the secrets the steps are skipped and the
+  build stays green and unsigned, so nothing breaks until the certs are added. The
+  required secrets are documented in
+  [`packaging/README.md`](packaging/README.md#code-signing-so-the-warnings-go-away).
+
+## [0.3.1] - 2026-08-01
+
+BT4 Studio first-run polish: the desktop app now guides a non-technical user
+through mistakes with plain-language messages instead of raw Python errors, and
+never leaves a stale result behind a failed run.
+
+### Added
+- **Cancel button + live progress** for BT4 Studio. The frontier sweep now
+  reports per-point progress (`solving frontier point 3 of 9`) and can be stopped
+  mid-run; cancelling returns the partial frontier computed so far. `api.frontier`
+  / `run_frontier` gained optional `on_progress` and `should_cancel` hooks.
+- A one-time **warning before optimizing a very long protein** (it may take a
+  while, and the run is cancelable).
+- `bt4.api` now re-exports `InfeasibleError`, `validate_protein`, `AMINO_ACIDS`,
+  and `available_tai_organisms` so frontends can validate input and translate
+  failures without reaching past the API layer.
+
+### Changed
+- **Plain-language input handling in BT4 Studio.** Pasting a FASTA record strips
+  its header automatically; an empty box, a trailing `*` stop, or non-amino-acid
+  characters get a clear, specific message (not a Python `repr`); restriction-
+  enzyme names are matched case-insensitively and unknown ones list the valid
+  catalog; an infeasible constraint set explains which knobs to relax instead of
+  saying "no feasible codon". The **tAI** checkbox is now labelled correctly and
+  enabled only for organisms that ship a tRNA table.
+
+### Fixed
+- **A failed run no longer leaves a stale, exportable result on screen** — the
+  results panel (and the delivered result behind Export) is cleared on failure,
+  so Export can't silently write the previous sequence.
+- `scripts/sensitivity.py` detected tAI availability via the pre-0.3.0 organism-
+  list quirk and silently returned `None` for every organism after that quirk was
+  fixed; it now uses `api.available_tai_organisms()`.
+
+## [0.3.0] - 2026-08-01
+
+First release with a **downloadable, double-clickable BT4 Studio app** for
+Windows / macOS / Linux, plus a wave of Phase 2/3 objectives, constraints, and
+solver backends.
+
+### Added
 - **5' translation-ramp objective** (`RampTerm`) -- a heuristic that prefers
   slower codons in the first N codons (`ramp_weight` / `ramp_codons`).
 - **CpG / dinucleotide objective** (`DinucleotideTerm`) to deplete (stealth) or
@@ -20,6 +70,43 @@ its first tagged release.
   `gc_max`) with a proven-optimal / gap-bounded certificate. New `ilp` CI job.
 - CLI flags for all of the above (`--ramp-weight`, `--cpg-weight`, `--cpg-mode`,
   `--gc-min`, `--gc-max`) and a CpG control in BT4 Studio.
+
+### Changed
+- **Idiot-proof, double-clickable app packaging.** The PyInstaller spec now emits
+  a *single* file per desktop OS instead of a one-folder zip: a one-file
+  `BT4-Studio-Windows.exe`, a one-file `BT4-Studio-Linux-x86_64`, and (on macOS) a
+  `.app` that CI wraps in a drag-to-Applications `BT4-Studio-macOS.dmg`. Verified
+  end-to-end on Linux: the one-file build launches BT4 Studio and runs its event
+  loop. The README's install section is rewritten for non-technical users
+  (download-one-file table + how to click past the unsigned-app OS warnings), with
+  the from-source/CLI install moved to a "for developers" section.
+- **Release pipeline is now re-drivable and self-healing.** `release.yml` accepts
+  a `workflow_dispatch` `ref` input to rebuild an existing tag's source and
+  idempotently (re)attach the per-OS app + wheel/sdist to its release — the
+  honest, non-destructive way to repair a release that has no assets. The publish
+  step now also fails loudly instead of publishing an empty, asset-less release.
+  See [`packaging/README.md`](packaging/README.md#repairing-a-release).
+- **CI now launches the packaged app.** A `bt4-studio --self-test` hook builds the
+  main window (loading the bundled data + Qt/pyqtgraph) and exits without the
+  event loop; the release workflow runs it against the freshly built bundle on
+  each OS, so a bundle that builds but crashes on first launch fails CI instead of
+  shipping. The macOS `.app` also now carries its real version in `Info.plist`,
+  the codon/tRNA data dir is a regular package (reliable frozen-bundle resource
+  loading), and the Windows asset rename/upload no longer depends on a fragile
+  cross-shell absolute path. A full non-technical [`docs/INSTALL.md`](docs/INSTALL.md)
+  guide was added.
+
+### Fixed
+- The only tagged release (`v0.2.0`) had **no downloadable app**: its publish step
+  ran the pre-idempotency workflow and `gh release create` failed on "release
+  already exists" (the tag/release were made in the UI first), so the built
+  bundles never attached. The pipeline is now idempotent and re-drivable, and the
+  docs no longer point users at an empty Releases page.
+- **`available_organisms()` listed bogus organisms.** It matched every `*.tsv`,
+  so the tAI tRNA tables leaked in as `homo_sapiens.trna`, `mus_musculus.trna`,
+  and `saccharomyces_cerevisiae.trna` — visible in the app's organism dropdown and
+  `bt4 organisms`, and unloadable as codon tables. The tRNA tables are now
+  excluded (they remain available via `available_tai_organisms()`).
 
 ## [0.2.0] - 2026-07-31
 

@@ -232,7 +232,9 @@ def available_organisms() -> tuple[str, ...]:
     names = [
         entry.name[: -len(".tsv")]
         for entry in data_dir.iterdir()
-        if entry.name.endswith(".tsv")
+        # Exclude the tRNA tables (``<organism>.trna.tsv``): those are tAI data,
+        # not codon-usage tables, and are surfaced by ``available_tai_organisms``.
+        if entry.name.endswith(".tsv") and not entry.name.endswith(".trna.tsv")
     ]
     return tuple(sorted(names))
 

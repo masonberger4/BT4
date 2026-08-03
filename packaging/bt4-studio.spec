@@ -1,19 +1,47 @@
 # PyInstaller spec for BT4 Studio (the PySide6 desktop app).
 #
-# Build a one-folder bundle:
-#     pip install -e '.[app]' pyinstaller
+# The goal is a *double-clickable* app for people who never touch a terminal, so
+# the artifact shape is chosen per OS:
+#
+#   * Windows -> a single-file "BT4 Studio.exe" (one download, double-click).
+#   * Linux   -> a single-file "BT4 Studio" executable (download, mark
+#                executable, double-click). CI wraps this per release.
+#   * macOS   -> a one-folder ".app" bundle (the standard Mac shape; it shows as
+#                one icon). CI wraps it in a drag-to-Applications ".dmg".
+#
+# Build locally:
+#     pip install -e '.[app,packaging]'
 #     pyinstaller packaging/bt4-studio.spec
 #
-# Output: dist/BT4 Studio/  (a self-contained folder; run the "BT4 Studio"
-# executable inside it). PySide6's own PyInstaller hook collects the Qt runtime
-# and platform plugins; we additionally pull in pyqtgraph and the packaged codon
-# tables (loaded via importlib.resources at runtime).
+# PySide6's own PyInstaller hook collects the Qt runtime and platform plugins; we
+# additionally pull in pyqtgraph and the packaged codon tables (loaded via
+# importlib.resources at runtime).
+
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
+APP_NAME = "BT4 Studio"
+# App version for the macOS bundle's Info.plist (otherwise it mis-reports 0.0.0).
+try:
+    from bt4 import __version__ as APP_VERSION
+except Exception:  # pragma: no cover - defensive; the version is cosmetic
+    APP_VERSION = "0.0.0"
+_is_mac = sys.platform == "darwin"
+# Windows and Linux ship a single self-contained file; macOS ships a .app folder.
+_onefile = not _is_mac
+
 datas = []
 binaries = []
-hiddenimports = ["bt4.app.studio", "bt4.app.worker", "bt4.app.theme"]
+hiddenimports = [
+    "bt4.app.studio",
+    "bt4.app.worker",
+    "bt4.app.theme",
+    # The regular package holding the codon/tRNA .tsv data. Hidden-importing it
+    # makes the frozen importer register the package so importlib.resources.files()
+    # resolves the bundled data in the macOS .app build (and the one-file builds).
+    "bt4.biomodels.codon.data",
+]
 
 # pyqtgraph does dynamic imports the static analyzer misses, so collect its
 # submodules explicitly -- but SKIP `pyqtgraph.examples` (and `tests`), which
@@ -45,32 +73,57 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name="BT4 Studio",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=False,
-    disable_windowed_traceback=False,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name="BT4 Studio",
-)
-
-app = BUNDLE(
-    coll,
-    name="BT4 Studio.app",
-    icon=None,
-    bundle_identifier="com.bt4.studio",
-)
+if _onefile:
+    # A single self-contained executable: everything (Qt, pyqtgraph, tables) is
+    # embedded and unpacked to a temp dir at launch. One file to download and run.
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name=APP_NAME,
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+    )
+else:
+    # macOS: one-folder build wrapped in a .app bundle (shown as a single icon).
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name=APP_NAME,
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        name=APP_NAME,
+    )
+    app = BUNDLE(
+        coll,
+        name=f"{APP_NAME}.app",
+        icon=None,
+        bundle_identifier="com.bt4.studio",
+        version=APP_VERSION,
+        info_plist={
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "11.0",
+            "NSPrincipalClass": "NSApplication",
+        },
+    )

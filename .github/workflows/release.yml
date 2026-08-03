@@ -1,13 +1,35 @@
 name: Release
 
-# On a version tag (e.g. v0.1.0) build the Python sdist + wheel and a standalone
-# BT4 Studio desktop bundle for Linux / macOS / Windows, then publish them all as
-# assets on a GitHub Release. `workflow_dispatch` builds the same artifacts for
-# testing without publishing a release.
+# On a version tag (e.g. v0.1.0) build the Python sdist + wheel and a standalone,
+# double-clickable BT4 Studio app for each OS, then publish them all as assets on
+# a GitHub Release. The per-OS artifacts are chosen so a non-technical user can
+# just download one thing and open it:
+#
+#   * Windows -> BT4-Studio-Windows.exe        (one-file, double-click)
+#   * macOS   -> BT4-Studio-macOS.dmg          (drag to Applications)
+#   * Linux   -> BT4-Studio-Linux-x86_64       (one-file, mark executable + run)
+#
+# `workflow_dispatch` can do two things:
+#   * with no `ref`  -> build the dispatched branch's artifacts WITHOUT publishing
+#     (a smoke test of the packaging), and
+#   * with `ref` set to an existing tag (e.g. v0.2.0) -> rebuild THAT TAG's source
+#     and idempotently attach the assets to its release. This is the honest,
+#     non-destructive way to repair a release that has no assets: it checks out
+#     the exact tagged source, so the app matches the version it is published
+#     under.
+#
+# Note: GitHub only exposes `workflow_dispatch` once this workflow file exists on
+# the repository's DEFAULT branch. Until then, the tag-push trigger is the only
+# way this workflow runs.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Existing tag to rebuild and attach assets to (e.g. v0.2.0). Leave blank to build the dispatched branch without publishing."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -18,6 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Empty on a tag push -> checkout uses the triggering tag. Set on a
+          # dispatch -> build that exact tag's source.
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -31,20 +57,33 @@ jobs:
           path: dist/*
 
   bundle:
-    name: BT4 Studio bundle (${{ matrix.os }})
+    name: BT4 Studio app (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             artifact: bt4-studio-linux
+            asset: BT4-Studio-Linux-x86_64
           - os: macos-latest
             artifact: bt4-studio-macos
+            asset: BT4-Studio-macOS.dmg
           - os: windows-latest
             artifact: bt4-studio-windows
+            asset: BT4-Studio-Windows.exe
     runs-on: ${{ matrix.os }}
+    env:
+      # Code-signing activates automatically once these repository secrets exist;
+      # until then every signing step below is skipped and the apps ship unsigned
+      # (a green, no-op build). macOS needs BOTH a Developer ID cert AND
+      # notarization credentials to be useful -- Gatekeeper blocks a signed-but-
+      # unnotarized downloaded app. See packaging/README.md#code-signing.
+      SIGN_MACOS: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_NOTARY_API_KEY_P8 != '' }}
+      SIGN_WINDOWS: ${{ secrets.WINDOWS_CERTIFICATE_PFX != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -57,32 +96,129 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[app,packaging]'
-      - name: Build the bundle
+      - name: Build the app
         working-directory: packaging
         run: pyinstaller --clean --noconfirm bt4-studio.spec
-      - name: Archive the bundle
+      - name: Smoke-launch the built app (offscreen)
+        # Actually OPEN the freshly built bundle and construct the main window
+        # (--self-test builds StudioWindow, which loads the bundled codon data and
+        # the Qt/pyqtgraph stack, then exits 0 without the event loop). This is the
+        # only step that runs the PACKAGED app per-OS, so a bundle that builds but
+        # crashes on first launch -- e.g. a macOS .app that can't find its bundled
+        # data -- fails HERE instead of shipping to users.
+        timeout-minutes: 3
+        shell: bash
+        working-directory: packaging/dist
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          case "${{ runner.os }}" in
+            Windows) "./BT4 Studio.exe" --self-test ;;
+            macOS)   "./BT4 Studio.app/Contents/MacOS/BT4 Studio" --self-test ;;
+            Linux)   "./BT4 Studio" --self-test ;;
+          esac
+      - name: Sign the macOS app (Developer ID + hardened runtime)
+        if: ${{ runner.os == 'macOS' && env.SIGN_MACOS == 'true' }}
+        working-directory: packaging/dist
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          # Import the Developer ID cert into a throwaway keychain, then codesign
+          # the .app with the hardened runtime (required for notarization).
+          KEYCHAIN="$RUNNER_TEMP/bt4-signing.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+          codesign --deep --force --options runtime --timestamp \
+            --sign "$MACOS_SIGN_IDENTITY" "BT4 Studio.app"
+          codesign --verify --strict --verbose=2 "BT4 Studio.app"
+          rm -f "$RUNNER_TEMP/cert.p12"
+      - name: Package the double-clickable asset
         shell: bash
         working-directory: packaging/dist
         run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            target="BT4 Studio.app"
-          else
-            target="BT4 Studio"
-          fi
-          out="${{ github.workspace }}/${{ matrix.artifact }}.zip"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a -tzip "$out" "$target"
-          else
-            zip -r "$out" "$target"
-          fi
+          case "${{ runner.os }}" in
+            Windows)
+              # PyInstaller emits a single "BT4 Studio.exe"; give it a friendly name.
+              mv "BT4 Studio.exe" "${{ matrix.asset }}"
+              ;;
+            macOS)
+              # Wrap the .app in a compressed, drag-to-Applications .dmg.
+              mkdir dmgroot
+              cp -R "BT4 Studio.app" dmgroot/
+              ln -s /Applications dmgroot/Applications
+              hdiutil create -volname "BT4 Studio" -srcfolder dmgroot -ov \
+                -format UDZO "${{ matrix.asset }}"
+              ;;
+            Linux)
+              # PyInstaller emits a single "BT4 Studio" executable; friendly name.
+              mv "BT4 Studio" "${{ matrix.asset }}"
+              ;;
+          esac
+      - name: Notarize and staple the macOS DMG
+        if: ${{ runner.os == 'macOS' && env.SIGN_MACOS == 'true' }}
+        working-directory: packaging/dist
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_API_KEY_P8: ${{ secrets.MACOS_NOTARY_API_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          DMG="${{ matrix.asset }}"
+          # Sign the DMG, then notarize (Apple validates the signed .app inside) and
+          # staple the ticket so Gatekeeper passes even offline.
+          codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+          echo "$MACOS_NOTARY_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool submit "$DMG" \
+            --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$MACOS_NOTARY_KEY_ID" \
+            --issuer "$MACOS_NOTARY_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          rm -f "$RUNNER_TEMP/notary.p8"
+      - name: Sign the Windows exe (Authenticode)
+        if: ${{ runner.os == 'Windows' && env.SIGN_WINDOWS == 'true' }}
+        working-directory: packaging/dist
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pfx = Join-Path $env:RUNNER_TEMP "bt4-cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX))
+          # Newest installed Windows SDK signtool.
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            /fd sha256 /tr http://timestamp.digicert.com /td sha256 "${{ matrix.asset }}"
+          & $signtool.FullName verify /pa "${{ matrix.asset }}"
+          Remove-Item $pfx
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.zip
+          # Rename happens inside packaging/dist (avoids the fragile cross-shell
+          # ${GITHUB_WORKSPACE} absolute path on the Windows git-bash runner).
+          path: packaging/dist/${{ matrix.asset }}
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/')
+    # Publish on a tag push, or on a manual dispatch that names an existing tag to
+    # repair. A dispatch with no `ref` just builds artifacts and stops here.
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.ref != '')
     needs: [dist, bundle]
     runs-on: ubuntu-latest
     steps:
@@ -92,18 +228,27 @@ jobs:
       - name: Create or update release and attach assets
         env:
           GH_TOKEN: ${{ github.token }}
+          # The tag to publish under: the dispatched tag, else the pushed tag.
+          TAG: ${{ inputs.ref || github.ref_name }}
         run: |
-          assets=$(find artifacts -type f \( -name '*.zip' -o -name '*.whl' -o -name '*.tar.gz' \))
+          assets=$(find artifacts -type f \( -name 'BT4-Studio-*' -o -name '*.whl' -o -name '*.tar.gz' \))
+          # Fail loudly rather than publish an empty release: an asset-less release
+          # is exactly the broken state this pipeline exists to avoid.
+          if [ -z "$assets" ]; then
+            echo "::error::no build artifacts found to attach to ${TAG}"
+            exit 1
+          fi
           # Idempotent: if the release already exists (e.g. created in the UI, which
-          # also creates the tag that triggered this run), upload assets to it
-          # instead of failing on "release already exists".
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "release ${GITHUB_REF_NAME} already exists; uploading assets"
-            gh release upload "${GITHUB_REF_NAME}" $assets --repo "${GITHUB_REPOSITORY}" --clobber
+          # also creates the tag that triggered this run, or a prior asset-less
+          # release being repaired), upload assets to it instead of failing on
+          # "release already exists".
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists; uploading assets"
+            gh release upload "${TAG}" $assets --repo "${GITHUB_REPOSITORY}" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "${GITHUB_REF_NAME}" \
+              --title "${TAG}" \
               --generate-notes \
               $assets
           fi

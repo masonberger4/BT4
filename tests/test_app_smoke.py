@@ -42,6 +42,24 @@ def test_worker_compute_runs() -> None:
     assert delivered.protein == "MAALKHETQW"
 
 
+def test_worker_reports_progress() -> None:
+    """The worker emits per-point progress that ends at 100%."""
+    seen: list[tuple[int, str]] = []
+    worker = OptimizeWorker("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), steps=5)
+    worker.progress.connect(lambda pct, label: seen.append((pct, label)))
+    worker.compute()
+    assert seen, "expected at least one progress update"
+    assert seen[-1][0] == 100
+
+
+def test_worker_cancel_before_any_point_raises() -> None:
+    """Cancelling before the first point yields a ValueError, not a hang."""
+    worker = OptimizeWorker("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), steps=9)
+    worker.cancel()
+    with pytest.raises(ValueError):
+        worker.compute()
+
+
 def test_window_populates() -> None:
     """Feeding a real frontier to the finished-slot populates every results widget."""
     app = QtWidgets.QApplication.instance()
@@ -62,13 +80,78 @@ def test_window_populates() -> None:
     assert window.optimize_btn.isEnabled()
 
 
-def test_infeasible_is_handled() -> None:
-    """The failure slot never raises and leaves the window usable."""
+def test_failure_clears_stale_results() -> None:
+    """A failure after a success clears the panel so nothing stale is exportable."""
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    assert window.export_fasta_btn.isEnabled()
+
+    window._on_failed(ValueError("boom"))
+
+    assert not window.export_fasta_btn.isEnabled()
+    assert not window.export_json_btn.isEnabled()
+    assert window.sequence_view.toPlainText() == ""
+    assert window._delivered() is None
+    assert window.optimize_btn.isEnabled()
+
+
+def test_infeasible_is_handled_with_friendly_message() -> None:
+    """The failure slot never raises and translates InfeasibleError to plain language."""
     window = StudioWindow()
     window._set_running(True)
     assert not window.optimize_btn.isEnabled()
 
-    window._on_failed("no feasible codon")
+    window._on_failed(api.InfeasibleError(["homopolymer", "restriction_site"]))
 
     assert window.optimize_btn.isEnabled()
-    assert "no feasible codon" in window.statusBar().currentMessage()
+    assert "satisfy these settings" in window.statusBar().currentMessage()
+
+
+def test_protein_input_is_validated() -> None:
+    """The protein box is cleaned (FASTA/case) and bad input is rejected, not crashed."""
+    window = StudioWindow()
+
+    window.protein_edit.setPlainText("maal khet qw")
+    assert window._prepare_protein() == "MAALKHETQW"
+
+    window.protein_edit.setPlainText(">seq1 description\nMAAL\nKHET")
+    assert window._prepare_protein() == "MAALKHET"
+
+    window.protein_edit.setPlainText("MAALKHET*")  # trailing stop
+    assert window._prepare_protein() is None
+
+    window.protein_edit.setPlainText("MAALBZ")  # B, Z are not amino acids
+    assert window._prepare_protein() is None
+
+    window.protein_edit.setPlainText("   ")  # empty
+    assert window._prepare_protein() is None
+
+
+def test_enzyme_names_are_case_insensitive() -> None:
+    """Enzyme entries are canonicalized to catalog casing; unknown ones are rejected."""
+    window = StudioWindow()
+
+    window.enzymes_edit.setText("ecori, bamhi")
+    assert window._prepare_enzymes() == ("EcoRI", "BamHI")
+
+    window.enzymes_edit.setText("EcoRI, NotAnEnzyme")
+    assert window._prepare_enzymes() is None
+
+    window.enzymes_edit.setText("")
+    assert window._prepare_enzymes() == ()
+
+
+def test_tai_axis_tracks_organism_availability() -> None:
+    """The tAI checkbox is enabled only for organisms with a bundled tRNA table."""
+    window = StudioWindow()
+
+    window.organism_combo.setCurrentText("homo_sapiens")
+    window._update_tai_availability()
+    assert window.tai_check.isEnabled()
+    window.tai_check.setChecked(True)
+
+    window.organism_combo.setCurrentText("escherichia_coli")
+    window._update_tai_availability()
+    assert not window.tai_check.isEnabled()
+    assert not window.tai_check.isChecked()  # auto-unchecked when unavailable
