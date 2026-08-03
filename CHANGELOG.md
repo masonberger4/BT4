@@ -7,6 +7,24 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **Two more `bt4_native` hot-loop primitives** (`max_gc_run`, `longest_repeat`),
+  each with a byte-for-byte pure-Python fallback in `bt4._accel` and a Hypothesis
+  equivalence property test that pins the Rust and Python paths together (and, for
+  `longest_repeat`, cross-checks `longest_repeat(seq) > m` iff
+  `MaxRepeatConstraint(m).validate(seq)` flags a hard violation). This is honest
+  incremental native acceleration — **not** a full trellis inner-loop port, which
+  still remains (CLAUDE.md §7, §9 Phase 1).
+
+### Changed
+- **The GC-run and max-repeat constraints now call the native primitives on their
+  hot paths**, with no change to observable behavior: `GcRunConstraint.ok_suffix`
+  uses `bt4._accel.max_gc_run`, and `MaxRepeatConstraint.validate` gains a
+  `longest_repeat(dna) <= max_length` fast-path short-circuit that skips the
+  O(n·k) k-mer position scan when there are no violations (the scan is re-run per
+  SA refinement move). Every existing `ok_suffix ⇔ validate` and constraint test
+  passes unchanged.
+
 ## [0.3.1] - 2026-08-01
 
 BT4 Studio first-run polish: the desktop app now guides a non-technical user

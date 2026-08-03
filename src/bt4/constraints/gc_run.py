@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from bt4._accel import max_gc_run
 from bt4.domain.result import Severity, Violation
 from bt4.domain.scope import Scope
 
@@ -34,6 +35,10 @@ def _max_gc_run(seq: str) -> int:
     A "GC run" is a maximal stretch of positions whose base is ``G`` or ``C``;
     the bases may be mixed (``GCGC`` is a run of four). ``seq`` is assumed to be
     upper-cased already, matching the trellis convention.
+
+    This is the pure-Python reference for the GC-run scan; the hot ``ok_suffix``
+    path calls the (optionally Rust-accelerated) :func:`bt4._accel.max_gc_run`,
+    which a property test pins to this reference (invariant #2, §7).
 
     Args:
         seq: The (upper-cased) DNA window to scan.
@@ -94,7 +99,7 @@ class GcRunConstraint:
             next_codon: The codon being appended.
         """
         window = prefix[-self.max_run :] + next_codon
-        return _max_gc_run(window) <= self.max_run
+        return max_gc_run(window) <= self.max_run
 
     def penalty(self, prefix: str, next_codon: str) -> float:
         """Return ``0.0`` (this constraint is purely hard)."""

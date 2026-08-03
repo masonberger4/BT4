@@ -428,8 +428,13 @@ is a requirement, not a nice-to-have.
   beam as an explicit knob, certificate emission, and the `ok_suffix⇔validate`
   and `delta==score` property tests all shipped. The trellis currently runs in
   pure Python with the Rust `bt4_native` primitives (`gc_count`,
-  `max_homopolymer_run`, `reverse_complement`) available and CI-built; porting the
-  full trellis inner loop to Rust and adding `build-table` remain. *This alone
+  `max_homopolymer_run`, `reverse_complement`, `max_gc_run`, and `longest_repeat`)
+  available and CI-built — each with a byte-identical pure-Python fallback and an
+  equivalence property test, and the last two wired into the hot constraint paths
+  (`max_gc_run` backs the GC-run `ok_suffix` veto; `longest_repeat` backs a
+  fast-path short-circuit in the max-repeat whole-sequence `validate` that is
+  re-run per SA refinement move). This is honest incremental native acceleration;
+  porting the **full trellis inner loop** to Rust still remains. *This alone
   already beats BT3* (honest optimality, correct incremental GC).
 - **Phase 2 — Multi-objective, richer biology & first app.** 🔶 **In progress.**
   Delivered: the **multi-objective Pareto-frontier API** (a unit-simplex
