@@ -192,6 +192,7 @@ bt4 optimize MAALKHETQW --avoid-uorf                          # suppress out-of-
 bt4 optimize MAALKHETQW --cpb-weight 1 --cpb-cds ref.fasta    # codon-pair bias (your CDS)
 bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest
+bt4 library MAALKHETQW --n 20 --temperature 1.0               # sample a library (SAMPLED, not optimized)
 bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
 bt4 tracks ATGGCC...TAA --nt-window 50                        # per-site GC/CpG/%MinMax tracks
 bt4 organisms   # codon tables    bt4 enzymes   # enzymes    bt4 presets   # forbidden presets
@@ -213,6 +214,12 @@ print(result.audit["cai"], result.metrics.gc)        # recomputed from the DNA
 
 frontier = api.frontier("MAALKHETQW", steps=11)       # CAI vs GC Pareto frontier
 report = api.validate(result.dna, api.OptimizeConfig(max_homopolymer=5))
+
+# Library / degenerate-design mode: sample a library from the codon distribution.
+# This is a stochastic sampler, not an optimizer -- every member is SAMPLED, not
+# proven optimal, and makes no expression claim.
+library = api.library("MAALKHETQW", n=20, seed=1, temperature=1.0)
+print(library.distinct, library.results[0].certificate.status.value)  # ...  sampled
 ```
 
 ---

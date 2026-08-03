@@ -27,12 +27,14 @@ from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_f
 from bt4.pipeline import (
     FrontierResult,
     InfeasibleError,
+    LibraryResult,
     OptimizeConfig,
     Track,
     TracksResult,
     ValidationReport,
     rerank_by_expression,
     run_frontier,
+    run_library,
     run_optimize,
     run_tracks,
     run_validate,
@@ -46,6 +48,7 @@ __all__ = [
     "ForbiddenPreset",
     "FrontierResult",
     "InfeasibleError",
+    "LibraryResult",
     "OptimizeConfig",
     "Result",
     "Track",
@@ -59,6 +62,7 @@ __all__ = [
     "count_codons",
     "expression_model",
     "frontier",
+    "library",
     "optimize",
     "parse_fasta",
     "read_fasta",
@@ -175,3 +179,50 @@ def tracks(
         ValueError: On non-ACGT input, a non-positive window, or unknown organism.
     """
     return run_tracks(dna, organism, nt_window=nt_window, codon_window=codon_window)
+
+
+def library(
+    protein: str,
+    config: OptimizeConfig | None = None,
+    n: int = 8,
+    *,
+    seed: int | None = None,
+    temperature: float = 1.0,
+) -> LibraryResult:
+    """Sample a library of coding sequences for ``protein`` (stochastic, not optimal).
+
+    Library / degenerate-design mode (CLAUDE.md §9, Phase 5). Instead of a single
+    most-favored-codon optimum, this draws ``n`` sequences by **sampling** each
+    residue's synonymous-codon distribution (organism usage frequencies, raised to
+    ``1 / temperature``), keeping only codons that satisfy every LOCAL constraint.
+    The delivered sequences are **sampled, not optimized**: each carries the
+    ``SAMPLED`` certificate and makes no optimality or expression claim. GLOBAL
+    constraints (``max_repeat_length``, ``avoid_uorf``) are not enforced during
+    sampling but are validated and reported honestly on every member.
+
+    Args:
+        protein: A stop-free single-letter amino-acid string.
+        config: Run configuration; defaults to :class:`OptimizeConfig`. Objective
+            weights do not steer the draw (this is a sampler, not a solver); the
+            codon table and the LOCAL constraints shape it.
+        n: Number of sequences to sample (``>= 1``).
+        seed: Master sampling seed; when ``None`` the run uses ``config.seed``.
+            The effective seed enters the manifest, so the library reproduces from
+            its stamp.
+        temperature: Sampling temperature (``> 0``). ``-> 0`` approaches the
+            per-residue argmax, ``1.0`` is the natural distribution, large values
+            approach uniform.
+
+    Returns:
+        A :class:`LibraryResult`: the sampled members (each a full
+        :class:`~bt4.domain.Result` with recomputed metrics, a ``SAMPLED``
+        certificate, and any residual violations), a shared provenance manifest,
+        and honest diversity statistics.
+
+    Raises:
+        ValueError: On an invalid protein, unknown organism, ``n < 1``, or
+            ``temperature <= 0``.
+        bt4.optimize.InfeasibleError: If the LOCAL constraints admit no feasible
+            sequence.
+    """
+    return run_library(protein, config, n, seed=seed, temperature=temperature)

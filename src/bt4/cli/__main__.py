@@ -3,6 +3,8 @@
 Subcommands:
 
 * ``bt4 optimize PROTEIN`` -- back-translate and optimize a protein.
+* ``bt4 library PROTEIN --n N`` -- sample a library from the codon distribution
+  (stochastic; SAMPLED certificate, not an optimum).
 * ``bt4 validate DNA`` -- audit a coding sequence against the constraints.
 * ``bt4 organisms`` -- list bundled codon-usage tables.
 * ``bt4 enzymes`` -- list known restriction enzymes.
@@ -235,6 +237,39 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_library(args: argparse.Namespace) -> int:
+    config = _build_config(args)
+    # seed is threaded via _build_config -> config.seed (from --seed); pass None so
+    # run_library honors it. This is a stochastic sampler, not an optimizer.
+    lib = api.library(args.protein, config, n=args.n, temperature=args.temperature)
+    if args.json:
+        payload = {
+            "protein": args.protein,
+            "n": len(lib.results),
+            "temperature": args.temperature,
+            "seed": args.seed,
+            "certificate": "sampled",
+            "distinct": lib.distinct,
+            "mean_pairwise_hamming": lib.mean_pairwise_hamming,
+            "manifest": lib.manifest.to_dict(),
+            "sequences": [api.result_to_dict(r) for r in lib.results],
+        }
+        sys.stdout.write(json.dumps(payload) + "\n")
+        return 0
+    # Default: one FASTA record per sampled sequence (clean stdout, so a pipe to a
+    # FASTA reader still works). Honest framing goes to stderr, never stdout.
+    for i, r in enumerate(lib.results, start=1):
+        sys.stdout.write(api.to_fasta(r.dna, header=f"{args.header}_{i}"))
+    print(
+        f"note: {len(lib.results)} sequence(s) SAMPLED from the codon distribution "
+        f"(temperature {args.temperature}); distinct {lib.distinct}, mean pairwise "
+        f"Hamming {lib.mean_pairwise_hamming:.3f}. These are sampled, NOT optimized, "
+        "and are not an expression prediction.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     config = _build_config(args)
     report = api.validate(args.dna, config)
@@ -340,6 +375,22 @@ def _parser() -> argparse.ArgumentParser:
                        help="max total UpA (TA) count over the CDS")
     _add_common(p_opt)
     p_opt.set_defaults(func=_cmd_optimize)
+
+    p_lib = sub.add_parser(
+        "library",
+        help="sample a library of N sequences from the codon distribution (SAMPLED, "
+        "not optimized)",
+    )
+    p_lib.add_argument("protein", help="stop-free amino-acid string")
+    p_lib.add_argument("--n", type=int, required=True, dest="n",
+                       help="number of sequences to sample (>= 1)")
+    p_lib.add_argument("--temperature", type=float, default=1.0, dest="temperature",
+                       help="sampling temperature (>0; ->0 argmax, 1 natural, large uniform)")
+    p_lib.add_argument("--json", action="store_true",
+                       help="emit JSON (sequences + manifest + diversity)")
+    p_lib.add_argument("--header", default="bt4_lib", help="FASTA header prefix")
+    _add_common(p_lib)
+    p_lib.set_defaults(func=_cmd_library)
 
     p_val = sub.add_parser("validate", help="audit a coding sequence")
     p_val.add_argument("dna", help="ACGT coding sequence")

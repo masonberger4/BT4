@@ -34,3 +34,15 @@ def test_relaxed_certificate_records_terms() -> None:
     )
     assert not cert.is_proven_optimal
     assert cert.relaxed_terms == ("cpg", "gc")
+
+
+def test_sampled_makes_no_optimality_claim() -> None:
+    # Library / degenerate-design mode: a stochastic draw, never an optimum.
+    cert = OptimalityCertificate(
+        OptimalityStatus.SAMPLED, "library_sampler", detail="drawn from codon distribution"
+    )
+    assert cert.status is OptimalityStatus.SAMPLED
+    assert cert.status.value == "sampled"
+    assert not cert.is_proven_optimal
+    assert cert.gap is None
+    assert cert.relaxed_terms == ()

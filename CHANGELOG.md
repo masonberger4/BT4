@@ -20,6 +20,19 @@ its first tagged release.
   local constraint still honored. Mutually exclusive with the GC budget, and (like
   it) not combinable with `refine` / `max_repeat_length` / `avoid_uorf`. Wired
   through `OptimizeConfig`, the CLI, and the `service` request schema.
+- **Library / degenerate-design mode (opens Phase 5).** `api.library(protein,
+  config, n, *, seed, temperature)` and `bt4 library PROTEIN --n N` sample a
+  *library* of coding sequences by drawing from each residue's synonymous-codon
+  distribution (organism usage frequencies raised to `1/temperature`), keeping
+  only codons that pass every LOCAL constraint. This is an honest **stochastic
+  sampler, not an optimizer**: every member round-trips and carries metrics
+  recomputed from its own DNA, the library is fully deterministic from its seed,
+  and each result carries the new **`OptimalityStatus.SAMPLED`** certificate,
+  which makes no optimality or expression claim. GLOBAL constraints
+  (`max_repeat_length`, `avoid_uorf`) are not enforced during sampling but are
+  validated and any residual violation reported honestly per member. New modules
+  `bt4.optimize.sample` (deterministic constrained sampler, `domain`-only) and
+  `bt4.pipeline.library` (`LibraryResult` + `run_library`).
 
 ## [0.3.1] - 2026-08-01
 
