@@ -22,6 +22,8 @@ class OptimalityStatus(Enum):
     ``GAP_BOUNDED`` means a relaxation/ILP returned a solution with a proven
     bound on its distance from the optimum; the remaining statuses are explicit
     admissions that a guarantee was traded for speed or tractability.
+    ``SAMPLED`` is the odd one out: it is not a weaker optimum but a
+    non-optimizing draw, and it never claims to be optimal at all.
     """
 
     PROVEN_OPTIMAL = "proven_optimal"
@@ -30,6 +32,12 @@ class OptimalityStatus(Enum):
     CONTEXT_CAPPED = "context_capped"
     RELAXED = "relaxed"
     HEURISTIC = "heuristic"
+    SAMPLED = "sampled"
+    """A stochastic draw from the codon distribution (library/degenerate-design
+    mode) -- **no optimality is claimed**. The sequence was sampled, not
+    optimized: it round-trips and carries recomputed metrics, but it is neither
+    a proven optimum nor an expression prediction. See :mod:`bt4.optimize.sample`
+    and :mod:`bt4.pipeline.library`."""
 
 
 @dataclass(frozen=True, slots=True)

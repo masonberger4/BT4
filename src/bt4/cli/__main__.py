@@ -3,6 +3,8 @@
 Subcommands:
 
 * ``bt4 optimize PROTEIN`` -- back-translate and optimize a protein.
+* ``bt4 library PROTEIN --n N`` -- sample a library from the codon distribution
+  (stochastic; SAMPLED certificate, not an optimum).
 * ``bt4 validate DNA`` -- audit a coding sequence against the constraints.
 * ``bt4 organisms`` -- list bundled codon-usage tables.
 * ``bt4 enzymes`` -- list known restriction enzymes.
@@ -25,10 +27,47 @@ from bt4.api import InfeasibleError
 __all__ = ["main"]
 
 
+def _resolve_dinuc_budget(
+    args: argparse.Namespace,
+) -> tuple[str | None, int | None, int | None]:
+    """Map the ``--cpg-*`` / ``--upa-*`` convenience flags to a dinucleotide budget.
+
+    ``--cpg-min``/``--cpg-max`` target the CpG (``CG``) 2-mer and ``--upa-*`` the
+    UpA (``TA``) 2-mer. Only one dinucleotide family may be budgeted per run (the
+    engine tracks a single count budget at a time), so setting bounds for both is
+    a clear error.
+
+    Args:
+        args: The parsed CLI namespace (the flags are optional; ``getattr`` keeps
+            this usable from subcommands that don't declare them, e.g. validate).
+
+    Returns:
+        ``(dinuc_budget, dinuc_min, dinuc_max)`` -- all ``None`` when no flag set.
+
+    Raises:
+        ValueError: If both a ``--cpg-*`` and a ``--upa-*`` bound are given.
+    """
+    cpg_min, cpg_max = getattr(args, "cpg_min", None), getattr(args, "cpg_max", None)
+    upa_min, upa_max = getattr(args, "upa_min", None), getattr(args, "upa_max", None)
+    cpg_set = cpg_min is not None or cpg_max is not None
+    upa_set = upa_min is not None or upa_max is not None
+    if cpg_set and upa_set:
+        raise ValueError(
+            "only one dinucleotide budget at a time: use either --cpg-min/--cpg-max "
+            "or --upa-min/--upa-max, not both"
+        )
+    if cpg_set:
+        return "CG", cpg_min, cpg_max
+    if upa_set:
+        return "TA", upa_min, upa_max
+    return None, None, None
+
+
 def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     motifs = tuple(m.strip().upper() for m in args.forbid) if args.forbid else ()
     enzymes = tuple(e.strip() for e in args.enzyme) if args.enzyme else ()
     presets = tuple(p.strip() for p in args.forbid_preset) if args.forbid_preset else ()
+    dinuc_budget, dinuc_min, dinuc_max = _resolve_dinuc_budget(args)
     cpb_cds: tuple[str, ...] = ()
     if args.cpb_cds:
         # Read the reference CDS FASTA now (CLI layer); the engine builds the
@@ -66,6 +105,9 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         folding_weight=args.folding_weight,
         gc_min=args.gc_min,
         gc_max=args.gc_max,
+        dinuc_budget=dinuc_budget,
+        dinuc_min=dinuc_min,
+        dinuc_max=dinuc_max,
         beam=None if args.beam <= 0 else args.beam,
         seed=args.seed,
     )
@@ -159,6 +201,10 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
     if "tai" in result.audit:
         print(f"tAI       {float(result.audit['tai']):.4f}")  # type: ignore[arg-type]
     print(f"GC        {result.metrics.gc * 100:.1f}%")
+    for key in ("cg_count", "ta_count"):
+        if key in result.audit:
+            label = key[:2].upper()  # "CG" (CpG) or "TA" (UpA)
+            print(f"{label} count  {result.audit[key]}")
     print(f"optimality {cert.status.value} ({cert.solver})")
     hard, soft = result.metrics.hard_violations, result.metrics.soft_violations
     print(f"violations {hard} hard / {soft} soft")
@@ -188,6 +234,39 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
         if not calibrated:
             print("  NOTE: folding is a labeled baseline proxy, not real thermodynamics; "
                   "install bt4[fold] (ViennaRNA) for calibrated dG.")
+    return 0
+
+
+def _cmd_library(args: argparse.Namespace) -> int:
+    config = _build_config(args)
+    # seed is threaded via _build_config -> config.seed (from --seed); pass None so
+    # run_library honors it. This is a stochastic sampler, not an optimizer.
+    lib = api.library(args.protein, config, n=args.n, temperature=args.temperature)
+    if args.json:
+        payload = {
+            "protein": args.protein,
+            "n": len(lib.results),
+            "temperature": args.temperature,
+            "seed": args.seed,
+            "certificate": "sampled",
+            "distinct": lib.distinct,
+            "mean_pairwise_hamming": lib.mean_pairwise_hamming,
+            "manifest": lib.manifest.to_dict(),
+            "sequences": [api.result_to_dict(r) for r in lib.results],
+        }
+        sys.stdout.write(json.dumps(payload) + "\n")
+        return 0
+    # Default: one FASTA record per sampled sequence (clean stdout, so a pipe to a
+    # FASTA reader still works). Honest framing goes to stderr, never stdout.
+    for i, r in enumerate(lib.results, start=1):
+        sys.stdout.write(api.to_fasta(r.dna, header=f"{args.header}_{i}"))
+    print(
+        f"note: {len(lib.results)} sequence(s) SAMPLED from the codon distribution "
+        f"(temperature {args.temperature}); distinct {lib.distinct}, mean pairwise "
+        f"Hamming {lib.mean_pairwise_hamming:.3f}. These are sampled, NOT optimized, "
+        "and are not an expression prediction.",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -286,8 +365,32 @@ def _parser() -> argparse.ArgumentParser:
     p_opt.add_argument("--fasta", action="store_true", help="emit FASTA")
     p_opt.add_argument("--json", action="store_true", help="emit JSON (with manifest)")
     p_opt.add_argument("--header", default="bt4", help="FASTA header")
+    p_opt.add_argument("--cpg-min", type=int, default=None, dest="cpg_min",
+                       help="min total CpG (CG) count over the CDS (exact budget DP)")
+    p_opt.add_argument("--cpg-max", type=int, default=None, dest="cpg_max",
+                       help="max total CpG (CG) count -- CpG depletion for stealth")
+    p_opt.add_argument("--upa-min", type=int, default=None, dest="upa_min",
+                       help="min total UpA (TA) count over the CDS (exact budget DP)")
+    p_opt.add_argument("--upa-max", type=int, default=None, dest="upa_max",
+                       help="max total UpA (TA) count over the CDS")
     _add_common(p_opt)
     p_opt.set_defaults(func=_cmd_optimize)
+
+    p_lib = sub.add_parser(
+        "library",
+        help="sample a library of N sequences from the codon distribution (SAMPLED, "
+        "not optimized)",
+    )
+    p_lib.add_argument("protein", help="stop-free amino-acid string")
+    p_lib.add_argument("--n", type=int, required=True, dest="n",
+                       help="number of sequences to sample (>= 1)")
+    p_lib.add_argument("--temperature", type=float, default=1.0, dest="temperature",
+                       help="sampling temperature (>0; ->0 argmax, 1 natural, large uniform)")
+    p_lib.add_argument("--json", action="store_true",
+                       help="emit JSON (sequences + manifest + diversity)")
+    p_lib.add_argument("--header", default="bt4_lib", help="FASTA header prefix")
+    _add_common(p_lib)
+    p_lib.set_defaults(func=_cmd_library)
 
     p_val = sub.add_parser("validate", help="audit a coding sequence")
     p_val.add_argument("dna", help="ACGT coding sequence")

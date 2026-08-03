@@ -10,7 +10,7 @@ from __future__ import annotations
 from bt4.objectives.base import ObjectiveTerm, iter_codons
 from bt4.objectives.codon_pair import CpbTerm
 from bt4.objectives.dinuc_profile import cpg_profile, dinucleotide_profile
-from bt4.objectives.dinucleotide import DinucleotideTerm
+from bt4.objectives.dinucleotide import DinucleotideTerm, dinucleotide_amount
 from bt4.objectives.minmax import MinMaxTerm, min_max_profile
 from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
@@ -26,6 +26,7 @@ __all__ = [
     "RampTerm",
     "TaiTerm",
     "cpg_profile",
+    "dinucleotide_amount",
     "dinucleotide_profile",
     "iter_codons",
     "min_max_profile",

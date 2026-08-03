@@ -3,22 +3,34 @@
 The exact DP (:mod:`bt4.optimize.exact_dp`) is the honest workhorse for local,
 context-bounded objectives and constraints, but it cannot on its own carry a
 *whole-sequence* count budget -- a total GC count between ``gc_min``/``gc_max``,
-or a total CpG count under a cap. The CP-SAT backend (:mod:`bt4.optimize.cpsat`)
-models such a budget as a single linear constraint but drops *all* local
-sequence constraints (homopolymer runs, forbidden or restriction motifs,
-repeats) and any pairwise objective term. This backend fills exactly that gap: it
-enforces one global count budget **and** the local constraints (and any pairwise
-objective) together.
+or a total CpG/UpA dinucleotide count in a target range. The CP-SAT backend
+(:mod:`bt4.optimize.cpsat`) models such a budget as a single linear constraint
+but drops *all* local sequence constraints (homopolymer runs, forbidden or
+restriction motifs, repeats) and any pairwise objective term. This backend fills
+exactly that gap: it enforces one global count budget **and** the local
+constraints (and any pairwise objective) together.
+
+The budgeted quantity's per-codon contribution may be *context-aware*: a
+dinucleotide (e.g. CpG) can straddle a codon boundary -- the ``C`` ending one
+codon and the ``G`` starting the next -- so the contribution of a codon depends
+on the last ``budget_context`` bases of the prefix, exactly as
+:meth:`bt4.objectives.dinucleotide.DinucleotideTerm.delta` attributes each
+occurrence to the codon holding its END base. ``budget_context`` is folded into
+the state's context length so prefixes that differ only in their trailing bases
+stay unmerged and a straddling count is attributed exactly once (a per-base GC
+count is context-free, so it uses ``budget_context == 0`` and this reduces to the
+original behaviour).
 
 How it works -- an amount-bucketed exact DP:
 
 - The trellis carries one layer per residue (including the trailing stop). Its
   state is the pair *(trailing DNA context, cumulative budgeted amount)* where
-  the context length is the union of every constraint's and the objective's
-  declared ``context_len``. Because the running amount is part of the state, the
-  budget is enforced *exactly*, not relaxed: at the final layer only states whose
-  total amount lands in ``[budget_min, budget_max]`` survive, and the
-  highest-objective survivor is reconstructed.
+  the context length is the union of every constraint's declared ``context_len``,
+  the objective's ``context_len``, and the budget's ``budget_context``. Because
+  the running amount is part of the state, the budget is enforced *exactly*, not
+  relaxed: at the final layer only states whose total amount lands in
+  ``[budget_min, budget_max]`` survive, and the highest-objective survivor is
+  reconstructed.
 - Two prefixes that share a state key are interchangeable for every future
   feasibility decision (same trailing context => same ``ok_suffix`` behaviour and
   same objective ``delta``) *and* for the budget (same cumulative amount), so
@@ -28,7 +40,11 @@ How it works -- an amount-bucketed exact DP:
   dropped only when, given the min/max amount still attainable over the remaining
   residues, it *provably cannot* reach the budget window. This never drops a
   state that could still become budget-feasible, so it preserves optimality while
-  bounding the bucket count to (roughly) the width of the budget window.
+  bounding the bucket count to (roughly) the width of the budget window. When the
+  amount is context-aware, the per-residue min/max are taken over *all* codons of
+  the residue **and all possible trailing contexts** (see :func:`_budget_contexts`),
+  so the bound stays valid under any preceding context -- possibly loose, never
+  too tight, which is exactly what soundness requires.
 
 How it stays honest (CLAUDE.md invariants #6 and #7):
 
@@ -69,10 +85,42 @@ from bt4.optimize.exact_dp import InfeasibleError, SolveResult, solve_exact
 __all__ = ["solve_lagrangian"]
 
 ScalarDelta = Callable[[str, str, int], float]
+# Per-codon contribution to the budgeted quantity, given the running prefix (only
+# its last ``budget_context`` chars are read) and the codon being placed.
+AmountFn = Callable[[str, str], int]
 
 # One trellis layer: (trailing context, cumulative amount) -> (best scalar, DNA).
 _StateKey = tuple[str, int]
 _Layer = dict[_StateKey, tuple[float, str]]
+
+
+def _budget_contexts(budget_context: int) -> list[str]:
+    """Every trailing-context string an amount function might read.
+
+    ``amount(prefix, codon)`` reads only the last ``budget_context`` chars of
+    ``prefix``. Across a whole run those trailing views range over *all* ACGT
+    strings of length ``0..budget_context`` -- the shorter ones occur at the
+    start, before ``budget_context`` bases have been placed (Python's
+    ``prefix[-k:]`` on a short prefix is the whole prefix). Bounding the
+    per-residue amounts over this full set makes the reachability prune sound
+    under any preceding context (possibly loose, never too tight).
+
+    Args:
+        budget_context: Number of trailing prefix chars the amount reads. ``0``
+            means the amount is context-free (a per-base count like GC), for
+            which the only relevant context is the empty string.
+
+    Returns:
+        The list of candidate trailing contexts, always including ``""``.
+    """
+    if budget_context <= 0:
+        return [""]
+    contexts: list[str] = [""]
+    current: list[str] = [""]
+    for _ in range(budget_context):
+        current = [c + base for c in current for base in "ACGT"]
+        contexts.extend(current)
+    return contexts
 
 
 def solve_lagrangian(
@@ -80,19 +128,21 @@ def solve_lagrangian(
     *,
     scalar_delta: ScalarDelta,
     constraints: Sequence[Constraint],
-    amount: Callable[[str], int],
+    amount: AmountFn,
     budget_min: int | None = None,
     budget_max: int | None = None,
     beam: int | None = None,
     objective_context: int = 0,
+    budget_context: int = 0,
     budget_name: str = "budget",
     max_iters: int = 50,
 ) -> SolveResult:
     """Solve the additive core plus one global count budget, exactly.
 
-    The budgeted quantity is ``amount(seq) = sum(amount(codon) for codon in seq)``
-    and the budget is ``budget_min <= amount(seq) <= budget_max`` for whichever
-    bounds are given. When neither bound is set nothing is budgeted and the call
+    The budgeted quantity is ``amount(seq) = sum(amount(prefix_i, codon_i))`` over
+    the codons, where ``prefix_i`` is the sequence placed before codon ``i``, and
+    the budget is ``budget_min <= amount(seq) <= budget_max`` for whichever bounds
+    are given. When neither bound is set nothing is budgeted and the call
     delegates unchanged to :func:`~bt4.optimize.exact_dp.solve_exact`. Otherwise
     an amount-bucketed exact DP (see the module docstring) enforces the budget
     *exactly* alongside every local constraint and the (possibly pairwise)
@@ -112,7 +162,11 @@ def solve_lagrangian(
             their ``ok_suffix`` veto. This is the advantage over CP-SAT, which
             drops them.
         amount: Per-codon contribution to the budgeted whole-sequence quantity,
-            e.g. ``gc_count`` for a GC budget. Must depend only on the codon.
+            called as ``amount(prefix, codon)`` and depending only on the last
+            ``budget_context`` chars of ``prefix``. A context-free per-base count
+            (e.g. GC) ignores ``prefix`` and uses ``budget_context == 0``; a
+            dinucleotide count reads one trailing base to catch a
+            boundary-straddling occurrence (``budget_context == 1``).
         budget_min: If given, require ``amount(seq) >= budget_min``.
         budget_max: If given, require ``amount(seq) <= budget_max``.
         beam: If ``None``, run the full exact bucketed DP (proven optimal). An int
@@ -120,8 +174,10 @@ def solve_lagrangian(
             certificate reports ``BEAM_TRUNCATED``. A beam never turns a feasible
             instance infeasible (see the module docstring).
         objective_context: Trailing DNA context ``scalar_delta`` depends on, in
-            characters (e.g. ``3`` for a pairwise objective). The state's context
-            length is the max of this and every constraint's ``context_len``.
+            characters (e.g. ``3`` for a pairwise objective).
+        budget_context: Trailing DNA context ``amount`` depends on, in characters
+            (``0`` for a context-free count, ``1`` for a dinucleotide). Folded into
+            the state's context length so straddling contributions stay exact.
         budget_name: Human-readable name of the budget, used in the certificate
             and in ``InfeasibleError`` when the budget itself is infeasible.
         max_iters: Retained for backward compatibility with the previous
@@ -159,6 +215,7 @@ def solve_lagrangian(
         budget_max=budget_max,
         beam=beam,
         objective_context=objective_context,
+        budget_context=budget_context,
         budget_name=budget_name,
     )
 
@@ -168,11 +225,12 @@ def _solve_budgeted(
     *,
     scalar_delta: ScalarDelta,
     constraints: Sequence[Constraint],
-    amount: Callable[[str], int],
+    amount: AmountFn,
     budget_min: int | None,
     budget_max: int | None,
     beam: int | None,
     objective_context: int,
+    budget_context: int,
     budget_name: str,
 ) -> SolveResult:
     """Amount-bucketed exact DP enforcing one global count budget exactly.
@@ -185,11 +243,13 @@ def _solve_budgeted(
         residues: Amino-acid letters (with a trailing stop) to back-translate.
         scalar_delta: The true incremental objective (larger is better).
         constraints: Hard local-feasibility rules honored via ``ok_suffix``.
-        amount: Per-codon contribution to the budgeted quantity.
+        amount: Per-codon contribution to the budgeted quantity, reading the last
+            ``budget_context`` chars of the prefix.
         budget_min: Lower bound on the total amount, or ``None``.
         budget_max: Upper bound on the total amount, or ``None``.
         beam: Per-layer state cap (a speed knob), or ``None`` for exact.
         objective_context: Trailing context ``scalar_delta`` depends on.
+        budget_context: Trailing context ``amount`` depends on.
         budget_name: Human-readable budget name for the certificate/error.
 
     Returns:
@@ -198,17 +258,24 @@ def _solve_budgeted(
     Raises:
         InfeasibleError: On genuinely proven local or budget infeasibility.
     """
-    context_len = max([objective_context, *(c.context_len() for c in constraints)])
+    context_len = max(
+        [objective_context, budget_context, *(c.context_len() for c in constraints)]
+    )
     n = len(residues)
 
     # Per-residue codon choices and their min/max amount, plus suffix sums giving
     # the min/max amount still attainable over residues [i:]. These drive the
-    # sound reachability prune.
+    # sound reachability prune. The amount can be context-aware (a dinucleotide
+    # straddling a codon boundary), so each residue's min/max is taken over every
+    # codon AND every possible trailing context (see :func:`_budget_contexts`):
+    # bounding over all contexts keeps the reachability bound valid regardless of
+    # what precedes the residue -- sound (possibly loose), never too tight.
+    budget_ctxs = _budget_contexts(budget_context)
     codon_choices = [synonymous_codons(r) for r in residues]
     per_min: list[int] = []
     per_max: list[int] = []
     for cods in codon_choices:
-        amts = [amount(c) for c in cods]
+        amts = [amount(ctx, c) for c in cods for ctx in budget_ctxs]
         per_min.append(min(amts))
         per_max.append(max(amts))
     remaining_min = [0] * (n + 1)
@@ -243,7 +310,7 @@ def _solve_budgeted(
                 if not all(c.ok_suffix(dna, codon) for c in constraints):
                     continue
                 new_dna = dna + codon
-                new_amt = amt + amount(codon)
+                new_amt = amt + amount(dna, codon)
                 new_score = score + scalar_delta(dna, codon, pos)
                 new_ctx = new_dna[-context_len:] if context_len > 0 else ""
                 key = (new_ctx, new_amt)

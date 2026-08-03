@@ -8,6 +8,31 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **CpG / UpA whole-sequence count budget** (`dinuc_budget` + `dinuc_min` /
+  `dinuc_max`; CLI `--cpg-min/--cpg-max` and `--upa-min/--upa-max`) — the last
+  Phase 2 item. A dinucleotide count does not decompose per-codon (a 2-mer
+  straddles the codon boundary), so the amount-bucketed budget DP
+  (`bt4.optimize.lagrangian`) now takes a **context-aware** per-codon amount
+  (`bt4.objectives.dinucleotide.dinucleotide_amount`) attributing each occurrence
+  to the codon holding its END base, with a new `budget_context` folded into the
+  trellis state so a straddling count stays exact. Enforced by the same **exact
+  bucketed DP** as the GC budget, with a `proven_optimal` certificate and every
+  local constraint still honored. Mutually exclusive with the GC budget, and (like
+  it) not combinable with `refine` / `max_repeat_length` / `avoid_uorf`. Wired
+  through `OptimizeConfig`, the CLI, and the `service` request schema.
+- **Library / degenerate-design mode (opens Phase 5).** `api.library(protein,
+  config, n, *, seed, temperature)` and `bt4 library PROTEIN --n N` sample a
+  *library* of coding sequences by drawing from each residue's synonymous-codon
+  distribution (organism usage frequencies raised to `1/temperature`), keeping
+  only codons that pass every LOCAL constraint. This is an honest **stochastic
+  sampler, not an optimizer**: every member round-trips and carries metrics
+  recomputed from its own DNA, the library is fully deterministic from its seed,
+  and each result carries the new **`OptimalityStatus.SAMPLED`** certificate,
+  which makes no optimality or expression claim. GLOBAL constraints
+  (`max_repeat_length`, `avoid_uorf`) are not enforced during sampling but are
+  validated and any residual violation reported honestly per member. New modules
+  `bt4.optimize.sample` (deterministic constrained sampler, `domain`-only) and
+  `bt4.pipeline.library` (`LibraryResult` + `run_library`).
 - **Two more `bt4_native` hot-loop primitives** (`max_gc_run`, `longest_repeat`),
   each with a byte-for-byte pure-Python fallback in `bt4._accel` and a Hypothesis
   equivalence property test that pins the Rust and Python paths together (and, for

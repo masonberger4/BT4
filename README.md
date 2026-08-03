@@ -39,6 +39,11 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
   constraints and pairwise terms honored, with a gap-bounded certificate.
+- **CpG / UpA count budget:** cap or floor the whole-sequence CpG (`--cpg-max` /
+  `--cpg-min`) or UpA (`--upa-*`) count — CpG depletion for stealth, elevation for
+  immunogenicity. Enforced *exactly* by an amount-bucketed DP whose per-codon count
+  is boundary-aware (a CpG can straddle two codons), with a proven-optimal
+  certificate and every local constraint still honored.
 - **Hard constraints:** maximum homopolymer run, **max GC-run** (the "max GC
   length"), a whole-sequence **max repeat length** (direct/inverted/palindromic
   repeats anywhere, reverse-complement aware — enforced by refinement and reported
@@ -187,6 +192,7 @@ bt4 optimize MAALKHETQW --avoid-uorf                          # suppress out-of-
 bt4 optimize MAALKHETQW --cpb-weight 1 --cpb-cds ref.fasta    # codon-pair bias (your CDS)
 bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest
+bt4 library MAALKHETQW --n 20 --temperature 1.0               # sample a library (SAMPLED, not optimized)
 bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
 bt4 tracks ATGGCC...TAA --nt-window 50                        # per-site GC/CpG/%MinMax tracks
 bt4 organisms   # codon tables    bt4 enzymes   # enzymes    bt4 presets   # forbidden presets
@@ -208,6 +214,12 @@ print(result.audit["cai"], result.metrics.gc)        # recomputed from the DNA
 
 frontier = api.frontier("MAALKHETQW", steps=11)       # CAI vs GC Pareto frontier
 report = api.validate(result.dna, api.OptimizeConfig(max_homopolymer=5))
+
+# Library / degenerate-design mode: sample a library from the codon distribution.
+# This is a stochastic sampler, not an optimizer -- every member is SAMPLED, not
+# proven optimal, and makes no expression claim.
+library = api.library("MAALKHETQW", n=20, seed=1, temperature=1.0)
+print(library.distinct, library.results[0].certificate.status.value)  # ...  sampled
 ```
 
 ---
