@@ -533,7 +533,15 @@ is a requirement, not a nice-to-have.
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
   each recomputed from the sequence, never fed to the solver) **and are plotted
-  in BT4 Studio** as per-site tracks. The
+  in BT4 Studio** as per-site tracks. BT4 Studio's **sequence viewer now renders
+  inline violation annotations**: each `Violation` from the delivered result's
+  whole-sequence audit is highlighted over its `[start, end)` span (red for HARD
+  / feasibility, amber for SOFT / quality) with a hover tooltip naming the
+  constraint, severity, span, and detail, plus a HARD/SOFT legend — so a
+  *residual GLOBAL violation* left after refinement (e.g. a dispersed max-repeat
+  or uORF) is shown **where it occurs**, not just as a metrics-table count. The
+  highlights are Qt extra-selections layered over the text, so the exported
+  sequence stays exactly the delivered one. The
   **`SplicePredictor` contract**
   (`biomodels/splice/`) has now landed with an honestly-labeled uncalibrated
   **consensus/PWM baseline** (`calibrated=False`, top-k/log-odds Δsplicing pooling

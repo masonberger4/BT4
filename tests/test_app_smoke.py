@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 from PySide6 import QtWidgets
 
 from bt4 import api
-from bt4.app.studio import StudioWindow
+from bt4.app.studio import SequenceViewer, StudioWindow
 from bt4.app.worker import OptimizeWorker
 
 
@@ -140,6 +140,58 @@ def test_enzyme_names_are_case_insensitive() -> None:
 
     window.enzymes_edit.setText("")
     assert window._prepare_enzymes() == ()
+
+
+def test_sequence_viewer_highlights_and_locates_violations() -> None:
+    """A violation span is highlighted and locatable by nucleotide position."""
+    viewer = SequenceViewer(dark=False)
+    dna = "ACGTACGTACGT"
+    hard = api.Violation("max_repeat", api.Severity.HARD, 0, 4, "dispersed repeat")
+    soft = api.Violation("cpg", api.Severity.SOFT, 6, 9, "elevated CpG")
+    viewer.set_sequence(dna, (hard, soft))
+
+    # Text is unchanged; both spans become extra-selection highlights.
+    assert viewer.toPlainText() == dna
+    assert len(viewer.extraSelections()) == 2
+
+    # Position lookup drives the hover tooltip.
+    assert viewer._violation_at(2) is hard
+    assert viewer._violation_at(7) is soft
+    assert viewer._violation_at(4) is None  # end is exclusive
+    assert viewer._violation_at(11) is None
+
+
+def test_sequence_viewer_drops_out_of_range_spans() -> None:
+    """Spans outside the sequence are dropped defensively, not crashed on."""
+    viewer = SequenceViewer(dark=True)
+    dna = "ACGTAC"
+    bad = api.Violation("bogus", api.Severity.HARD, 4, 99, "past the end")
+    viewer.set_sequence(dna, (bad,))
+    assert viewer.extraSelections() == []
+    assert viewer._violation_at(5) is None
+
+
+def test_hard_violation_wins_overlap() -> None:
+    """When HARD and SOFT spans overlap a base, the tooltip resolves to HARD."""
+    viewer = SequenceViewer(dark=False)
+    dna = "ACGTACGTAC"
+    soft = api.Violation("cpg", api.Severity.SOFT, 0, 8, "wide soft band")
+    hard = api.Violation("homopolymer", api.Severity.HARD, 2, 5, "run")
+    viewer.set_sequence(dna, (soft, hard))
+    assert viewer._violation_at(3) is hard
+
+
+def test_clean_result_hides_violation_legend() -> None:
+    """A delivered sequence with no violations keeps the legend hidden."""
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+
+    delivered = frontier.delivered()
+    assert delivered is not None
+    assert delivered.violations == ()  # feasible run: nothing to annotate
+    assert not window.violations_legend.isVisible()
+    assert len(window.sequence_view.extraSelections()) == 0
 
 
 def test_tai_axis_tracks_organism_availability() -> None:
