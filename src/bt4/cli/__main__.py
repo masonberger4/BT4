@@ -5,6 +5,8 @@ Subcommands:
 * ``bt4 optimize PROTEIN`` -- back-translate and optimize a protein.
 * ``bt4 validate DNA`` -- audit a coding sequence against the constraints.
 * ``bt4 organisms`` -- list bundled codon-usage tables.
+* ``bt4 enzymes`` -- list known restriction enzymes.
+* ``bt4 build-table CDS.fasta`` -- build a codon table from a CDS FASTA.
 * ``bt4 --version`` -- print the single-sourced BT4 version.
 
 Only this module prints; everything else returns data.
@@ -13,11 +15,12 @@ Only this module prints; everything else returns data.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 
 from bt4 import __version__, api
-from bt4.optimize import InfeasibleError
+from bt4.api import InfeasibleError
 
 __all__ = ["main"]
 
@@ -25,6 +28,7 @@ __all__ = ["main"]
 def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     motifs = tuple(m.strip().upper() for m in args.forbid) if args.forbid else ()
     enzymes = tuple(e.strip() for e in args.enzyme) if args.enzyme else ()
+    presets = tuple(p.strip() for p in args.forbid_preset) if args.forbid_preset else ()
     return api.OptimizeConfig(
         organism=args.organism,
         gc_target=args.gc_target,
@@ -32,7 +36,10 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         tai_weight=args.tai_weight,
         gc_weight=args.gc_weight,
         max_homopolymer=None if args.max_homopolymer <= 0 else args.max_homopolymer,
+        max_gc_run=None if args.max_gc_run <= 0 else args.max_gc_run,
+        max_repeat_length=None if args.max_repeat_length <= 0 else args.max_repeat_length,
         forbidden_motifs=motifs,
+        forbidden_presets=presets,
         restriction_enzymes=enzymes,
         ramp_weight=args.ramp_weight,
         ramp_codons=args.ramp_codons,
@@ -62,8 +69,18 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tai-weight", type=float, default=0.0, dest="tai_weight",
                         help="tRNA-adaptation-index weight (0 = off; human tRNA data only)")
     parser.add_argument("--gc-weight", type=float, default=0.0, dest="gc_weight")
-    parser.add_argument("--max-homopolymer", type=int, default=6, dest="max_homopolymer")
+    parser.add_argument("--max-homopolymer", type=int, default=6, dest="max_homopolymer",
+                        help="longest allowed single-base run (<=0 = off)")
+    parser.add_argument("--max-gc-run", type=int, default=0, dest="max_gc_run",
+                        help="longest allowed run of consecutive G/C bases (<=0 = off)")
+    parser.add_argument("--max-repeat-length", type=int, default=0, dest="max_repeat_length",
+                        help="longest allowed repeated substring anywhere (<=0 = off; "
+                        "non-local, refinement-enforced -> HEURISTIC result)")
     parser.add_argument("--forbid", action="append", metavar="MOTIF", help="forbidden motif")
+    parser.add_argument(
+        "--forbid-preset", action="append", metavar="KEY", dest="forbid_preset",
+        help="forbid a named preset's motifs (repeatable; see 'bt4 presets')"
+    )
     parser.add_argument(
         "--enzyme", action="append", metavar="NAME", help="forbid a restriction site (repeatable)"
     )
@@ -124,7 +141,15 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
     print(f"optimality {cert.status.value} ({cert.solver})")
     hard, soft = result.metrics.hard_violations, result.metrics.soft_violations
     print(f"violations {hard} hard / {soft} soft")
-    if result.audit.get("refined"):
+    if "max_repeat_enforced" in result.audit:
+        enforced = result.audit["max_repeat_enforced"]
+        limit = result.audit.get("max_repeat_length")
+        residual = result.audit.get("max_repeat_residual")
+        print(f"max-repeat {enforced} (limit {limit}, residual {residual})")
+        if enforced == "partial":
+            print("  NOTE: refinement could not remove every long repeat (the protein may "
+                  "force some); residual repeats are reported in the violations above.")
+    if "folding_model" in result.audit:
         model = result.audit.get("folding_model")
         dg = float(result.audit.get("folding_dg", 0.0))  # type: ignore[arg-type]
         calibrated = bool(result.audit.get("folding_calibrated", False))
@@ -148,6 +173,37 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tracks(args: argparse.Namespace) -> int:
+    result = api.tracks(
+        args.dna, args.organism, nt_window=args.nt_window, codon_window=args.codon_window
+    )
+    if args.json:
+        payload = {
+            "dna": result.dna,
+            "tracks": [
+                {
+                    "name": t.name,
+                    "window": t.window,
+                    "window_unit": t.window_unit,
+                    "unit": t.unit,
+                    "values": list(t.values),
+                }
+                for t in result.tracks
+            ],
+        }
+        sys.stdout.write(json.dumps(payload) + "\n")
+        return 0
+    print(f"dna     {len(result.dna)} nt")
+    print(f"{'track':14} {'window':>8} {'n':>5} {'min':>8} {'max':>8} {'mean':>8}")
+    for row in api.summarize(result.tracks):
+        win = f"{row['window']} {row['window_unit']}"
+        mn = "-" if row["min"] is None else f"{float(row['min']):.3f}"  # type: ignore[arg-type]
+        mx = "-" if row["max"] is None else f"{float(row['max']):.3f}"  # type: ignore[arg-type]
+        mean = "-" if row["mean"] is None else f"{float(row['mean']):.3f}"  # type: ignore[arg-type]
+        print(f"{row['name']!s:14} {win:>8} {row['n']:>5} {mn:>8} {mx:>8} {mean:>8}")
+    return 0
+
+
 def _cmd_organisms(_args: argparse.Namespace) -> int:
     for name in api.available_organisms():
         print(name)
@@ -157,6 +213,15 @@ def _cmd_organisms(_args: argparse.Namespace) -> int:
 def _cmd_enzymes(_args: argparse.Namespace) -> int:
     for name in api.available_enzymes():
         print(name)
+    return 0
+
+
+def _cmd_presets(_args: argparse.Namespace) -> int:
+    for preset in api.available_forbidden_presets():
+        motifs = ", ".join(preset.motifs)
+        print(f"{preset.key:26} {preset.label}")
+        print(f"{'':26} {preset.description}")
+        print(f"{'':26} motifs: {motifs}")
     return 0
 
 
@@ -204,6 +269,19 @@ def _parser() -> argparse.ArgumentParser:
 
     p_enz = sub.add_parser("enzymes", help="list known restriction enzymes")
     p_enz.set_defaults(func=_cmd_enzymes)
+
+    p_pre = sub.add_parser("presets", help="list named forbidden-sequence presets")
+    p_pre.set_defaults(func=_cmd_presets)
+
+    p_trk = sub.add_parser("tracks", help="per-site composition tracks (GC/CpG/%MinMax)")
+    p_trk.add_argument("dna", help="ACGT coding sequence")
+    p_trk.add_argument("--organism", default="homo_sapiens", help="table for the %MinMax track")
+    p_trk.add_argument("--nt-window", type=int, default=50, dest="nt_window",
+                       help="nucleotide window for the GC/CpG tracks")
+    p_trk.add_argument("--codon-window", type=int, default=18, dest="codon_window",
+                       help="codon window for the %%MinMax track")
+    p_trk.add_argument("--json", action="store_true", help="emit full per-window arrays as JSON")
+    p_trk.set_defaults(func=_cmd_tracks)
 
     p_bt = sub.add_parser("build-table", help="build a codon table from a CDS FASTA")
     p_bt.add_argument("cds", help="path to a FASTA of coding sequences")

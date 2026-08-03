@@ -15,27 +15,39 @@ from collections.abc import Callable
 from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import available_organisms
 from bt4.biomodels.codon.tai import available_tai_organisms
-from bt4.constraints import available_enzymes
+from bt4.constraints import (
+    ForbiddenPreset,
+    available_enzymes,
+    available_forbidden_presets,
+)
 from bt4.domain import AMINO_ACIDS, Result, validate_protein
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
-from bt4.optimize import InfeasibleError
 from bt4.pipeline import (
     FrontierResult,
+    InfeasibleError,
     OptimizeConfig,
+    Track,
+    TracksResult,
     ValidationReport,
     run_frontier,
     run_optimize,
+    run_tracks,
     run_validate,
+    summarize,
 )
 
 __all__ = [
     "AMINO_ACIDS",
+    "ForbiddenPreset",
     "FrontierResult",
     "InfeasibleError",
     "OptimizeConfig",
     "Result",
+    "Track",
+    "TracksResult",
     "ValidationReport",
     "available_enzymes",
+    "available_forbidden_presets",
     "available_organisms",
     "available_tai_organisms",
     "build_table",
@@ -46,7 +58,9 @@ __all__ = [
     "read_fasta",
     "result_to_dict",
     "result_to_json",
+    "summarize",
     "to_fasta",
+    "tracks",
     "validate",
     "validate_protein",
     "write_table",
@@ -79,12 +93,17 @@ def frontier(
     on_progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> FrontierResult:
-    """Compute the CAI/GC Pareto frontier for ``protein``.
+    """Compute the multi-objective Pareto frontier for ``protein``.
+
+    Trades off every active objective axis (CAI and GC always, plus any
+    ramp/CpG/%MinMax/tAI term whose config weight is non-zero); with only CAI and
+    GC active this is the classic CAI-vs-GC frontier.
 
     Args:
         protein: A stop-free single-letter amino-acid string.
         config: Run configuration; defaults to :class:`OptimizeConfig`.
-        steps: Number of scalarization weights swept across ``[0, 1]``.
+        steps: Resolution of the scalarization weight grid on the objective
+            simplex (for two objectives, the ``[0, 1]`` alpha sweep).
         on_progress: Optional callback invoked as ``on_progress(done, total)``
             after each frontier grid point completes. Lets a UI show progress
             without blocking the engine.
@@ -121,3 +140,31 @@ def validate(dna: str, config: OptimizeConfig | None = None) -> ValidationReport
         ValueError: On non-ACGT input or unknown organism.
     """
     return run_validate(dna, config)
+
+
+def tracks(
+    dna: str,
+    organism: str = "homo_sapiens",
+    *,
+    nt_window: int = 50,
+    codon_window: int = 18,
+) -> TracksResult:
+    """Compute per-site composition tracks for a coding sequence.
+
+    Sliding-window **reporting** profiles (GC fraction, CpG density, and -- when
+    codon-aligned -- %MinMax) so a delivered sequence's composition can be
+    audited or plotted position-by-position. Nothing here feeds the optimizer.
+
+    Args:
+        dna: An ACGT coding sequence (case-insensitive).
+        organism: Codon-usage table key/alias for the %MinMax reference.
+        nt_window: Window (nucleotides) for the GC and CpG tracks.
+        codon_window: Window (codons) for the %MinMax track.
+
+    Returns:
+        A :class:`~bt4.pipeline.tracks.TracksResult` bundling the named tracks.
+
+    Raises:
+        ValueError: On non-ACGT input, a non-positive window, or unknown organism.
+    """
+    return run_tracks(dna, organism, nt_window=nt_window, codon_window=codon_window)

@@ -1,0 +1,9 @@
+{
+  "source": "GtRNAdb (UCSC Lowe Lab), Caenorhabditis elegans tRNA gene set (https://gtrnadb.ucsc.edu/genomes/eukaryota/Celeg11/, file ce11-tRNAs.fa from ce11-tRNAs.tar.gz)",
+  "build": "tRNAscan-SE 2.0 high-confidence nuclear tRNA gene set from ce11-tRNAs.fa (581 genes; the parallel of hg38-tRNAs.fa, with pseudogenes/Undet already filtered into ce11-filtered-tRNAs.fa); SeC (selenocysteine, anticodon TCA) excluded; genes counted per physical anticodon (initiator iMet + elongator Met merged at CAT). Anticodons parsed from the header name field and verified against the parenthetical (ANTICODON); the single name/parenthetical discrepancy (tRNA-Leu-TAA-3-1, chrII.trna12) was resolved to the parenthetical AAG, which matches the authoritative tRNAscan-SE 'Anti Codon' column in ce11-tRNAs-confidence-set.out. Independently re-counted from a sha256-pinned FASTA with zero mismatches.",
+  "genome": "ce11 / WBcel235 (nuclear only; no mitochondrial tRNAs)",
+  "total_genes": 580,
+  "retrieved": "2026-08-01",
+  "sha256": "5fe7f6dae6f134a60880c169eafdd13c9da8814048622b7704ea57f704bbb462",
+  "note": "Real tRNA gene copy numbers by anticodon (45 distinct anticodons, 580 genes). C. elegans is a eukaryote, so tAI is built with sking=0 (no bacterial lysidine ATA reading). tAI relative adaptiveness is derived via the dos Reis et al. (2004) wobble model (optimised s-values) as in the tai R package; see bt4.biomodels.codon.tai. Reproducible from this file's SHA-256. Source FASTA ce11-tRNAs.fa sha256 f94790a98f6e449611597818354a64ba8b318f9c054bfe3aab33694781676b6c; tarball ce11-tRNAs.tar.gz sha256 2bea880eef36a5aeec5bf10337ebcdcf786cfe9288edbd4a89742d7cf66ffb84. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE 2.0 (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant."
+}

@@ -14,10 +14,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
-__all__ = ["Manifest", "build_manifest", "config_hash", "content_hash"]
+__all__ = [
+    "Manifest",
+    "build_manifest",
+    "config_hash",
+    "content_hash",
+    "resolve_git_commit",
+]
 
 
 def content_hash(data: bytes | str) -> str:
@@ -25,6 +34,33 @@ def content_hash(data: bytes | str) -> str:
     if isinstance(data, str):
         data = data.encode("utf-8")
     return hashlib.sha256(data).hexdigest()
+
+
+@lru_cache(maxsize=1)
+def resolve_git_commit() -> str | None:
+    """Return the current source commit SHA, or ``None`` when unavailable.
+
+    Resolves ``git rev-parse HEAD`` in the directory containing this package.
+    Returns ``None`` when git is absent or the source is not a checkout (e.g. an
+    installed wheel), so provenance degrades gracefully rather than failing. The
+    result is constant within a checkout, so it does not break determinism
+    (invariant #7): two runs on the same commit stamp identically, while runs
+    from different commits differ (invariant #9, "plus git SHA"). Cached so the
+    subprocess runs at most once per process.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = out.stdout.strip()
+    return sha if out.returncode == 0 and sha else None
 
 
 def _canonical_json(obj: object) -> str:

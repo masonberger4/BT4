@@ -77,6 +77,7 @@ def anneal_refine(
     score: Score,
     constraints: Sequence[Constraint],
     *,
+    global_constraints: Sequence[Constraint] = (),
     iterations: int = 2000,
     seed: int = 0,
     delta_score: DeltaScore | None = None,
@@ -98,7 +99,18 @@ def anneal_refine(
             the loop it is used only when ``delta_score`` is not supplied.
         constraints: Hard-feasibility rules (the ``Constraint`` contract). Each
             move is rejected if it would introduce a new hard violation, checked
-            incrementally via ``ok_suffix`` over the affected window.
+            incrementally via ``ok_suffix`` over the affected window. These are the
+            *local* (bounded-context) constraints; the seed must already satisfy
+            them (checked at the door).
+        global_constraints: Non-local (``Scope.GLOBAL``) constraints -- e.g. the
+            dispersed :class:`~bt4.constraints.max_repeat.MaxRepeatConstraint` --
+            whose veto reads the whole sequence and so cannot be checked by a
+            bounded ``ok_suffix`` window. A move is rejected if it *raises* the
+            total number of hard violations these report (invariant #5), computed
+            by a whole-sequence ``validate`` on the candidate. Unlike ``constraints``
+            the seed **may** violate these (that is what refinement drives down);
+            the count can only fall or stay flat, never rise. Empty by default, so
+            callers that only refine local/folding objectives are unaffected.
         iterations: Number of proposed swaps (``>= 0``). ``0`` returns the seed
             unchanged (still a valid, honest ``HEURISTIC`` result).
         seed: Seed for the local ``random.Random`` driving proposals and
@@ -157,6 +169,9 @@ def anneal_refine(
     seed_score = current_score
     best_dna = seed_dna
     best_score = current_score
+    # Whole-sequence hard-violation count for the non-local constraints. Refinement
+    # may only drive this down, never up (invariant #5, global edition).
+    current_global = _global_hard(seed_dna, global_constraints)
 
     if movable and iterations > 0:
         temp = temp0
@@ -171,10 +186,22 @@ def anneal_refine(
                 temp *= cooling
                 continue
 
-            if delta_score is not None:
+            # A global (whole-sequence) constraint's veto cannot be checked by a
+            # bounded window, so we build the candidate and re-count its hard
+            # violations; a move that would raise the count is rejected outright.
+            if global_constraints:
+                candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
+                cand_global = _global_hard(candidate, global_constraints)
+                if cand_global > current_global:
+                    temp *= cooling
+                    continue
+                change = score(candidate) - current_score
+            elif delta_score is not None:
+                cand_global = current_global
                 change = delta_score(current_dna, pos, old_codon, new_codon)
                 candidate = None  # built lazily only on acceptance
             else:
+                cand_global = current_global
                 candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
                 change = score(candidate) - current_score
 
@@ -183,6 +210,7 @@ def anneal_refine(
                     candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
                 current_dna = candidate
                 current_score += change
+                current_global = cand_global
                 if current_score > best_score:
                     best_score = current_score
                     best_dna = current_dna
@@ -209,6 +237,25 @@ def anneal_refine(
         delivered_score = seed_score
     return SolveResult(
         dna=delivered_dna, objective_scalar=delivered_score, certificate=certificate
+    )
+
+
+def _global_hard(dna: str, global_constraints: Sequence[Constraint]) -> int:
+    """Return the total hard-violation count of ``dna`` under ``global_constraints``.
+
+    A whole-sequence ``validate`` per constraint -- the only honest way to count a
+    non-local (``Scope.GLOBAL``) constraint such as the dispersed max-repeat rule,
+    whose two copies can lie any distance apart. ``0`` when there are none.
+
+    Args:
+        dna: The candidate coding sequence.
+        global_constraints: The non-local constraints to audit.
+    """
+    return sum(
+        1
+        for c in global_constraints
+        for v in c.validate(dna)
+        if v.severity is Severity.HARD
     )
 
 

@@ -176,7 +176,16 @@ class CodonUsageTable:
             aa = CODON_TABLE[codon]
             if aa == STOP or aa in ("M", "W"):
                 continue
-            log_sum += math.log(self._w[codon])
+            try:
+                w = self._w[codon]
+            except KeyError:
+                # A codon valid in the genetic code but absent from a sparse table
+                # (validation only checks amino-acid coverage). Raise the documented
+                # ValueError -- matching weight() -- not a bare KeyError.
+                raise ValueError(
+                    f"codon {codon!r} has no weight in the table for {self.organism!r}"
+                ) from None
+            log_sum += math.log(w)
             count += 1
         if count == 0:
             return 1.0

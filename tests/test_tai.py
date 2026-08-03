@@ -56,6 +56,15 @@ def test_ecoli_reference_optimal_codons_are_high() -> None:
     assert w["AAA"] == pytest.approx(1.0)
 
 
+def test_bacterial_ata_scales_with_reader_copy_number() -> None:
+    # sking=1 lysidine reading of Ile ATA must scale with its reader tRNA (anticodon
+    # TAT) copy number, not be a bare constant (dos Reis W[ATA] = p * tRNA[ATA]).
+    low = build_tai_weights({"TAT": 1, "AGC": 20}, sking=1)
+    high = build_tai_weights({"TAT": 40, "AGC": 20}, sking=1)
+    # More ATA-reading tRNA genes -> higher relative adaptiveness for ATA.
+    assert high["ATA"] > low["ATA"]
+
+
 def test_svalues_must_have_nine_entries() -> None:
     with pytest.raises(ValueError, match="9 entries"):
         build_tai_weights({"TTT": 1}, s_values=(0.0, 0.0))

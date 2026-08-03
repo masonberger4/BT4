@@ -245,3 +245,44 @@ def test_greedy_temp0_zero_never_decreases_objective() -> None:
         temp0=0.0,
     )
     assert result.objective_scalar >= _CAI.score(seed_dna) - 1e-9
+
+
+def test_global_constraints_never_raise_hard_count() -> None:
+    """Invariant #5, global edition: a non-local constraint's hard count never rises.
+
+    The dispersed :class:`~bt4.constraints.max_repeat.MaxRepeatConstraint` cannot be
+    checked by a bounded ``ok_suffix`` window, so ``anneal_refine`` re-counts its
+    whole-sequence violations per move and rejects any that would increase them.
+    Starting from a repeat-dirty seed and *rewarding* repeat removal, the count
+    must fall or stay flat every step -- never climb.
+    """
+    from bt4.constraints.max_repeat import MaxRepeatConstraint
+    from bt4.domain import STOP
+
+    protein = "MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLM"
+    residues = [*protein, STOP]
+    seed = solve_exact(residues, scalar_delta=_cai_delta, constraints=())
+    mr = MaxRepeatConstraint(8)
+
+    def _hard(dna: str) -> int:
+        return sum(1 for v in mr.validate(dna) if v.severity is Severity.HARD)
+
+    seed_hard = _hard(seed.dna)
+
+    def score(dna: str) -> float:
+        return _CAI.score(dna) - 1e9 * _hard(dna)
+
+    result = anneal_refine(
+        seed.dna,
+        residues,
+        score,
+        (),
+        global_constraints=(mr,),
+        iterations=4000,
+        seed=1,
+    )
+    assert translate(result.dna) == "".join(residues)
+    # The count can only fall or stay flat; on this instance it reaches zero.
+    assert _hard(result.dna) <= seed_hard
+    assert _hard(result.dna) == 0
+    assert result.certificate.status is OptimalityStatus.HEURISTIC

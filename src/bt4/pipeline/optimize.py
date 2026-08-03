@@ -25,7 +25,10 @@ from dataclasses import dataclass
 from bt4 import __version__
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
 from bt4.biomodels.codon.tai import load_tai_provenance, load_tai_table
+from bt4.constraints.forbidden import resolve_forbidden_motifs
+from bt4.constraints.gc_run import GcRunConstraint
 from bt4.constraints.kozak import InternalStartConstraint
+from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
@@ -54,7 +57,7 @@ from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 from bt4.optimize import SolveResult, solve_exact
-from bt4.provenance import Manifest, build_manifest
+from bt4.provenance import Manifest, build_manifest, resolve_git_commit
 
 __all__ = [
     "FrontierResult",
@@ -86,10 +89,26 @@ class OptimizeConfig:
             ships one); other organisms raise until their tRNA data is added.
         gc_weight: Weight on the GC-proximity objective in a single solve.
         max_homopolymer: Longest allowed single-base run, or ``None`` to disable.
+        max_gc_run: Longest allowed run of consecutive strong (G or C) bases -- the
+            "max GC length" knob (mixed runs like ``GCGC`` count), or ``None`` to
+            disable. A LOCAL constraint solved exactly in the trellis.
+        max_repeat_length: Longest allowed repeated substring anywhere in the
+            sequence (direct, inverted, or palindromic; reverse-complement aware),
+            or ``None`` to disable. This is a genuinely non-local (GLOBAL)
+            constraint: its two copies can lie any distance apart, so it is *not*
+            merged into the exact-DP trellis (that would silently over-merge,
+            CLAUDE.md §10.1). Instead the exact-DP seed is polished by a
+            synonymous simulated-annealing pass that drives repeat violations down
+            without introducing local ones or raising the count (invariant #5); any
+            residual repeats are reported honestly and the certificate becomes
+            heuristic. Not supported together with a GC budget.
         forbidden_motifs: Substrings (and, when enabled, their reverse
             complements) that may not appear in the coding sequence.
+        forbidden_presets: Keys of named forbidden-sequence presets (see
+            :mod:`bt4.constraints.forbidden`) whose motifs are added to
+            ``forbidden_motifs`` (e.g. ``("poly_a_signal", "tata_box")``).
         avoid_reverse_complement: Also forbid the reverse complement of each
-            motif.
+            motif (applies to both ``forbidden_motifs`` and ``forbidden_presets``).
         restriction_enzymes: Names of restriction enzymes whose recognition
             sites (and their reverse complements) may not appear.
         ramp_weight: Weight on the 5' translation-ramp term (0 disables it).
@@ -136,7 +155,10 @@ class OptimizeConfig:
     tai_weight: float = 0.0
     gc_weight: float = 0.0
     max_homopolymer: int | None = 6
+    max_gc_run: int | None = None
+    max_repeat_length: int | None = None
     forbidden_motifs: tuple[str, ...] = ()
+    forbidden_presets: tuple[str, ...] = ()
     avoid_reverse_complement: bool = True
     restriction_enzymes: tuple[str, ...] = ()
     ramp_weight: float = 0.0
@@ -263,14 +285,36 @@ def _simplex_grid(n_axes: int, steps: int) -> list[tuple[float, ...]]:
     return [tuple(c / total for c in comp) for comp in _compositions(total, n_axes)]
 
 
+def _forbidden_motifs(config: OptimizeConfig) -> tuple[str, ...]:
+    """Return the user's motifs plus any preset motifs, de-duplicated in order."""
+    preset = resolve_forbidden_motifs(tuple(config.forbidden_presets))
+    seen: set[str] = set()
+    out: list[str] = []
+    for motif in (*config.forbidden_motifs, *preset):
+        up = motif.upper()
+        if up not in seen:
+            seen.add(up)
+            out.append(motif)
+    return tuple(out)
+
+
 def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
+    """Build the LOCAL (bounded-context) constraints -- solvable in the exact DP.
+
+    The non-local max-repeat rule is deliberately excluded here (see
+    :func:`_build_global_constraints`): it reads the whole sequence and so cannot
+    be merged into the trellis without silently over-merging (CLAUDE.md §10.1).
+    """
     constraints: list[Constraint] = []
     if config.max_homopolymer is not None and config.max_homopolymer > 0:
         constraints.append(HomopolymerConstraint(config.max_homopolymer))
-    if config.forbidden_motifs:
+    if config.max_gc_run is not None and config.max_gc_run > 0:
+        constraints.append(GcRunConstraint(config.max_gc_run))
+    motifs = _forbidden_motifs(config)
+    if motifs:
         constraints.append(
             ForbiddenMotifConstraint(
-                tuple(config.forbidden_motifs),
+                motifs,
                 reverse_complement=config.avoid_reverse_complement,
             )
         )
@@ -289,6 +333,19 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
     if config.avoid_internal_start:
         constraints.append(InternalStartConstraint())
     return constraints
+
+
+def _build_global_constraints(config: OptimizeConfig) -> list[Constraint]:
+    """Build the non-local (``Scope.GLOBAL``) constraints.
+
+    Currently just the dispersed max-repeat rule. These are never fed to the
+    exact-DP trellis; they are reported by ``validate`` and enforced in the
+    refinement layer (see :func:`_refine`).
+    """
+    globals_: list[Constraint] = []
+    if config.max_repeat_length is not None and config.max_repeat_length > 0:
+        globals_.append(MaxRepeatConstraint(config.max_repeat_length))
+    return globals_
 
 
 def _scalar_delta(
@@ -327,7 +384,10 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "tai_weight": config.tai_weight,
         "gc_weight": config.gc_weight,
         "max_homopolymer": config.max_homopolymer,
+        "max_gc_run": config.max_gc_run,
+        "max_repeat_length": config.max_repeat_length,
         "forbidden_motifs": list(config.forbidden_motifs),
+        "forbidden_presets": list(config.forbidden_presets),
         "avoid_reverse_complement": config.avoid_reverse_complement,
         "restriction_enzymes": list(config.restriction_enzymes),
         "ramp_weight": config.ramp_weight,
@@ -364,6 +424,7 @@ def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
         config=cfg,
         inputs=inputs,
         seed=config.seed,
+        git_commit=resolve_git_commit(),
     )
 
 
@@ -392,19 +453,26 @@ def _make_result(
     config: OptimizeConfig,
     alpha: float | None,
     extra_audit: dict[str, object] | None = None,
+    manifest_extra: dict[str, object] | None = None,
 ) -> Result:
     # Enforce invariant #1 at the boundary: the returned DNA must translate back.
     if translate(dna) != protein + STOP:
         raise AssertionError("round-trip invariant violated: translate(dna) != protein + stop")
     violations = _violations(dna, constraints)
     metrics = _metrics(dna, terms, violations)
+    # The manifest hashes everything that influences the output, so anything that
+    # changed the DNA (e.g. the folding backend under --refine) must enter it
+    # (invariant #9): a stamp cannot map to two different sequences.
+    stamp_extra: dict[str, object] = dict(manifest_extra or {})
+    if alpha is not None:
+        stamp_extra["alpha"] = alpha
     audit: dict[str, object] = {
         "cai": table.cai(dna),
         "gc_percent": metrics.gc * 100.0,
         "n_scored_codons": _n_scored_codons(dna),
         "solver": certificate.solver,
         "seed": config.seed,
-        "manifest": _manifest(config, {} if alpha is None else {"alpha": alpha}).to_dict(),
+        "manifest": _manifest(config, stamp_extra).to_dict(),
     }
     if config.tai_weight != 0.0:
         audit["tai"] = load_tai_table(config.organism).tai(dna)
@@ -475,49 +543,91 @@ def _solve_with_gc_budget(
     return solve, solve.certificate
 
 
+# Per-violation penalty for a residual max-repeat in the refinement objective. It
+# only needs to dominate ordinary objective/folding deltas so that breaking a
+# repeat is always worth it; the hard guarantee that a move never *raises* the
+# repeat count comes from anneal_refine's global-constraint gate, not this weight.
+_REPEAT_PENALTY = 1e9
+
+
 def _refine(
     seed_dna: str,
     residues: Sequence[str],
     active: Sequence[tuple[ObjectiveTerm, float]],
     constraints: Sequence[Constraint],
+    global_constraints: Sequence[Constraint],
     config: OptimizeConfig,
-) -> tuple[str, OptimalityCertificate, dict[str, object]]:
-    """Run a folding-aware SA refinement pass over the exact-DP seed.
+    *,
+    with_folding: bool,
+) -> tuple[str, OptimalityCertificate, dict[str, object], dict[str, object]]:
+    """Run an SA refinement pass over the exact-DP seed (folding and/or repeats).
 
-    Maximizes the additive objective plus a 5' mRNA-folding score by
-    synonymous-only simulated annealing (invariants #1/#5/#7 hold by
-    construction). The folding backend is the best available
-    (:func:`bt4.biomodels.folding.default`); when that is the uncalibrated
-    baseline the returned ``folding_dg`` is a labeled proxy, not real deltaG, and
-    is flagged ``folding_calibrated=False`` (CLAUDE.md sections 6 and 10.6). The
-    returned certificate is ``HEURISTIC`` -- refinement never claims optimality.
+    Maximizes the additive objective by synonymous-only simulated annealing
+    (invariants #1/#5/#7 hold by construction), optionally adding a 5' mRNA-folding
+    score (``with_folding``) and/or driving down dispersed max-repeat violations
+    (``global_constraints``). Repeat-breaking is honest: anneal_refine's
+    global-constraint gate rejects any move that would raise the whole-sequence
+    repeat count, and the large :data:`_REPEAT_PENALTY` in the score actively pulls
+    the search toward zero. Local constraints are never violated. Any residual
+    repeats are reported (``max_repeat_residual``); the folding backend, when used,
+    is the best available (:func:`bt4.biomodels.folding.default`) and its
+    uncalibrated baseline is flagged ``folding_calibrated=False`` (CLAUDE.md §6,
+    §10.6). The certificate is always ``HEURISTIC`` -- refinement never claims
+    optimality.
     """
-    from bt4.biomodels.folding import default as folding_default  # lazy: keep core light
     from bt4.optimize.anneal_refine import anneal_refine  # lazy
 
-    model = folding_default()
     pairs = tuple(active)
     weight = config.folding_weight
+    globals_ = tuple(global_constraints)
+
+    model = None
+    if with_folding:
+        from bt4.biomodels.folding import default as folding_default  # lazy: keep core light
+
+        model = folding_default()
 
     def score(dna: str) -> float:
-        additive = sum(w * term.score(dna) for term, w in pairs)
-        return additive + weight * model.score_sequence(dna)
+        total = sum(w * term.score(dna) for term, w in pairs)
+        if model is not None:
+            total += weight * model.score_sequence(dna)
+        if globals_:
+            hard = sum(
+                1
+                for c in globals_
+                for v in c.validate(dna)
+                if v.severity is Severity.HARD
+            )
+            total -= _REPEAT_PENALTY * hard
+        return total
 
     result = anneal_refine(
         seed_dna,
         residues,
         score,
         constraints,
+        global_constraints=globals_,
         iterations=config.refine_iterations,
         seed=config.seed,
     )
-    extra_audit: dict[str, object] = {
-        "refined": True,
-        "folding_model": model.name,
-        "folding_calibrated": model.calibrated,
-        "folding_dg": model.five_prime_dg(result.dna),
-    }
-    return result.dna, result.certificate, extra_audit
+    extra_audit: dict[str, object] = {"refined": True}
+    manifest_extra: dict[str, object] = {}
+    if model is not None:
+        extra_audit["folding_model"] = model.name
+        extra_audit["folding_calibrated"] = model.calibrated
+        extra_audit["folding_dg"] = model.five_prime_dg(result.dna)
+        # The folding backend changed the DNA, so its identity must enter the stamp
+        # (invariant #9); folding_dg is an output metric and stays out of the hash.
+        manifest_extra["folding_model"] = model.name
+        manifest_extra["folding_calibrated"] = model.calibrated
+    if globals_:
+        residual = sum(
+            1 for c in globals_ for v in c.validate(result.dna) if v.severity is Severity.HARD
+        )
+        extra_audit["max_repeat_length"] = config.max_repeat_length
+        extra_audit["max_repeat_residual"] = residual
+        extra_audit["max_repeat_enforced"] = "clean" if residual == 0 else "partial"
+    return result.dna, result.certificate, extra_audit, manifest_extra
 
 
 def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
@@ -541,11 +651,21 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
             "refine is not supported together with a GC budget (gc_min/gc_max): "
             "the budget is a global constraint that refinement would not re-enforce"
         )
+    if config.max_repeat_length is not None and has_budget:
+        raise ValueError(
+            "max_repeat_length is not supported together with a GC budget "
+            "(gc_min/gc_max): enforcing the (non-local) repeat rule needs a "
+            "refinement pass that would not re-enforce the GC budget"
+        )
     p = validate_protein(protein)
     table = load_table(config.organism)
     active = _active_terms(table, config)
     terms = [term for term, _ in active]
     constraints = _build_constraints(config)
+    global_constraints = _build_global_constraints(config)
+    # Local + global together are the reporting set: validate() audits both so the
+    # delivered result carries every violation, including any residual max-repeat.
+    report_constraints = [*constraints, *global_constraints]
     residues = [*p, STOP]
     if has_budget:
         solve, certificate = _solve_with_gc_budget(residues, active, constraints, config)
@@ -560,18 +680,43 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
         certificate = solve.certificate
     dna = solve.dna
     extra_audit: dict[str, object] | None = None
-    if config.refine:
-        dna, certificate, extra_audit = _refine(dna, residues, active, constraints, config)
+    manifest_extra: dict[str, object] | None = None
+    # Refine when the caller asked for folding, or when a non-local constraint
+    # (max-repeat) is active and the exact-DP seed actually violates it -- a clean
+    # seed keeps its proven-optimal certificate and needs no perturbation.
+    seed_repeat_hard = sum(
+        1 for c in global_constraints for v in c.validate(dna) if v.severity is Severity.HARD
+    )
+    needs_refine = config.refine or seed_repeat_hard > 0
+    if needs_refine:
+        dna, certificate, extra_audit, manifest_extra = _refine(
+            dna,
+            residues,
+            active,
+            constraints,
+            global_constraints,
+            config,
+            with_folding=config.refine,
+        )
+    elif global_constraints:
+        # A non-local constraint is active but the proven-optimal seed already
+        # satisfied it, so no refinement was needed: report it as cleanly enforced.
+        extra_audit = {
+            "max_repeat_length": config.max_repeat_length,
+            "max_repeat_residual": 0,
+            "max_repeat_enforced": "clean",
+        }
     return _make_result(
         protein=p,
         dna=dna,
         table=table,
         terms=terms,
-        constraints=constraints,
+        constraints=report_constraints,
         certificate=certificate,
         config=config,
         alpha=None,
         extra_audit=extra_audit,
+        manifest_extra=manifest_extra,
     )
 
 
@@ -625,6 +770,10 @@ def run_frontier(
     p = validate_protein(protein)
     table = load_table(config.organism)
     constraints = _build_constraints(config)
+    # The frontier is a pure exact-solve trade-off explorer: each point is
+    # proven-optimal for the local constraints, so the non-local max-repeat rule is
+    # only *reported* here (not refinement-enforced -- that lives in run_optimize).
+    report_constraints = [*constraints, *_build_global_constraints(config)]
     residues = [*p, STOP]
 
     axes = _frontier_axes(table, config)
@@ -652,7 +801,7 @@ def run_frontier(
                 dna=solve.dna,
                 table=table,
                 terms=axes,
-                constraints=constraints,
+                constraints=report_constraints,
                 certificate=solve.certificate,
                 config=config,
                 alpha=weights[0],

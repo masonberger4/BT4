@@ -31,22 +31,31 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   for speed. BT4 never claims optimality it didn't earn.
 - **Objectives:** CAI, **tAI** (real human tRNA copy numbers via the dos Reis
   wobble model), GC-target proximity, a 5′ translation ramp, CpG deplete/elevate,
-  codon-pair bias, and a **%MinMax** codon-commonness term — returned as a
-  **multi-objective Pareto frontier** (a simplex sweep over every active axis, not
-  just CAI/GC), never a single magic-weighted number.
+  and a **%MinMax** codon-commonness term — returned as a **multi-objective Pareto
+  frontier** (a simplex sweep over every active axis, not just CAI/GC), never a
+  single magic-weighted number. (A codon-pair-bias term is implemented for the
+  trellis but not yet exposed as a config knob.)
 - **Global GC budget, two honest backends:** an OR-Tools **CP-SAT** backend for
   the pure-additive case (proven-optimal), and a **Lagrangian relaxation** that
   dualizes the budget into the exact DP so — unlike CP-SAT — it keeps local
   constraints and pairwise terms honored, with a gap-bounded certificate.
-- **Hard constraints:** maximum homopolymer run, forbidden motifs, **tandem &
-  inverted-repeat** (hairpin) bans, an **internal strong-Kozak ATG** guard, and a
-  **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
+- **Hard constraints:** maximum homopolymer run, **max GC-run** (the "max GC
+  length"), a whole-sequence **max repeat length** (direct/inverted/palindromic
+  repeats anywhere, reverse-complement aware — enforced by refinement and reported
+  honestly, since it is genuinely non-local), forbidden motifs with named
+  **forbidden-sequence presets** (poly-A signal, TATA box, telomere repeat, …),
+  **tandem & inverted-repeat** (hairpin) bans, an **internal strong-Kozak ATG**
+  guard, and a **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* codon tables out
   of the box, plus real **tAI** tables for human, mouse, and yeast (GtRNAdb tRNA
   counts); `bt4 build-table` builds an authentic codon table from your own CDS FASTA.
 - **Benchmarked against real tools:** `scripts/compare_tools.py` places BT4 next
   to GeneOptimizer / IDT / Twist / GenScript on a cited, CC BY 4.0 panel — every
   metric recomputed from the sequence, and BT4 never claimed "better", just placed.
+  `scripts/compare_reproducibility.py` adds a run-to-run **variability** view over
+  three proteins × three *anonymized* algorithms × ten repeat runs (kept honestly
+  separate from the named-tool board), with deterministic BT4 as a zero-spread
+  reference.
 - **Honest metrics:** every reported number (CAI, GC, violations) is recomputed
   from the delivered sequence, never trusted from the solver.
 - **Reproducible provenance:** a content-hashed manifest (codon-table SHA-256 +
@@ -159,19 +168,24 @@ pipx install "bt4[app] @ git+https://github.com/masonberger4/BT4"
 ### Desktop app
 
 `bt4-studio` (or `python -m bt4.app`): paste a protein, pick the organism, set a
-GC target / max-homopolymer / forbidden motifs, and click **Optimize**. You get
-the optimality badge, a recomputed-metrics table, the interactive CAI/GC frontier
-(the delivered point starred), the coding sequence, and one-click FASTA/JSON
-export. The optimization runs on a background thread, so the window never blocks.
+GC target / max-homopolymer / max GC length / max repeat length / forbidden
+motifs (and tick any forbidden-sequence presets), and click **Optimize**. **Hover
+any control for a tooltip explaining what it does.** You get the optimality badge,
+a recomputed-metrics table, the interactive CAI/GC frontier (the delivered point
+starred), the coding sequence, and one-click FASTA/JSON export. The optimization
+runs on a background thread, so the window never blocks.
 
 ### Command line
 
 ```bash
 bt4 optimize MAALKHETQW --max-homopolymer 5 --enzyme EcoRI    # summary
+bt4 optimize MAALKHETQW --max-gc-run 5 --max-repeat-length 10 # GC-run + repeat caps
+bt4 optimize MAALKHETQW --forbid-preset poly_a_signal         # ban a preset's motifs
 bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest
 bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
-bt4 organisms         # list codon tables      bt4 enzymes    # list restriction enzymes
+bt4 tracks ATGGCC...TAA --nt-window 50                        # per-site GC/CpG/%MinMax tracks
+bt4 organisms   # codon tables    bt4 enzymes   # enzymes    bt4 presets   # forbidden presets
 bt4 build-table my_cds.fasta --organism my_species --out .    # table from real CDS
 ```
 
@@ -239,12 +253,16 @@ objective is a new file plus its honesty property test — never an engine edit.
 
 ## Roadmap
 
-Phases 0–1 are done and Phase 2 is well underway: the multi-objective frontier,
-the desktop app, codon-pair / 5′-ramp / CpG / %MinMax objectives, tandem &
-inverted-repeat constraints, and two GC-budget backends — OR-Tools CP-SAT and an
-honest **Lagrangian relaxation** (which, unlike CP-SAT, keeps local constraints
-and pairwise terms under the budget) — have landed. tAI and the validated splice
-/ folding / expression models are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
+Phases 0–1 are done and Phase 2 is largely complete: the multi-objective
+frontier, the desktop app, **tAI** (real GtRNAdb tRNA data), 5′-ramp / CpG /
+%MinMax objectives, tandem & inverted-repeat and internal-ATG constraints, a
+cited tool benchmark, and two GC-budget backends — OR-Tools CP-SAT and an honest
+**exact budget DP** (which, unlike CP-SAT, keeps local constraints and pairwise
+terms under the budget) — have landed. A codon-pair-bias term (`CpbTerm`) is
+implemented for the trellis but not yet wired to a config knob. The validated
+splice / folding / expression models are next (the `FoldingModel` and
+`SplicePredictor` contracts and honest baselines are already in place). See
+[`CLAUDE.md`](./CLAUDE.md) §9.
 
 ## Contributing
 

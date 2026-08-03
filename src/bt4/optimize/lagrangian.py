@@ -1,43 +1,60 @@
-"""Lagrangian-relaxation backend: local constraints AND one global count budget.
+"""Budgeted trellis backend: local constraints AND one global count budget.
 
 The exact DP (:mod:`bt4.optimize.exact_dp`) is the honest workhorse for local,
-context-bounded objectives and constraints, but it cannot carry a
+context-bounded objectives and constraints, but it cannot on its own carry a
 *whole-sequence* count budget -- a total GC count between ``gc_min``/``gc_max``,
-or a total CpG count under a cap. A running global total is not a
-bounded-trailing-context state, so folding it into the trellis would blow the
-state space up (one state per attainable count per prefix). The CP-SAT backend
-(:mod:`bt4.optimize.cpsat`) can model such a budget as a single linear
-constraint, but it drops *all* local sequence constraints (homopolymer runs,
-forbidden or restriction motifs, repeats). This backend fills exactly that gap:
-it enforces one global count budget **and** the local constraints together, by
-dualizing the budget into the per-codon objective and reusing the exact DP.
+or a total CpG count under a cap. The CP-SAT backend (:mod:`bt4.optimize.cpsat`)
+models such a budget as a single linear constraint but drops *all* local
+sequence constraints (homopolymer runs, forbidden or restriction motifs,
+repeats) and any pairwise objective term. This backend fills exactly that gap: it
+enforces one global count budget **and** the local constraints (and any pairwise
+objective) together.
 
-How it stays honest (CLAUDE.md invariant #6):
+How it works -- an amount-bucketed exact DP:
 
-- The budget is moved into the objective with a multiplier ``lambda >= 0`` and
-  the relaxed problem is solved by :func:`~bt4.optimize.exact_dp.solve_exact`
-  with the *same* constraints and objective context. Every candidate the DP
-  returns therefore already satisfies all local constraints -- that is the whole
-  point of routing through the DP rather than an ILP.
-- Each exact relaxed solve also yields a *valid dual bound*: for the maximization
-  ``max f(seq) s.t. amount(seq) <= budget_max``, ``f(seq) - lambda*(amount(seq) -
-  budget_max)`` is an upper bound on the true constrained optimum for any
-  ``lambda >= 0`` (and symmetrically for a lower budget). We keep the tightest
-  (minimum) such bound seen and pair it with the best budget-feasible candidate's
-  *true* objective (recomputed from the codons, never trusted from the relaxed
-  accumulator) to report a real, non-negative optimality gap.
-- Integer problems have a Lagrangian duality gap, so we never claim
-  ``PROVEN_OPTIMAL``: the certificate is ``GAP_BOUNDED`` with the honest computed
-  gap (possibly ``0.0``), ``solver="lagrangian"``, and ``relaxed_terms`` naming
-  the dualized budget. If a ``beam`` actually truncated any relaxed solve the
-  dual bound is no longer trustworthy, so the certificate degrades to
-  ``BEAM_TRUNCATED`` and carries no gap. With no budget at all nothing is
-  relaxed and we return the exact DP's own result and certificate unchanged.
+- The trellis carries one layer per residue (including the trailing stop). Its
+  state is the pair *(trailing DNA context, cumulative budgeted amount)* where
+  the context length is the union of every constraint's and the objective's
+  declared ``context_len``. Because the running amount is part of the state, the
+  budget is enforced *exactly*, not relaxed: at the final layer only states whose
+  total amount lands in ``[budget_min, budget_max]`` survive, and the
+  highest-objective survivor is reconstructed.
+- Two prefixes that share a state key are interchangeable for every future
+  feasibility decision (same trailing context => same ``ok_suffix`` behaviour and
+  same objective ``delta``) *and* for the budget (same cumulative amount), so
+  keeping only the best of each is exact -- the same merge argument the exact DP
+  makes, extended by the amount dimension.
+- A sound bound prune keeps the amount dimension small: at each layer a state is
+  dropped only when, given the min/max amount still attainable over the remaining
+  residues, it *provably cannot* reach the budget window. This never drops a
+  state that could still become budget-feasible, so it preserves optimality while
+  bounding the bucket count to (roughly) the width of the budget window.
 
-Determinism (invariant #7): the multiplier follows a fixed diminishing
-subgradient schedule (``step = initial_step / (k + 1)``), the underlying DP is
-deterministic, and ties are broken toward the lexicographically smaller DNA, so
-identical inputs yield byte-identical output. No randomness, no wall-clock.
+How it stays honest (CLAUDE.md invariants #6 and #7):
+
+- With ``beam is None`` the DP explores the full (sound-pruned) state space, so
+  the returned sequence is the *proven* optimum subject to the budget and every
+  local constraint. The certificate is ``PROVEN_OPTIMAL`` -- nothing is relaxed.
+- A ``beam`` caps the states kept per layer (a speed knob); if it actually drops
+  states the certificate degrades to ``BEAM_TRUNCATED``. Crucially, the sound
+  amount prune runs *before* the beam cap and guarantees every surviving state
+  can still reach the budget window, so a beam can never leave a *feasible*
+  instance with no in-window solution -- it only trades away optimality, never
+  feasibility. A beam that never bites still reports ``PROVEN_OPTIMAL`` (matching
+  the exact DP).
+- ``InfeasibleError`` is raised only when infeasibility is genuinely proven: when
+  a layer empties under the constraints' ``ok_suffix`` vetoes (local
+  infeasibility, always exact) or when the sound amount prune -- which never
+  drops a reachable-feasible state -- empties a layer (budget infeasibility, sound
+  even under a beam). It is never raised merely because a beam truncated the
+  search.
+- Determinism (#7): states are iterated in sorted order, codons in
+  :func:`~bt4.domain.genetic_code.synonymous_codons` order, and every tie is
+  broken toward the lexicographically smaller DNA. No randomness, no wall-clock.
+
+The certificate keeps ``solver="lagrangian"`` as a stable backend label (the
+pipeline and its tests key on it); the certificate ``detail`` states plainly that
+the mechanism is an amount-bucketed exact budget DP.
 """
 
 from __future__ import annotations
@@ -46,22 +63,16 @@ from collections.abc import Callable, Sequence
 
 from bt4.domain.certificate import OptimalityCertificate, OptimalityStatus
 from bt4.domain.contracts import Constraint
+from bt4.domain.genetic_code import synonymous_codons
 from bt4.optimize.exact_dp import InfeasibleError, SolveResult, solve_exact
 
 __all__ = ["solve_lagrangian"]
 
-_INITIAL_STEP: float = 4.0
-"""Initial subgradient step size for the multiplier update.
-
-The subgradient is normalized by the number of residues so it is O(1) regardless
-of sequence length, and the step diminishes as ``_INITIAL_STEP / (k + 1)``. A
-value of four lets ``lambda`` sweep the price range that flips realistic codon
-choices within the default iteration budget; because the best budget-feasible
-candidate is retained across all iterations, an over-large step only widens
-exploration and never corrupts the returned solution.
-"""
-
 ScalarDelta = Callable[[str, str, int], float]
+
+# One trellis layer: (trailing context, cumulative amount) -> (best scalar, DNA).
+_StateKey = tuple[str, int]
+_Layer = dict[_StateKey, tuple[float, str]]
 
 
 def solve_lagrangian(
@@ -77,21 +88,16 @@ def solve_lagrangian(
     budget_name: str = "budget",
     max_iters: int = 50,
 ) -> SolveResult:
-    """Solve the additive core plus one global count budget via Lagrangian dual.
+    """Solve the additive core plus one global count budget, exactly.
 
     The budgeted quantity is ``amount(seq) = sum(amount(codon) for codon in seq)``
     and the budget is ``budget_min <= amount(seq) <= budget_max`` for whichever
-    bounds are given. A single multiplier ``lambda >= 0`` dualizes the currently
-    binding side: for an upper bound the relaxed per-codon objective is
-    ``scalar_delta(...) - lambda*amount(codon)``, for a lower bound it is
-    ``scalar_delta(...) + lambda*amount(codon)``. Each iteration solves the
-    relaxed problem exactly with :func:`~bt4.optimize.exact_dp.solve_exact`
-    (so all local constraints stay enforced), measures the delivered
-    ``amount``, records the candidate if it is budget-feasible, and takes a
-    projected subgradient step on ``lambda`` based on the budget violation. When
-    both bounds are given, whichever side the delivered candidate violates is the
-    side dualized next; a feasible candidate leaves the current side's multiplier
-    to decay.
+    bounds are given. When neither bound is set nothing is budgeted and the call
+    delegates unchanged to :func:`~bt4.optimize.exact_dp.solve_exact`. Otherwise
+    an amount-bucketed exact DP (see the module docstring) enforces the budget
+    *exactly* alongside every local constraint and the (possibly pairwise)
+    additive objective, so unlike a linear Lagrangian relaxation there is no
+    duality gap and no interior budget window can be skipped over.
 
     Args:
         residues: Amino-acid letters to back-translate, **including** a trailing
@@ -99,40 +105,43 @@ def solve_lagrangian(
             codon in ``synonymous_codons(residues[pos])``.
         scalar_delta: Incremental *true* objective of placing a codon, called as
             ``scalar_delta(prefix, codon, pos)`` and oriented so larger is
-            better. The returned ``objective_scalar`` is this term summed over the
-            delivered codons -- never the relaxed accumulator.
-        constraints: Hard local-feasibility rules, honored on every candidate
-            because each relaxed solve runs through the exact DP with them in
-            force. This is the advantage over CP-SAT, which drops them.
+            better. It must depend only on the last ``objective_context``
+            characters of ``prefix``. The returned ``objective_scalar`` is this
+            term accumulated over the delivered codons.
+        constraints: Hard local-feasibility rules, honored on every candidate via
+            their ``ok_suffix`` veto. This is the advantage over CP-SAT, which
+            drops them.
         amount: Per-codon contribution to the budgeted whole-sequence quantity,
             e.g. ``gc_count`` for a GC budget. Must depend only on the codon.
         budget_min: If given, require ``amount(seq) >= budget_min``.
         budget_max: If given, require ``amount(seq) <= budget_max``.
-        beam: Passed straight through to the exact DP as a speed knob. If a beam
-            actually truncates any relaxed solve the dual bound is unreliable and
-            the certificate degrades to ``BEAM_TRUNCATED`` (no gap).
+        beam: If ``None``, run the full exact bucketed DP (proven optimal). An int
+            caps the states kept per layer for speed; if it drops any state the
+            certificate reports ``BEAM_TRUNCATED``. A beam never turns a feasible
+            instance infeasible (see the module docstring).
         objective_context: Trailing DNA context ``scalar_delta`` depends on, in
-            characters (e.g. ``3`` for a pairwise objective). Passed through to
-            the DP; the dualized ``amount`` term adds no context of its own.
-        budget_name: Human-readable name of the dualized budget, used in the
-            certificate's ``relaxed_terms`` and in ``InfeasibleError``.
-        max_iters: Maximum number of subgradient iterations.
+            characters (e.g. ``3`` for a pairwise objective). The state's context
+            length is the max of this and every constraint's ``context_len``.
+        budget_name: Human-readable name of the budget, used in the certificate
+            and in ``InfeasibleError`` when the budget itself is infeasible.
+        max_iters: Retained for backward compatibility with the previous
+            subgradient implementation; the exact bucketed DP takes no iteration
+            budget and ignores it.
 
     Returns:
         A :class:`~bt4.optimize.exact_dp.SolveResult` whose ``dna`` translates
         back to ``residues`` and satisfies both the local constraints and the
-        budget, whose ``objective_scalar`` is the true objective recomputed from
-        the codons, and whose certificate is ``GAP_BOUNDED`` with the honest
-        computed gap (or ``BEAM_TRUNCATED`` if a beam truncated a relaxed solve,
-        or the DP's own certificate when no budget is relaxed).
+        budget, whose ``objective_scalar`` is the true objective accumulated over
+        the delivered codons, and whose certificate is ``PROVEN_OPTIMAL`` (exact
+        solve, budget in force) or ``BEAM_TRUNCATED`` (a beam dropped states).
 
     Raises:
-        InfeasibleError: If a relaxed solve finds the local constraints
-            infeasible (propagated from the DP), or if the budget itself admits
-            no assignment. With ``beam`` unset the budget infeasibility is proven
-            by an exact extremal solve; the error names ``budget_name``.
+        InfeasibleError: If the local constraints admit no assignment (named by
+            the offending constraints) or the budget admits no assignment (named
+            ``budget_name``). Both are genuinely proven -- never raised merely
+            because a beam truncated the search.
     """
-    # No budget => nothing to relax; the exact DP is already the honest answer.
+    # No budget => nothing to bucket; the exact DP is already the honest answer.
     if budget_min is None and budget_max is None:
         return solve_exact(
             residues,
@@ -141,205 +150,177 @@ def solve_lagrangian(
             beam=beam,
             objective_context=objective_context,
         )
+    return _solve_budgeted(
+        residues,
+        scalar_delta=scalar_delta,
+        constraints=constraints,
+        amount=amount,
+        budget_min=budget_min,
+        budget_max=budget_max,
+        beam=beam,
+        objective_context=objective_context,
+        budget_name=budget_name,
+    )
 
-    scale = max(1.0, float(len(residues)))
-    exact = beam is None
 
-    def amount_total(dna: str) -> int:
-        return sum(amount(dna[i : i + 3]) for i in range(0, len(dna), 3))
+def _solve_budgeted(
+    residues: Sequence[str],
+    *,
+    scalar_delta: ScalarDelta,
+    constraints: Sequence[Constraint],
+    amount: Callable[[str], int],
+    budget_min: int | None,
+    budget_max: int | None,
+    beam: int | None,
+    objective_context: int,
+    budget_name: str,
+) -> SolveResult:
+    """Amount-bucketed exact DP enforcing one global count budget exactly.
 
-    def true_objective(dna: str) -> float:
-        total = 0.0
-        prefix = ""
-        for pos, i in enumerate(range(0, len(dna), 3)):
-            codon = dna[i : i + 3]
-            total += scalar_delta(prefix, codon, pos)
-            prefix += codon
-        return total
+    See the module docstring for the state, the soundness of the amount prune,
+    and the certificate semantics. This is the honest core the public
+    :func:`solve_lagrangian` dispatches to whenever a budget is present.
 
-    def is_feasible(amt: int) -> bool:
-        if budget_min is not None and amt < budget_min:
+    Args:
+        residues: Amino-acid letters (with a trailing stop) to back-translate.
+        scalar_delta: The true incremental objective (larger is better).
+        constraints: Hard local-feasibility rules honored via ``ok_suffix``.
+        amount: Per-codon contribution to the budgeted quantity.
+        budget_min: Lower bound on the total amount, or ``None``.
+        budget_max: Upper bound on the total amount, or ``None``.
+        beam: Per-layer state cap (a speed knob), or ``None`` for exact.
+        objective_context: Trailing context ``scalar_delta`` depends on.
+        budget_name: Human-readable budget name for the certificate/error.
+
+    Returns:
+        The budget-feasible :class:`~bt4.optimize.exact_dp.SolveResult`.
+
+    Raises:
+        InfeasibleError: On genuinely proven local or budget infeasibility.
+    """
+    context_len = max([objective_context, *(c.context_len() for c in constraints)])
+    n = len(residues)
+
+    # Per-residue codon choices and their min/max amount, plus suffix sums giving
+    # the min/max amount still attainable over residues [i:]. These drive the
+    # sound reachability prune.
+    codon_choices = [synonymous_codons(r) for r in residues]
+    per_min: list[int] = []
+    per_max: list[int] = []
+    for cods in codon_choices:
+        amts = [amount(c) for c in cods]
+        per_min.append(min(amts))
+        per_max.append(max(amts))
+    remaining_min = [0] * (n + 1)
+    remaining_max = [0] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        remaining_min[i] = remaining_min[i + 1] + per_min[i]
+        remaining_max[i] = remaining_max[i + 1] + per_max[i]
+
+    def can_reach(amt: int, next_pos: int) -> bool:
+        """Whether ``amt`` can still land in the budget over residues [next_pos:].
+
+        Sound: returns ``False`` only when *no* assignment of the remaining
+        residues can bring the total into the budget window, so pruning on it
+        never drops a state that could still become budget-feasible.
+        """
+        lo = amt + remaining_min[next_pos]
+        hi = amt + remaining_max[next_pos]
+        if budget_max is not None and lo > budget_max:
             return False
-        return not (budget_max is not None and amt > budget_max)
+        return not (budget_min is not None and hi < budget_min)
 
-    # The best budget-feasible candidate seen: (true objective, DNA). A single
-    # optional tuple keeps the two coupled fields narrowable together.
-    best: tuple[float, str] | None = None
+    layer: _Layer = {("", 0): (0.0, "")}
+    truncated = False
 
-    def consider(dna: str) -> None:
-        nonlocal best
-        amt = amount_total(dna)
-        if not is_feasible(amt):
-            return
-        value = true_objective(dna)
-        # Prefer higher true objective; break ties toward the lexicographically
-        # smaller DNA so the result is deterministic (invariant #7).
-        if best is None or value > best[0] or (value == best[0] and dna < best[1]):
-            best = (value, dna)
+    for pos in range(n):
+        cods = codon_choices[pos]
+        generated: _Layer = {}
+        # Sorted iteration keeps the build order deterministic; the merge rule is
+        # order-independent regardless.
+        for (_ctx, amt), (score, dna) in sorted(layer.items()):
+            for codon in cods:
+                if not all(c.ok_suffix(dna, codon) for c in constraints):
+                    continue
+                new_dna = dna + codon
+                new_amt = amt + amount(codon)
+                new_score = score + scalar_delta(dna, codon, pos)
+                new_ctx = new_dna[-context_len:] if context_len > 0 else ""
+                key = (new_ctx, new_amt)
+                cur = generated.get(key)
+                if cur is None or _wins(new_score, new_dna, cur):
+                    generated[key] = (new_score, new_dna)
 
-    beam_truncated = False
+        # Empty under ok_suffix => genuine local infeasibility (always exact).
+        if not generated:
+            raise InfeasibleError([c.name for c in constraints])
 
-    # Extremal feasibility probes: the min-amount (and max-amount) locally-feasible
-    # solutions. When the DP is exact these *prove* budget infeasibility, and
-    # whenever an extreme happens to be budget-feasible it seeds a guaranteed
-    # incumbent so a subgradient that never lands feasible cannot force a false
-    # InfeasibleError.
-    if budget_max is not None:
-        low = solve_exact(
-            residues,
-            scalar_delta=_neg_amount(amount),
-            constraints=constraints,
-            beam=beam,
-            objective_context=objective_context,
-        )
-        beam_truncated = beam_truncated or _truncated(low.certificate)
-        if exact and amount_total(low.dna) > budget_max:
+        # Sound amount prune: drop states that provably cannot reach the budget.
+        next_pos = pos + 1
+        pruned: _Layer = {
+            key: value
+            for key, value in generated.items()
+            if can_reach(key[1], next_pos)
+        }
+        # Empty after a sound prune => genuine budget infeasibility (sound even
+        # under a beam, because the prune never drops a reachable-feasible state).
+        if not pruned:
             raise InfeasibleError([budget_name])
-        consider(low.dna)
 
-    if budget_min is not None:
-        high = solve_exact(
-            residues,
-            scalar_delta=_pos_amount(amount),
-            constraints=constraints,
-            beam=beam,
-            objective_context=objective_context,
-        )
-        beam_truncated = beam_truncated or _truncated(high.certificate)
-        if exact and amount_total(high.dna) < budget_min:
-            raise InfeasibleError([budget_name])
-        consider(high.dna)
+        # Optional speed knob: keep only the top-``beam`` states per layer. The
+        # sound prune above already guarantees every kept state can still reach
+        # the window, so this only trades optimality, never feasibility.
+        if beam is not None and len(pruned) > beam:
+            kept = sorted(pruned.items(), key=lambda kv: (-kv[1][0], kv[1][1]))[:beam]
+            pruned = dict(kept)
+            truncated = True
 
-    lam = 0.0
-    side = "max" if budget_max is not None else "min"
-    best_dual: float | None = None
+        layer = pruned
 
-    for k in range(max_iters):
-        relaxed = _relaxed_delta(scalar_delta, amount, side, lam)
-        result = solve_exact(
-            residues,
-            scalar_delta=relaxed,
-            constraints=constraints,
-            beam=beam,
-            objective_context=objective_context,
-        )
-        proven = result.certificate.status is OptimalityStatus.PROVEN_OPTIMAL
-        beam_truncated = beam_truncated or not proven
-        amt = amount_total(result.dna)
+    # At the final layer every surviving state's amount lies in the budget window
+    # (``can_reach`` with no residues left forces ``budget_min <= amt <=
+    # budget_max``), so the best-objective survivor is the answer. Ties break
+    # toward the lexicographically smaller DNA (invariant #7).
+    best_score, best_dna = min(layer.values(), key=lambda sv: (-sv[0], sv[1]))
 
-        # A valid upper bound on the true constrained optimum -- but only when the
-        # relaxed solve was exact (a truncated solve may undershoot the relaxed
-        # max and hence is not a bound).
-        if proven:
-            if side == "max":
-                assert budget_max is not None
-                dual = result.objective_scalar + lam * float(budget_max)
-            else:
-                assert budget_min is not None
-                dual = result.objective_scalar - lam * float(budget_min)
-            if best_dual is None or dual < best_dual:
-                best_dual = dual
-
-        consider(result.dna)
-
-        # Dualize whichever side the delivered candidate violates; a feasible
-        # candidate keeps the current side so its multiplier decays.
-        over = budget_max is not None and amt > budget_max
-        under = budget_min is not None and amt < budget_min
-        if over:
-            nxt = "max"
-        elif under:
-            nxt = "min"
-        else:
-            nxt = side
-        if nxt == "max":
-            assert budget_max is not None
-            subgrad = amt - budget_max
-        else:
-            assert budget_min is not None
-            subgrad = budget_min - amt
-        step = _INITIAL_STEP / (k + 1)
-        lam = max(0.0, lam + step * (subgrad / scale))
-        side = nxt
-
-    if best is None:
-        raise InfeasibleError([budget_name])
-    best_true, best_dna = best
-
-    if beam_truncated:
+    if truncated:
         certificate = OptimalityCertificate(
             status=OptimalityStatus.BEAM_TRUNCATED,
             solver="lagrangian",
-            relaxed_terms=(budget_name,),
             detail=(
-                f"dualized budget {budget_name!r} over {len(residues)} residues; "
-                f"a beam (width {beam}) truncated a relaxed solve, so no dual "
-                "bound is claimed"
+                f"amount-bucketed budget DP over {n} residues under budget "
+                f"{budget_name!r}; a beam (width {beam}) truncated a layer, so "
+                "optimality is not proven (the budget is still enforced exactly)"
             ),
         )
     else:
-        if best_dual is None:
-            gap = 1.0
-        else:
-            gap = (best_dual - best_true) / max(abs(best_dual), 1.0)
-            gap = min(1.0, max(0.0, gap))
-        certificate = OptimalityCertificate(
-            status=OptimalityStatus.GAP_BOUNDED,
-            solver="lagrangian",
-            gap=gap,
-            relaxed_terms=(budget_name,),
+        certificate = OptimalityCertificate.proven(
+            "lagrangian",
             detail=(
-                f"dualized budget {budget_name!r} over {len(residues)} residues; "
-                f"subgradient dual bound gives relative gap {gap:.3g}"
+                f"amount-bucketed budget DP over {n} residues: proven optimal "
+                f"subject to the {budget_name!r} budget and all local constraints "
+                f"(context K={context_len})"
             ),
         )
 
-    return SolveResult(dna=best_dna, objective_scalar=best_true, certificate=certificate)
+    return SolveResult(dna=best_dna, objective_scalar=best_score, certificate=certificate)
 
 
-def _relaxed_delta(
-    scalar_delta: ScalarDelta, amount: Callable[[str], int], side: str, lam: float
-) -> ScalarDelta:
-    """Build the relaxed per-codon objective for one dualized budget side.
+def _wins(new_score: float, new_dna: str, current: tuple[float, str]) -> bool:
+    """Return True iff ``(new_score, new_dna)`` should replace ``current``.
+
+    A candidate wins on a strictly higher scalar, or on an equal scalar with a
+    lexicographically smaller DNA (deterministic tie-break, invariant #7).
 
     Args:
-        scalar_delta: The true incremental objective (larger is better).
-        amount: Per-codon contribution to the budgeted quantity.
-        side: ``"max"`` to dualize an upper bound (subtract ``lambda*amount``),
-            ``"min"`` to dualize a lower bound (add ``lambda*amount``).
-        lam: The current non-negative multiplier.
+        new_score: The candidate's accumulated objective.
+        new_dna: The candidate's coding-sequence prefix.
+        current: The incumbent ``(score, dna)`` for the same state key.
 
     Returns:
-        A ``scalar_delta``-shaped callable folding the dualized budget into the
-        per-codon score. The ``amount`` term reads only the codon, so it adds no
-        trailing context to the trellis state.
+        ``True`` if the candidate should replace the incumbent.
     """
-    sign = -1.0 if side == "max" else 1.0
-
-    def relaxed(prefix: str, codon: str, pos: int) -> float:
-        return scalar_delta(prefix, codon, pos) + sign * lam * float(amount(codon))
-
-    return relaxed
-
-
-def _neg_amount(amount: Callable[[str], int]) -> ScalarDelta:
-    """Return a ``scalar_delta`` that maximizes ``-amount`` (minimizes amount)."""
-
-    def delta(prefix: str, codon: str, pos: int) -> float:
-        return -float(amount(codon))
-
-    return delta
-
-
-def _pos_amount(amount: Callable[[str], int]) -> ScalarDelta:
-    """Return a ``scalar_delta`` that maximizes ``+amount`` (maximizes amount)."""
-
-    def delta(prefix: str, codon: str, pos: int) -> float:
-        return float(amount(codon))
-
-    return delta
-
-
-def _truncated(certificate: OptimalityCertificate) -> bool:
-    """Return ``True`` iff a beam actually dropped states in the given solve."""
-    return certificate.status is OptimalityStatus.BEAM_TRUNCATED
+    cur_score, cur_dna = current
+    if new_score != cur_score:
+        return new_score > cur_score
+    return new_dna < cur_dna
