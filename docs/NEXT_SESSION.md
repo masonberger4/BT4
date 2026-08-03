@@ -62,9 +62,26 @@ and green on `main`:
    O(n²) native call on a per-move hot path is a pessimization in the
    no-extension case — measure before wiring, and keep the pure-Python path
    fast.)*
-4. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
+4. **Refinement reach: block/segment moves + parallel tempering** (Phase 3,
+   self-contained, no data) — the SA engine (`optimize/anneal_refine.py`) only
+   proposes **single-codon** moves and its global gate strictly forbids any
+   increase in the hard-violation count, so it can leave a dispersed
+   **max-repeat / uORF** in place when clearing it needs a *coordinated
+   multi-codon* change or a temporary count increase (it can already traverse
+   count-`==` plateaus, so pure lateral multi-position effects are reachable). Add
+   **block/segment moves** (propose synonymous swaps at several positions at once)
+   and a **parallel-tempering** schedule (hot replicas may accept uphill moves and
+   swap into the cold chain) so refinement can cross those barriers **without
+   weakening invariant #5 on the delivered result**. Keep it honest: a repeat
+   pinned to synonymously-immovable bases (Met `ATG` / Trp `TGG`, or a
+   base-locked degenerate position) is a genuine feasibility floor — still report
+   it as a residual, don't pretend a block move can remove it. (An alternative
+   worth weighing: encode max-repeat as a global constraint in an ILP/CP-SAT
+   solve for an exact answer — currently it lives only in the refinement layer.)
+   See CLAUDE.md §7 and §9 Phase 3.
+5. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
    Linux; polish Studio theming/accessibility; optional external-validation report.
-5. **Phase 5 (continued)** — library/degenerate-design mode has **landed**;
+6. **Phase 5 (continued)** — library/degenerate-design mode has **landed**;
    remaining Phase 5 is **more organisms with authoritative provenance**,
    restriction-enzyme catalog growth, and tissue/condition-specific tables. A
    natural follow-up: add a library-mode control to BT4 Studio (kept out of this
@@ -96,11 +113,12 @@ and green on `main`:
 
 ## Suggested first move
 
-The self-contained, no-external-data option is the **full Rust trellis port**
-(item 3) — it directly serves the runtime goal and needs no GPU or data. The
-splice model (item 1) and expression head (item 2) are the highest-value items
-but both need **real held-out data + GPU**; confirm scope and data access with
-the maintainer before starting either, and never ship an uncalibrated model as
-if it were validated (§10.6). Packaged installers (item 4) can be advanced in
-the sandbox up to the point where signing/tag-pushing/release-cutting is needed
-(those are human-only here, HTTP 403).
+The self-contained, no-external-data options are the **full Rust trellis port**
+(item 3) and the **block/parallel-tempering refinement moves** (item 4) — both
+directly serve engine goals and need no GPU or data. The splice model (item 1)
+and expression head (item 2) are the highest-value items but both need **real
+held-out data + GPU**; confirm scope and data access with the maintainer before
+starting either, and never ship an uncalibrated model as if it were validated
+(§10.6). Packaged installers (item 5) can be advanced in the sandbox up to the
+point where signing/tag-pushing/release-cutting is needed (those are human-only
+here, HTTP 403).
