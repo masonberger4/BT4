@@ -430,12 +430,14 @@ is a requirement, not a nice-to-have.
   pure Python with the Rust `bt4_native` primitives (`gc_count`,
   `max_homopolymer_run`, `reverse_complement`, `max_gc_run`, and `longest_repeat`)
   available and CI-built — each with a byte-identical pure-Python fallback and an
-  equivalence property test, and the last two wired into the hot constraint paths
-  (`max_gc_run` backs the GC-run `ok_suffix` veto; `longest_repeat` backs a
-  fast-path short-circuit in the max-repeat whole-sequence `validate` that is
-  re-run per SA refinement move). This is honest incremental native acceleration;
-  porting the **full trellis inner loop** to Rust still remains. *This alone
-  already beats BT3* (honest optimality, correct incremental GC).
+  equivalence property test. `max_gc_run` backs the GC-run `ok_suffix` veto on its
+  bounded window; `longest_repeat` (a reverse-complement-aware longest-repeat
+  query) is cross-checked against `MaxRepeatConstraint` but **deliberately kept
+  off** the per-SA-move `validate` hot path, because whole-sequence O(n²)
+  longest-repeat is slower there than the constraint's existing O(n·k) k-mer scan
+  when the native extension is absent (§7). This is honest incremental native
+  acceleration; porting the **full trellis inner loop** to Rust still remains.
+  *This alone already beats BT3* (honest optimality, correct incremental GC).
 - **Phase 2 — Multi-objective, richer biology & first app.** 🔶 **In progress.**
   Delivered: the **multi-objective Pareto-frontier API** (a unit-simplex
   scalarization sweep over *every* active objective axis - CAI and GC always,

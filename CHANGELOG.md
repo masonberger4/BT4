@@ -42,13 +42,16 @@ its first tagged release.
   still remains (CLAUDE.md §7, §9 Phase 1).
 
 ### Changed
-- **The GC-run and max-repeat constraints now call the native primitives on their
-  hot paths**, with no change to observable behavior: `GcRunConstraint.ok_suffix`
-  uses `bt4._accel.max_gc_run`, and `MaxRepeatConstraint.validate` gains a
-  `longest_repeat(dna) <= max_length` fast-path short-circuit that skips the
-  O(n·k) k-mer position scan when there are no violations (the scan is re-run per
-  SA refinement move). Every existing `ok_suffix ⇔ validate` and constraint test
-  passes unchanged.
+- **`GcRunConstraint.ok_suffix` now calls the (optionally Rust-accelerated)
+  `bt4._accel.max_gc_run`** on its bounded trailing window, with no change to
+  observable behavior (the pure-Python fallback is the same scan as before). The
+  `longest_repeat` primitive is added and cross-checked against
+  `MaxRepeatConstraint`, but is **deliberately not** placed on the per-SA-move
+  `MaxRepeatConstraint.validate` hot path: the whole-sequence longest-repeat is
+  O(n²), which is *slower* than the constraint's existing O(n·k) k-mer scan when
+  the native extension is absent — so wiring it there would regress the common
+  pure-Python path (CLAUDE.md §7, "everything incremental"). Every existing
+  `ok_suffix ⇔ validate` and constraint test passes unchanged.
 
 ## [0.3.1] - 2026-08-01
 

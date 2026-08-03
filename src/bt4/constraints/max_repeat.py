@@ -54,7 +54,7 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from bt4._accel import longest_repeat, reverse_complement
+from bt4._accel import reverse_complement
 from bt4.domain.result import Severity, Violation
 from bt4.domain.scope import Scope
 
@@ -170,14 +170,6 @@ class MaxRepeatConstraint:
         k = self.max_length + 1
         n = len(seq)
         if n < k:
-            return
-        # Fast path (§7, invariant #3): ``longest_repeat(seq) > max_length`` iff a
-        # hard violation exists, so when the longest RC-aware repeat is within the
-        # limit there is nothing to report -- skip the O(n*k) k-mer position scan
-        # entirely. This is the hot path re-run per SA refinement move; the
-        # (optionally Rust-accelerated) ``longest_repeat`` shares this constraint's
-        # exact direct/inverted/palindrome notion (cross-checked in the tests).
-        if longest_repeat(seq) <= self.max_length:
             return
         positions: dict[str, list[int]] = {}
         for i in range(n - k + 1):
