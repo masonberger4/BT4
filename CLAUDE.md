@@ -379,7 +379,10 @@ is a requirement, not a nice-to-have.
 - **Performance:** everything **incremental** — each refinement move is
   O(context), not O(L). *(BT3's SA recomputed full CAI + full validation per
   move — quadratic.)* Length-scaled iteration counts, block/segment moves,
-  adaptive / parallel-tempering schedules. **Runtime and peak-memory scaling are
+  adaptive / parallel-tempering schedules (block moves and tempering also widen
+  the refinement's *reach* — escaping single-codon barriers such as coordinated
+  multi-codon repeat removal, §9 Phase 3 — not just throughput). **Runtime and
+  peak-memory scaling are
   regression-tested in CI** with an asserted curve and a wall-clock ceiling —
   BT3 had no performance test despite runtime being BT2's original weakness.
 - **Testing:** Hypothesis property tests for every §5 invariant; **golden tests**
@@ -521,7 +524,10 @@ is a requirement, not a nice-to-have.
   engine (extended with a `global_constraints` gate that re-counts whole-sequence
   hard violations per move and never lets the count rise, invariant #5), with any
   residual repeats reported honestly and the certificate degraded to heuristic
-  only when refinement actually runs; and named, documented **forbidden-sequence
+  only when refinement actually runs (single-codon SA cannot always clear a
+  repeat — see the Phase 3 refinement note on coordinated multi-codon moves and
+  immovable-codon feasibility floors; such residuals are disclosed, never
+  hidden); and named, documented **forbidden-sequence
   presets** (`constraints/forbidden.py`, e.g. poly-A signals, TATA box, telomere
   repeat, BT3 synthesis artifacts). All three are wired through `OptimizeConfig`,
   the `bt4` CLI (`--max-gc-run`, `--max-repeat-length`, `--forbid-preset`, `bt4
@@ -539,10 +545,28 @@ is a requirement, not a nice-to-have.
   count** (invariant #5, brute-forced over 56k swaps), a deterministic seeded
   trajectory (#7), and an honest **HEURISTIC** certificate. A **`--refine`** path
   wires the folding ΔG into an SA pass over the exact-DP seed, loudly flagging
-  `folding_calibrated=False` when the baseline is used (per §6/§10.6). Still
+  `folding_calibrated=False` when the baseline is used (per §6/§10.6).
+  **Known limitation (honestly disclosed, not hidden):** because moves are
+  *single-codon* and the global-constraint gate strictly forbids *any* increase
+  in the whole-sequence hard-violation count, the engine cannot cross a barrier
+  that requires a temporary count increase or a **coordinated multi-codon**
+  change — so it can leave a dispersed max-repeat / uORF in place even when some
+  simultaneous multi-position swap would clear it. (It *can* still traverse
+  count-`==` plateaus, since the gate rejects only strict increases, so some
+  multi-position effects are reachable as a sequence of lateral moves.) A repeat
+  pinned to synonymously-**immovable** bases — e.g. Met `ATG` / Trp `TGG`, or a
+  degenerate position all synonymous codons share — is unremovable by *any*
+  synonymous scheme and is a genuine feasibility floor, not an engine defect.
+  Every such case is reported as a disclosed residual (`max_repeat_residual`,
+  enforcement `"partial"`), never a silent "clean" claim. The **block/segment
+  moves** and **parallel-tempering** schedules below are the planned remedy:
+  block moves propose coordinated multi-position swaps; tempering lets hot
+  replicas accept uphill moves and swap them into the cold chain, crossing the
+  barrier without weakening invariant #5 on the delivered result. Still
   ahead: the SpliceAI/Pangolin-class model trained on real GENCODE (Δsplicing
   objective, held-out-chromosome gate, hash-pinned artifact), parallel-tempering
-  / block moves, and the opt-in **ASSP** cross-check (§6) with offline fixtures.
+  / block moves (to escape the single-codon barrier above), and the opt-in
+  **ASSP** cross-check (§6) with offline fixtures.
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
   each recomputed from the sequence, never fed to the solver) **and are plotted
