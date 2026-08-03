@@ -4,7 +4,8 @@ Guidance for Claude Code (and humans) building **BT4**, the from-scratch
 successor to BT3. This file is the constitution of the new repository: read it
 before writing code, and keep it current as the architecture evolves.
 
-> Status: **Phase 0 complete; Phase 1 done and early Phase 2 landed.** The pure
+> Status: **Phases 0-1 complete; Phase 2 substantially done; Phase 3 groundwork
+> landed.** The pure
 > `domain` layer, provenance manifest, packaging, layering contract, and CI are
 > in place, and on top of them an **honest exact-DP core** now ships: a codon
 > trellis with true per-constraint context and a real optimality certificate,
@@ -12,11 +13,17 @@ before writing code, and keep it current as the architecture evolves.
 > constraints (with their `delta==score` and `ok_suffix⇔validate` property
 > tests), a **CAI/GC Pareto frontier**, the stable `bt4.api`, a `bt4` CLI, and
 > the first cut of **BT4 Studio** (the PySide6 desktop app). Phase 2 has since
-> added codon-pair/ramp/CpG/%MinMax objectives, tandem/inverted-repeat
-> constraints, and **two budget backends** — OR-Tools CP-SAT and an honest
-> **Lagrangian relaxation** that keeps local constraints under a global GC budget.
-> Still ahead: tAI, and the
-> validated splice/folding/expression models — see §9. This document was written
+> added codon-pair/ramp/CpG/%MinMax objectives, tandem/inverted-repeat plus
+> **max-GC-run** and dispersed **max-repeat-length** constraints, named
+> **forbidden-sequence presets**, and **two budget backends** — OR-Tools CP-SAT
+> and an honest **Lagrangian relaxation** that keeps local constraints under a
+> global GC budget. **tAI has since landed on real GtRNAdb tRNA data for eight
+> organisms**, and Phase 3 groundwork is in: the `FoldingModel` (ViennaRNA +
+> labeled baseline) and `SplicePredictor` (labeled PWM baseline) contracts, the
+> incremental SA refinement engine (with a global-constraint gate), and per-site
+> risk tracks plotted in BT4 Studio. Still ahead: the **validated splice model**
+> (SpliceAI/Pangolin-class), the **learned expression head**, the **Rust trellis
+> port**, and packaged installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
@@ -460,9 +467,14 @@ is a requirement, not a nice-to-have.
   tandem-repeat, and %MinMax alongside GC/homopolymer/CAI (still naive-vs-BT4, no
   fabricated competitor numbers); and BT4's first **performance/scaling
   regression test** (`tests/test_performance.py`, §7) asserting sub-quadratic
-  exact-DP runtime under a wall-clock ceiling. Remaining: tAI (needs authentic
-  tRNA data); uORF pairing and CpG/whole-sequence *count* budgets (both non-local
-  / not per-codon-decomposable, deferred). The **published comparison vs
+  exact-DP runtime under a wall-clock ceiling. **`CpbTerm` (codon-pair bias) is
+  now wired** (`cpb_weight` + a user-supplied `cpb_reference_cds`; the pipeline
+  builds the `CodonPairTable` at run time, PAIRWISE so exact in the trellis and a
+  frontier axis, its reference-CDS content hash in the manifest) - honestly
+  refusing when no reference CDS is given, since no default codon-pair table is
+  bundled (§8). Remaining (Phase 2): only the CpG/UpA whole-sequence *count*
+  budgets (non-local / not per-codon-decomposable, deferred). *(tAI and uORF
+  pairing have also landed - see their bullets.)* The **published comparison vs
   GeneOptimizer/IDT/Twist** has landed as `scripts/compare_tools.py` over a real,
   cited, CC BY 4.0 panel (Ranaghan et al. 2021, KRas4B) - every metric recomputed
   by BT4's own functions, BT4 never claimed "better", each tool's output
@@ -510,14 +522,34 @@ is a requirement, not a nice-to-have.
   / block moves, and the opt-in **ASSP** cross-check (§6) with offline fixtures.
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
-  each recomputed from the sequence, never fed to the solver) - wiring them into
-  the desktop app as plotted tracks is the remaining UI step. The
+  each recomputed from the sequence, never fed to the solver) **and are plotted
+  in BT4 Studio** as per-site tracks. The
   **`SplicePredictor` contract**
   (`biomodels/splice/`) has now landed with an honestly-labeled uncalibrated
   **consensus/PWM baseline** (`calibrated=False`, top-k/log-odds Δsplicing pooling
   -- never noisy-OR, §10.14) and a `default()` that never crashes; it is the
   contract the trained model will slot behind, and until that model passes its
-  held-out gate the baseline is never presented as calibrated.
+  held-out gate the baseline is never presented as calibrated. The **uORF-pairing
+  constraint** (`constraints/uorf.py`, `avoid_uorf`/`uorf_region_nt`) has now
+  landed as the genuinely non-local half of internal-ATG handling: an
+  out-of-frame internal ATG paired with a downstream in-its-frame stop is a short
+  uORF. It is `Scope.GLOBAL` (ATG and stop arbitrarily far apart), so it is
+  refinement-enforced through the same `anneal_refine` global-constraint gate as
+  max-repeat (drives the count down, never raises it, invariant #5), **never
+  merged into the exact DP** (§10.1), with residual uORFs reported honestly - a
+  purely *structural* rule complementing the LOCAL strong-Kozak
+  `InternalStartConstraint`, making **no** calibrated-expression claim. Also
+  landed: the **`ExpressionPredictor` contract scaffold** (`biomodels/expression/`)
+  for the Phase 4 learned head. Expression is non-local/learned, so it is not an
+  `ObjectiveTerm` and never runs in the optimizer loop; instead a validated head
+  will **rerank the frontier** as a post-solve pass
+  (`pipeline/rerank.py::rerank_by_expression`, exposed via `bt4.api`). `default()`
+  returns a **neutral placeholder** (`NullExpressionModel`, `calibrated=False`,
+  every score `0.0`) because expression has no structural anchor the way
+  folding/splice do - a hand-weighted CAI+GC+ΔG composite dressed as "expression"
+  would be the §10.5/§10.6 trap. The rerank hook **only re-picks the delivered
+  point when the predictor is calibrated**; with the placeholder it is a pure
+  reporting no-op (an uncalibrated score never steers delivery).
 - **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
   `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
   gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a

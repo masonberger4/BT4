@@ -29,12 +29,19 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     motifs = tuple(m.strip().upper() for m in args.forbid) if args.forbid else ()
     enzymes = tuple(e.strip() for e in args.enzyme) if args.enzyme else ()
     presets = tuple(p.strip() for p in args.forbid_preset) if args.forbid_preset else ()
+    cpb_cds: tuple[str, ...] = ()
+    if args.cpb_cds:
+        # Read the reference CDS FASTA now (CLI layer); the engine builds the
+        # codon-pair table from it. No default table is bundled (§8 honesty).
+        cpb_cds = tuple(seq for _header, seq in api.read_fasta(args.cpb_cds))
     return api.OptimizeConfig(
         organism=args.organism,
         gc_target=args.gc_target,
         cai_weight=args.cai_weight,
         tai_weight=args.tai_weight,
         gc_weight=args.gc_weight,
+        cpb_weight=args.cpb_weight,
+        cpb_reference_cds=cpb_cds,
         max_homopolymer=None if args.max_homopolymer <= 0 else args.max_homopolymer,
         max_gc_run=None if args.max_gc_run <= 0 else args.max_gc_run,
         max_repeat_length=None if args.max_repeat_length <= 0 else args.max_repeat_length,
@@ -52,6 +59,8 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         inverted_stem=args.inverted_stem,
         inverted_loop=args.inverted_loop,
         avoid_internal_start=args.avoid_internal_start,
+        avoid_uorf=args.avoid_uorf,
+        uorf_region_nt=args.uorf_region_nt,
         refine=args.refine,
         refine_iterations=args.refine_iterations,
         folding_weight=args.folding_weight,
@@ -69,6 +78,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tai-weight", type=float, default=0.0, dest="tai_weight",
                         help="tRNA-adaptation-index weight (0 = off; human tRNA data only)")
     parser.add_argument("--gc-weight", type=float, default=0.0, dest="gc_weight")
+    parser.add_argument("--cpb-weight", type=float, default=0.0, dest="cpb_weight",
+                        help="codon-pair-bias weight (0 = off; needs --cpb-cds). "
+                        "Negative deoptimizes pairs (attenuated-vaccine design)")
+    parser.add_argument("--cpb-cds", default=None, dest="cpb_cds", metavar="FASTA",
+                        help="reference CDS FASTA to build the codon-pair table from "
+                        "(required when --cpb-weight is set; no default is bundled)")
     parser.add_argument("--max-homopolymer", type=int, default=6, dest="max_homopolymer",
                         help="longest allowed single-base run (<=0 = off)")
     parser.add_argument("--max-gc-run", type=int, default=0, dest="max_gc_run",
@@ -106,6 +121,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--avoid-internal-start", action="store_true",
                         dest="avoid_internal_start",
                         help="forbid internal ATG in a strong Kozak context")
+    parser.add_argument("--avoid-uorf", action="store_true", dest="avoid_uorf",
+                        help="suppress out-of-frame internal ATG..in-frame-stop uORFs "
+                        "(non-local, refinement-enforced -> HEURISTIC; structural, "
+                        "not a calibrated expression claim)")
+    parser.add_argument("--uorf-region-nt", type=int, default=100, dest="uorf_region_nt",
+                        help="5' scan window (nt) for uORF-opening ATGs (default 100)")
     parser.add_argument("--refine", action="store_true",
                         help="run a 5'-folding-aware SA refinement pass (HEURISTIC result)")
     parser.add_argument("--refine-iterations", type=int, default=2000, dest="refine_iterations",
@@ -149,6 +170,15 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
         if enforced == "partial":
             print("  NOTE: refinement could not remove every long repeat (the protein may "
                   "force some); residual repeats are reported in the violations above.")
+    if "uorf_enforced" in result.audit:
+        enforced = result.audit["uorf_enforced"]
+        region = result.audit.get("uorf_region_nt")
+        residual = result.audit.get("uorf_residual")
+        print(f"uORF       {enforced} (5' window {region} nt, residual {residual})")
+        if enforced == "partial":
+            print("  NOTE: refinement could not remove every out-of-frame uORF (the protein "
+                  "may force some); residual uORFs are reported in the violations above. "
+                  "This is a structural flag, not a calibrated expression prediction.")
     if "folding_model" in result.audit:
         model = result.audit.get("folding_model")
         dg = float(result.audit.get("folding_dg", 0.0))  # type: ignore[arg-type]

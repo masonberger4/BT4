@@ -217,6 +217,26 @@ class StudioWindow(QtWidgets.QMainWindow):
             "rare codons. 'off' adds no %MinMax objective.",
         )
 
+        self.cpb_check = QtWidgets.QCheckBox("codon-pair bias (needs reference CDS)")
+        self.cpb_check.setAccessibleName("Codon-pair bias objective")
+        self._add_row(
+            form, "Codon-pair", self.cpb_check,
+            "Add a codon-pair-bias (CPS) objective axis, preferring naturally "
+            "over-represented adjacent codon pairs. There is no bundled default "
+            "table (codon-pair scores are organism-specific), so you must point "
+            "'Codon-pair CDS' at a reference coding-sequence FASTA.",
+        )
+
+        self.cpb_cds_edit = QtWidgets.QLineEdit()
+        self.cpb_cds_edit.setPlaceholderText("path to a reference CDS FASTA")
+        self.cpb_cds_edit.setAccessibleName("Codon-pair reference CDS FASTA path")
+        self._add_row(
+            form, "Codon-pair CDS", self.cpb_cds_edit,
+            "Path to a FASTA of reference coding sequences the codon-pair table is "
+            "built from (required when 'codon-pair bias' is ticked). The table's "
+            "content hash enters the run manifest.",
+        )
+
         self.tandem_spin = QtWidgets.QSpinBox()
         self.tandem_spin.setRange(0, 12)
         self.tandem_spin.setValue(0)
@@ -245,6 +265,29 @@ class StudioWindow(QtWidgets.QMainWindow):
             form, "Internal ATG", self.internal_start_check,
             "Forbid internal ATG codons sitting in a strong Kozak context "
             "(purine at -3, G at +4), which could drive spurious re-initiation.",
+        )
+
+        self.uorf_check = QtWidgets.QCheckBox("avoid out-of-frame uORFs")
+        self.uorf_check.setAccessibleName("Avoid out-of-frame uORFs")
+        self._add_row(
+            form, "uORFs", self.uorf_check,
+            "Suppress out-of-frame internal ATGs that pair with a downstream "
+            "in-frame stop -- short uORFs that divert ribosomes from the main ORF "
+            "and lower yield. Non-local, so enforced by a refinement pass (result "
+            "labeled heuristic; any it cannot remove are reported). A structural "
+            "flag, NOT a calibrated expression prediction.",
+        )
+
+        self.uorf_region_spin = QtWidgets.QSpinBox()
+        self.uorf_region_spin.setRange(3, 100000)
+        self.uorf_region_spin.setValue(100)
+        self.uorf_region_spin.setAccessibleName("uORF 5' scan window (nt)")
+        self._add_row(
+            form, "uORF window", self.uorf_region_spin,
+            "5'-proximal window (nucleotides) scanned for uORF-opening ATGs when "
+            "'avoid out-of-frame uORFs' is on. uORFs matter most near the start "
+            "(leaky scanning); a wider window is stricter but harder to satisfy. "
+            "Default 100 (~first 33 codons).",
         )
 
         self.tai_check = QtWidgets.QCheckBox("add tAI axis (real tRNA)")
@@ -462,9 +505,13 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.enzymes_edit,
             self.cpg_combo,
             self.minmax_combo,
+            self.cpb_check,
+            self.cpb_cds_edit,
             self.tandem_spin,
             self.inverted_spin,
             self.internal_start_check,
+            self.uorf_check,
+            self.uorf_region_spin,
             self.tai_check,
             self.steps_spin,
             self.beam_spin,
@@ -594,6 +641,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         minmax = self.minmax_combo.currentText()
         minmax_weight = 0.0 if minmax == "off" else 1.0
         minmax_direction = "max" if minmax == "off" else minmax
+        cpb_weight, cpb_cds = self._read_cpb()
         tandem = self.tandem_spin.value()
         inverted = self.inverted_spin.value()
         config = api.OptimizeConfig(
@@ -608,16 +656,45 @@ class StudioWindow(QtWidgets.QMainWindow):
             restriction_enzymes=enzymes,
             cpg_weight=cpg_weight,
             cpg_mode=cpg_mode,
+            cpb_weight=cpb_weight,
+            cpb_reference_cds=cpb_cds,
             minmax_weight=minmax_weight,
             minmax_direction=minmax_direction,
             tandem_unit=tandem if tandem > 0 else None,
             inverted_stem=inverted if inverted > 0 else None,
             avoid_internal_start=self.internal_start_check.isChecked(),
+            avoid_uorf=self.uorf_check.isChecked(),
+            uorf_region_nt=self.uorf_region_spin.value(),
             tai_weight=1.0 if self.tai_check.isChecked() else 0.0,
             beam=beam if beam > 0 else None,
             seed=0,
         )
         return config, self.steps_spin.value()
+
+    def _read_cpb(self) -> tuple[float, tuple[str, ...]]:
+        """Read the codon-pair controls into a (weight, reference-CDS) pair.
+
+        Returns ``(0.0, ())`` -- codon-pair bias off -- when the box is unticked,
+        or when it is ticked but the reference CDS FASTA is missing or unreadable
+        (a warning is recorded on ``self._cpb_warning`` for the status bar, since
+        there is no bundled default table to fall back on).
+        """
+        self._cpb_warning: str | None = None
+        if not self.cpb_check.isChecked():
+            return 0.0, ()
+        path = self.cpb_cds_edit.text().strip()
+        if not path:
+            self._cpb_warning = "Codon-pair bias needs a reference CDS FASTA; ignoring it."
+            return 0.0, ()
+        try:
+            cds = tuple(seq for _header, seq in api.read_fasta(path))
+        except (OSError, ValueError) as exc:
+            self._cpb_warning = f"Could not read codon-pair CDS ({exc}); ignoring it."
+            return 0.0, ()
+        if not cds:
+            self._cpb_warning = "Codon-pair CDS FASTA had no sequences; ignoring it."
+            return 0.0, ()
+        return 1.0, cds
 
     def _start_optimize(self) -> None:
         """Validate the inputs, then launch a frontier optimization off-thread."""
@@ -633,7 +710,12 @@ class StudioWindow(QtWidgets.QMainWindow):
 
         self._cancel_requested = False
         self._set_running(True)
-        self.statusBar().showMessage("Optimizing...")
+        # _build_config -> _read_cpb may set a non-fatal codon-pair warning; fold it
+        # into the running status so it is actually seen (a bare status is replaced).
+        message = "Optimizing..."
+        if self._cpb_warning:
+            message = f"Optimizing... ({self._cpb_warning})"
+        self.statusBar().showMessage(message)
 
         thread = QtCore.QThread(self)
         worker = OptimizeWorker(protein, config, steps)

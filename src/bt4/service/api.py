@@ -40,6 +40,8 @@ class ConfigModel(BaseModel):
     cai_weight: float = 1.0
     tai_weight: float = 0.0
     gc_weight: float = 0.0
+    cpb_weight: float = 0.0
+    cpb_reference_cds: list[str] = []
     max_homopolymer: int | None = 6
     max_gc_run: int | None = None
     max_repeat_length: int | None = None
@@ -58,6 +60,8 @@ class ConfigModel(BaseModel):
     inverted_stem: int | None = None
     inverted_loop: int = 0
     avoid_internal_start: bool = False
+    avoid_uorf: bool = False
+    uorf_region_nt: int = 100
     refine: bool = False
     refine_iterations: int = 2000
     folding_weight: float = 1.0
@@ -78,6 +82,8 @@ class ConfigModel(BaseModel):
             cai_weight=self.cai_weight,
             tai_weight=self.tai_weight,
             gc_weight=self.gc_weight,
+            cpb_weight=self.cpb_weight,
+            cpb_reference_cds=tuple(self.cpb_reference_cds),
             max_homopolymer=self.max_homopolymer,
             max_gc_run=self.max_gc_run,
             max_repeat_length=self.max_repeat_length,
@@ -96,6 +102,8 @@ class ConfigModel(BaseModel):
             inverted_stem=self.inverted_stem,
             inverted_loop=self.inverted_loop,
             avoid_internal_start=self.avoid_internal_start,
+            avoid_uorf=self.avoid_uorf,
+            uorf_region_nt=self.uorf_region_nt,
             refine=self.refine,
             refine_iterations=self.refine_iterations,
             folding_weight=self.folding_weight,

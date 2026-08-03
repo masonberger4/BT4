@@ -15,6 +15,8 @@ from collections.abc import Callable
 from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import available_organisms
 from bt4.biomodels.codon.tai import available_tai_organisms
+from bt4.biomodels.expression import ExpressionPredictor, ExpressionResult
+from bt4.biomodels.expression import default as expression_model
 from bt4.constraints import (
     ForbiddenPreset,
     available_enzymes,
@@ -29,6 +31,7 @@ from bt4.pipeline import (
     Track,
     TracksResult,
     ValidationReport,
+    rerank_by_expression,
     run_frontier,
     run_optimize,
     run_tracks,
@@ -38,6 +41,8 @@ from bt4.pipeline import (
 
 __all__ = [
     "AMINO_ACIDS",
+    "ExpressionPredictor",
+    "ExpressionResult",
     "ForbiddenPreset",
     "FrontierResult",
     "InfeasibleError",
@@ -52,10 +57,12 @@ __all__ = [
     "available_tai_organisms",
     "build_table",
     "count_codons",
+    "expression_model",
     "frontier",
     "optimize",
     "parse_fasta",
     "read_fasta",
+    "rerank_by_expression",
     "result_to_dict",
     "result_to_json",
     "summarize",

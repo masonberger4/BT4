@@ -19,6 +19,7 @@ from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint, available_enzymes
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
+from bt4.constraints.uorf import UorfConstraint
 
 __all__ = [
     "FORBIDDEN_PRESETS",
@@ -32,6 +33,7 @@ __all__ = [
     "MaxRepeatConstraint",
     "RestrictionSiteConstraint",
     "TandemRepeatConstraint",
+    "UorfConstraint",
     "available_enzymes",
     "available_forbidden_presets",
     "resolve_forbidden_motifs",
