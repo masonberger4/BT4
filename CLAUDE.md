@@ -4,7 +4,8 @@ Guidance for Claude Code (and humans) building **BT4**, the from-scratch
 successor to BT3. This file is the constitution of the new repository: read it
 before writing code, and keep it current as the architecture evolves.
 
-> Status: **Phase 0 complete; Phase 1 done and early Phase 2 landed.** The pure
+> Status: **Phases 0-1 complete; Phase 2 substantially done; Phase 3 groundwork
+> landed.** The pure
 > `domain` layer, provenance manifest, packaging, layering contract, and CI are
 > in place, and on top of them an **honest exact-DP core** now ships: a codon
 > trellis with true per-constraint context and a real optimality certificate,
@@ -12,11 +13,17 @@ before writing code, and keep it current as the architecture evolves.
 > constraints (with their `delta==score` and `ok_suffix⇔validate` property
 > tests), a **CAI/GC Pareto frontier**, the stable `bt4.api`, a `bt4` CLI, and
 > the first cut of **BT4 Studio** (the PySide6 desktop app). Phase 2 has since
-> added codon-pair/ramp/CpG/%MinMax objectives, tandem/inverted-repeat
-> constraints, and **two budget backends** — OR-Tools CP-SAT and an honest
-> **Lagrangian relaxation** that keeps local constraints under a global GC budget.
-> Still ahead: tAI, and the
-> validated splice/folding/expression models — see §9. This document was written
+> added codon-pair/ramp/CpG/%MinMax objectives, tandem/inverted-repeat plus
+> **max-GC-run** and dispersed **max-repeat-length** constraints, named
+> **forbidden-sequence presets**, and **two budget backends** — OR-Tools CP-SAT
+> and an honest **Lagrangian relaxation** that keeps local constraints under a
+> global GC budget. **tAI has since landed on real GtRNAdb tRNA data for eight
+> organisms**, and Phase 3 groundwork is in: the `FoldingModel` (ViennaRNA +
+> labeled baseline) and `SplicePredictor` (labeled PWM baseline) contracts, the
+> incremental SA refinement engine (with a global-constraint gate), and per-site
+> risk tracks plotted in BT4 Studio. Still ahead: the **validated splice model**
+> (SpliceAI/Pangolin-class), the **learned expression head**, the **Rust trellis
+> port**, and packaged installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
@@ -460,9 +467,12 @@ is a requirement, not a nice-to-have.
   tandem-repeat, and %MinMax alongside GC/homopolymer/CAI (still naive-vs-BT4, no
   fabricated competitor numbers); and BT4's first **performance/scaling
   regression test** (`tests/test_performance.py`, §7) asserting sub-quadratic
-  exact-DP runtime under a wall-clock ceiling. Remaining: tAI (needs authentic
-  tRNA data); uORF pairing and CpG/whole-sequence *count* budgets (both non-local
-  / not per-codon-decomposable, deferred). The **published comparison vs
+  exact-DP runtime under a wall-clock ceiling. Remaining (Phase 2): the
+  CpG/UpA whole-sequence *count* budgets (non-local / not per-codon-decomposable,
+  deferred) and wiring `CpbTerm` to a user-supplied reference CDS (no default
+  codon-pair table is bundled, by §8 honesty). *(tAI has since landed - see the
+  dedicated bullet below; uORF pairing lands in Phase 3 as a GLOBAL constraint.)*
+  The **published comparison vs
   GeneOptimizer/IDT/Twist** has landed as `scripts/compare_tools.py` over a real,
   cited, CC BY 4.0 panel (Ranaghan et al. 2021, KRas4B) - every metric recomputed
   by BT4's own functions, BT4 never claimed "better", each tool's output
@@ -510,8 +520,8 @@ is a requirement, not a nice-to-have.
   / block moves, and the opt-in **ASSP** cross-check (§6) with offline fixtures.
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
-  each recomputed from the sequence, never fed to the solver) - wiring them into
-  the desktop app as plotted tracks is the remaining UI step. The
+  each recomputed from the sequence, never fed to the solver) **and are plotted
+  in BT4 Studio** as per-site tracks. The
   **`SplicePredictor` contract**
   (`biomodels/splice/`) has now landed with an honestly-labeled uncalibrated
   **consensus/PWM baseline** (`calibrated=False`, top-k/log-odds Δsplicing pooling
