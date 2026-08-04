@@ -7,6 +7,15 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Changed
+- **Python 3.10 is now supported** (was 3.11+). `requires-python` is lowered to
+  `>=3.10`, the 3.10 classifier is added, ruff/mypy target 3.10, and CI's quality
+  matrix now runs 3.10 alongside 3.11–3.13. The pure core uses no 3.11-only
+  features, so this is a compatibility widening with no behavior change. It notably
+  lets the wrapped **RiboNN** expression backend be installed into the same
+  environment as its own dependency stack, whose pinned `torch==1.13.1` ships only
+  CPython ≤3.10 wheels.
+
 ### Added
 - **Wrapped RiboNN expression backend** (`bt4.biomodels.expression.RiboNNExpressionModel`)
   — the Phase-4 learned expression head behind the `ExpressionPredictor` contract
