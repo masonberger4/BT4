@@ -8,6 +8,24 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Full Rust trellis port** (`bt4_native.trellis_solve`) — the exact-DP inner
+  loop of `bt4.optimize.exact_dp.solve_exact` now runs in Rust (Phase 1, CLAUDE.md
+  §7), following the existing native-primitive pattern: a PyO3 `#[pyfunction]` with
+  a byte-identical pure-Python twin (`bt4._accel._py_trellis_solve`) and a
+  Hypothesis equivalence test pinning the two. The DP is callback-driven, so Rust
+  never calls back into Python: a **regime gate** restricts the native path to
+  position-independent objectives (no `POSITIONAL` term — `CpbTerm` was made
+  context-based so PAIRWISE terms stay position-independent), Python **precomputes**
+  the reachable-context transition graph and the pre-summed per-transition deltas
+  (fixing the float summation order, so the lexicographic tie-break is bit-for-bit
+  identical), and the layer DP runs in Rust; it **falls back to the pure-Python
+  DP** whenever the regime does not hold, the extension is absent, or a
+  context-count cap is exceeded. A single solve is not accelerated (the Python
+  precompute costs ~a whole pure DP), so `run_optimize` stays on the pure path; the
+  win is the **Pareto frontier**, which builds the transition graph once and reuses
+  it across every scalarization point (only the cheap deltas recomputed) with the
+  DP in Rust — a measured ~2.7–5.5x `run_frontier` speedup with **byte-identical**
+  DNA, objective scalars, and certificates.
 - **Wrapped SpliceAI splice backend** (`bt4.biomodels.splice.SpliceAiSplicePredictor`)
   — the second *wrapped published* splice CNN behind the `SplicePredictor`
   contract, the cross-check to Pangolin (Phase 3, CLAUDE.md §6). It runs the

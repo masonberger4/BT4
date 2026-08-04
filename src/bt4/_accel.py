@@ -22,6 +22,7 @@ __all__ = [
     "max_gc_run",
     "max_homopolymer_run",
     "reverse_complement",
+    "trellis_solve",
 ]
 
 _COMPLEMENT = str.maketrans("ACGT", "TGCA")
@@ -121,6 +122,64 @@ def _py_longest_repeat(seq: str) -> int:
     return best
 
 
+def _py_trellis_solve(
+    codons: list[str],
+    layer_from: list[list[int]],
+    layer_to: list[list[int]],
+    layer_codon: list[list[int]],
+    layer_delta: list[list[float]],
+    beam: int | None = None,
+) -> tuple[str, float, bool] | None:
+    """Pure-Python twin of the Rust ``bt4_native.trellis_solve`` layer DP.
+
+    Runs the exact codon-trellis layer DP over precomputed, position-independent
+    transition tables (see the Rust docstring). Context id ``0`` is the empty
+    start context. Each layer's four parallel lists give the *allowed*
+    transitions ``from -> to`` placing ``codons[codon_id]`` with pre-summed scalar
+    ``delta``. The best ``(score, dna)`` per context is kept -- highest scalar,
+    ties toward the lexicographically smaller DNA -- exactly as
+    :func:`bt4.optimize.exact_dp.solve_exact` does, so the two are byte-for-byte
+    identical. Returns ``None`` when a layer has no reachable context (infeasible),
+    else ``(best_dna, best_scalar, pruned)`` where ``pruned`` reports whether any
+    layer was beam-truncated.
+    """
+    n_layers = len(layer_from)
+    if not (len(layer_to) == len(layer_codon) == len(layer_delta) == n_layers):
+        raise ValueError(
+            "layer_from/layer_to/layer_codon/layer_delta must have equal length"
+        )
+    cur: dict[int, tuple[float, str]] = {0: (0.0, "")}
+    pruned = False
+    for li in range(n_layers):
+        froms = layer_from[li]
+        tos = layer_to[li]
+        cods = layer_codon[li]
+        dels = layer_delta[li]
+        if not (len(tos) == len(cods) == len(dels) == len(froms)):
+            raise ValueError("per-layer transition lists must have equal length")
+        nxt: dict[int, tuple[float, str]] = {}
+        for t in range(len(froms)):
+            state = cur.get(froms[t])
+            if state is None:
+                continue
+            score, dna = state
+            ns = score + dels[t]
+            nd = dna + codons[cods[t]]
+            to = tos[t]
+            current = nxt.get(to)
+            if current is None or ns > current[0] or (ns == current[0] and nd < current[1]):
+                nxt[to] = (ns, nd)
+        if not nxt:
+            return None
+        if beam is not None and len(nxt) > beam:
+            kept = sorted(nxt.items(), key=lambda kv: (-kv[1][0], kv[1][1]))[:beam]
+            nxt = dict(kept)
+            pruned = True
+        cur = nxt
+    best_score, best_dna = min(cur.values(), key=lambda sv: (-sv[0], sv[1]))
+    return best_dna, best_score, pruned
+
+
 # Public functions are declared with explicit signatures so that binding either
 # the Rust extension (typed ``Any`` once the stubless module is ignored) or the
 # pure-Python fallbacks stays clean under ``mypy --strict``.
@@ -129,6 +188,17 @@ gc_count: Callable[[str], int]
 max_homopolymer_run: Callable[[str], int]
 max_gc_run: Callable[[str], int]
 longest_repeat: Callable[[str], int]
+trellis_solve: Callable[
+    [
+        list[str],
+        list[list[int]],
+        list[list[int]],
+        list[list[int]],
+        list[list[float]],
+        int | None,
+    ],
+    tuple[str, float, bool] | None,
+]
 
 try:  # pragma: no cover - exercised only when the extension is built
     import bt4_native as _native  # type: ignore[import-not-found]
@@ -138,6 +208,7 @@ try:  # pragma: no cover - exercised only when the extension is built
     max_homopolymer_run = _native.max_homopolymer_run
     max_gc_run = _native.max_gc_run
     longest_repeat = _native.longest_repeat
+    trellis_solve = _native.trellis_solve
     ACCELERATED = True
 except ImportError:
     reverse_complement = _py_reverse_complement
@@ -145,4 +216,5 @@ except ImportError:
     max_homopolymer_run = _py_max_homopolymer_run
     max_gc_run = _py_max_gc_run
     longest_repeat = _py_longest_repeat
+    trellis_solve = _py_trellis_solve
     ACCELERATED = False

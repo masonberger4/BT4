@@ -23,7 +23,7 @@ import math
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
-from bt4 import __version__
+from bt4 import __version__, _accel
 from bt4.biomodels.codon.pairs import build_codon_pair_table
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
 from bt4.biomodels.codon.tai import load_tai_provenance, load_tai_table
@@ -61,6 +61,12 @@ from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
 from bt4.optimize import SolveResult, solve_exact
+from bt4.optimize.exact_dp import (
+    _NATIVE_MAX_CONTEXTS,
+    _NATIVE_MIN_RESIDUES,
+    _precompute_structure,
+    _solve_from_structure,
+)
 from bt4.provenance import Manifest, build_manifest, resolve_git_commit
 
 __all__ = [
@@ -431,6 +437,19 @@ def _global_audit(
     if config.avoid_uorf:
         audit["uorf_region_nt"] = config.uorf_region_nt
     return audit
+
+
+def _position_independent(terms: Sequence[ObjectiveTerm]) -> bool:
+    """True when no active objective term depends on the codon index ``pos``.
+
+    Every term except a ``POSITIONAL``-scope one (the 5' ramp) is a pure function
+    of ``(prefix[-K:], codon)``: CAI/tAI/GC/%MinMax ignore both prefix and pos,
+    and the PAIRWISE CpG and codon-pair terms read only the trailing context (the
+    codon-pair term detects the first codon from the prefix, not ``pos``). When
+    this holds the exact DP can take its native precomputed-table fast path, which
+    is byte-identical to the pure-Python DP (CLAUDE.md §7, Phase 1).
+    """
+    return all(term.scope() is not Scope.POSITIONAL for term in terms)
 
 
 def _scalar_delta(
@@ -848,6 +867,10 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     elif has_gc_budget:
         solve, certificate = _solve_with_gc_budget(residues, active, constraints, config)
     else:
+        # A single solve stays on the pure-Python exact DP: the native trellis's
+        # Python-side precompute costs about as much as the whole pure DP, so it
+        # only pays off when amortized across many solves (the frontier sweep,
+        # see run_frontier). Wiring it here would regress single-shot runs.
         solve = solve_exact(
             residues,
             scalar_delta=_scalar_delta(active),
@@ -958,8 +981,38 @@ def run_frontier(
 
     axes = _frontier_axes(table, config)
     objective_context = max((term.context_len() for term in axes), default=0)
+    context_len = max([objective_context, *(c.context_len() for c in constraints)])
     grid = _simplex_grid(len(axes), steps)
     total = len(grid)
+
+    # The frontier solves the same trellis (same residues + constraints) once per
+    # grid point, changing only the objective *weights*. When the objective is
+    # position-independent (no 5' ramp) and the native accelerator is present, we
+    # build the trellis transition graph *once* and reuse it for every point --
+    # only the cheap per-transition deltas are recomputed -- and run the DP inner
+    # loop in Rust. This is byte-identical to the pure-Python exact DP (each point
+    # is still a proven-optimal solve) but amortizes the precompute across the
+    # sweep (CLAUDE.md §7). A context-count cap keeps the precompute bounded;
+    # otherwise (or without the accelerator) each point uses the pure-Python DP.
+    structure = None
+    if _position_independent(axes) and _accel.ACCELERATED and len(residues) >= _NATIVE_MIN_RESIDUES:
+        structure = _precompute_structure(
+            residues, constraints, context_len, max_contexts=_NATIVE_MAX_CONTEXTS
+        )
+
+    def _solve_point(active: Sequence[tuple[ObjectiveTerm, float]]) -> SolveResult:
+        if structure is not None:
+            return _solve_from_structure(
+                structure, _scalar_delta(active), constraints, config.beam, len(residues)
+            )
+        return solve_exact(
+            residues,
+            scalar_delta=_scalar_delta(active),
+            constraints=constraints,
+            beam=config.beam,
+            objective_context=objective_context,
+        )
+
     by_dna: dict[str, Result] = {}
     for i, weights in enumerate(grid):
         if should_cancel is not None and should_cancel():
@@ -968,13 +1021,7 @@ def run_frontier(
             # frontier is honest -- just a coarser sample of the trade-off surface.
             break
         active = list(zip(axes, weights, strict=True))
-        solve = solve_exact(
-            residues,
-            scalar_delta=_scalar_delta(active),
-            constraints=constraints,
-            beam=config.beam,
-            objective_context=objective_context,
-        )
+        solve = _solve_point(active)
         if solve.dna not in by_dna:
             by_dna[solve.dna] = _make_result(
                 protein=p,

@@ -34,9 +34,11 @@ before writing code, and keep it current as the architecture evolves.
 > lazily imported like ViennaRNA), hash-pinned and reproducing upstream scores
 > bit-for-bit, shipped `calibrated=False` pending their integration-fidelity
 > gates, with a two-backend agreement harness that makes agreement between two
-> real CNNs an uncertainty signal. Still ahead: recording the fidelity gates to
-> promote to `calibrated=True`, the **learned expression head**, the **full Rust
-> trellis port**, and packaged installers — see §9. This document was written
+> real CNNs an uncertainty signal. The **full Rust trellis port** has also landed
+> (`bt4_native.trellis_solve`, regime-gated with a byte-identical pure-Python
+> fallback, amortized across the Pareto frontier). Still ahead: recording the
+> fidelity gates to promote to `calibrated=True`, the **learned expression head**,
+> and packaged installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
@@ -504,9 +506,26 @@ is a requirement, not a nice-to-have.
   query) is cross-checked against `MaxRepeatConstraint` but **deliberately kept
   off** the per-SA-move `validate` hot path, because whole-sequence O(n²)
   longest-repeat is slower there than the constraint's existing O(n·k) k-mer scan
-  when the native extension is absent (§7). This is honest incremental native
-  acceleration; porting the **full trellis inner loop** to Rust still remains.
-  *This alone already beats BT3* (honest optimality, correct incremental GC).
+  when the native extension is absent (§7). The **full trellis inner loop is now
+  ported to Rust** as `bt4_native.trellis_solve` (with a byte-identical pure-Python
+  twin `_py_trellis_solve` and an equivalence property test, exactly like the other
+  primitives). Because the DP is callback-driven (`scalar_delta` + each
+  constraint's `ok_suffix`) and Rust must never call back into Python, the port
+  carries an honest **regime gate**: it runs only when the objective is
+  position-independent (no `POSITIONAL` term — the codon-pair term was made
+  context-based so PAIRWISE stays position-independent too), Python **precomputes**
+  the reachable-context transition graph and the pre-summed per-transition deltas
+  (so the float summation order — and thus the lexicographic tie-break — stay
+  bit-for-bit identical), and the layer DP runs in Rust; the code **falls back to
+  the pure-Python DP** whenever the regime does not hold, the extension is absent,
+  or a context-count cap is exceeded. Because the Python-side precompute costs
+  about as much as the whole pure DP, a *single* solve is not sped up (and
+  `run_optimize` deliberately stays on the pure path); the win is the **Pareto
+  frontier**, where the transition graph is built **once** and reused across every
+  scalarization grid point (only the cheap deltas are recomputed) with the DP in
+  Rust — a measured ~2.7–5.5x frontier speedup, byte-identical output and
+  certificates. *This alone already beats BT3* (honest optimality, correct
+  incremental GC).
 - **Phase 2 — Multi-objective, richer biology & first app.** ✅ **Complete.**
   Delivered: the **multi-objective Pareto-frontier API** (a unit-simplex
   scalarization sweep over *every* active objective axis - CAI and GC always,
