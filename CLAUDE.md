@@ -723,7 +723,21 @@ is a requirement, not a nice-to-have.
   folding/splice do - a hand-weighted CAI+GC+ΔG composite dressed as "expression"
   would be the §10.5/§10.6 trap. The rerank hook **only re-picks the delivered
   point when the predictor is calibrated**; with the placeholder it is a pure
-  reporting no-op (an uncalibrated score never steers delivery).
+  reporting no-op (an uncalibrated score never steers delivery). The
+  **model-agnostic acceptance gate** a head must pass to *earn* `calibrated=True`
+  has now landed (`biomodels/expression/gate.py`): for a **log-TE regression**
+  head it reports Spearman (primary) / Pearson / R² plus **split-conformal
+  coverage** on a **group-disjoint split** (homology/chromosome), so a head
+  validated only on natural-gene TE cannot claim calibration for the CDS-variant
+  regime BT4 optimizes; `passed` needs both the Spearman threshold and coverage
+  near target, thresholds are inputs set at gate time, and the `NullExpressionModel`
+  provably cannot pass. The shared estimators live in `biomodels/_stats.py`
+  (`pearson`/`spearman`/`r2_score`/`conformal_quantile`/`empirical_coverage`),
+  reused by the splice agreement report. **Still human-only:** obtaining a
+  license-clean, regime-matched CDS-variant panel (e.g. wrapping the published
+  RiboNN log-TE CNN, Sanofi non-commercial — eligible under BT4's non-commercial
+  scope, handled non-vendored/hash-pinned like SpliceAI) and running the gate; the
+  `calibrated` flip is earned on data, never assigned.
 - **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
   `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
   gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a
