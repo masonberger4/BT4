@@ -31,3 +31,4 @@ rust/**/target/
 .DS_Store
 .idea/
 .vscode/
+.claude/worktrees/

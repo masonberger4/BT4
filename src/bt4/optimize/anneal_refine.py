@@ -23,6 +23,34 @@ This module is that engine. It is honest and cheap by construction:
   the move is rejected. Because everything outside the window is unchanged and was
   already feasible, an accepted state is feasible everywhere, so the hard-
   violation count can only fall or stay flat - it never rises.
+* **Reaching farther without weakening #5: block moves + parallel tempering.**
+  A *single-codon* move with a strict global-constraint gate (never raise the
+  whole-sequence hard count) cannot cross a barrier that needs a **coordinated
+  multi-codon** change - it can leave a dispersed max-repeat / uORF in place
+  (CLAUDE.md 9, Phase 3). Two opt-in mechanisms widen the reach:
+  - **Block moves** (``block_size`` / ``block_prob``) propose synonymous swaps at
+    several positions *at once*, so a repeat that only clears when two copies move
+    together becomes reachable in one step. A block candidate is checked for local
+    feasibility over the *union* of affected windows and then through the same
+    global gate, so invariant #5 still holds move-by-move. **Block moves always
+    full-``score`` re-score** (never ``delta_score``): summing per-position deltas
+    is valid only for additive, disjoint-context terms, and the non-local terms
+    this engine exists to serve (folding / splice / expression) are neither.
+  - **Parallel tempering** (``replicas`` / ``temps`` / ``swap_every``) runs several
+    replicas at different temperatures; hot replicas accept uphill moves and swap
+    their (already-feasible) configuration into the cold chain, so a barrier is
+    crossed without any single chain ever accepting a hard-count increase. Every
+    replica passes **both** gates against **its own** current global count, and
+    every configuration ever visited has a global count ``<=`` the seed's, so the
+    delivered result (chosen best over all replicas, lower global count first)
+    still satisfies invariant #5. **Feasibility floor (honest):** a repeat pinned
+    to synonymously-immovable bases (Met ``ATG`` / Trp ``TGG``, or a base-locked
+    degenerate position) is unremovable by *any* synonymous scheme - neither a
+    block move nor a hot replica can clear it, and it is reported as a residual,
+    never silently claimed clean.
+  Both default off; with ``block_size=1``, ``block_prob=0.0``, ``replicas=1`` and
+  ``swap_every=0`` the engine reproduces the single-chain trajectory below
+  byte-for-byte (invariant #7).
 * **Incremental scoring, O(context) per move (CLAUDE.md 7 / 10.8).** When the
   caller supplies ``delta_score`` - the score change of a single swap - each move
   costs only what that callable costs (O(context) for a local term, a bounded
@@ -83,6 +111,11 @@ def anneal_refine(
     delta_score: DeltaScore | None = None,
     temp0: float = 1.0,
     cooling: float = 0.995,
+    block_size: int = 1,
+    block_prob: float = 0.0,
+    replicas: int = 1,
+    temps: Sequence[float] | None = None,
+    swap_every: int = 0,
 ) -> SolveResult:
     """Refine a feasible coding sequence by synonymous-swap simulated annealing.
 
@@ -122,7 +155,36 @@ def anneal_refine(
         temp0: Initial annealing temperature (``>= 0``). ``0`` degenerates to
             greedy hill-climbing (only improving moves accepted).
         cooling: Geometric cooling factor applied to the temperature every
-            iteration; must lie in ``(0, 1]``.
+            iteration; must lie in ``(0, 1]``. Applied per replica, per step.
+        block_size: Maximum number of positions a single **block move** may swap
+            at once (``>= 1``). ``1`` (the default) disables block moves entirely
+            (they need ``>= 2`` movable positions). When ``> 1`` and a block move
+            is drawn, between 2 and ``min(block_size, #movable)`` distinct movable
+            positions are proposed together and the candidate is **full-``score``
+            re-scored** (never ``delta_score``), because summing per-position
+            deltas is only valid for additive disjoint-context terms.
+        block_prob: Probability in ``[0, 1]`` that any given step is a block move
+            rather than a single-codon move (``0.0`` default = never; then no RNG
+            draw is spent on the decision, so the single-chain trajectory is
+            byte-identical to before this argument existed). Only has effect when
+            ``block_size >= 2`` and at least two positions are movable.
+        replicas: Number of parallel-tempering replicas (``>= 1``). ``1`` (default)
+            is a single chain identical to before. Each replica keeps its own
+            ``(dna, score, global-count, temperature)`` and passes both feasibility
+            gates against **its own** current global count, so invariant #5 holds
+            per replica; the delivered result is the best over all replicas (lower
+            global count first, then higher score).
+        temps: Optional explicit per-replica starting temperatures (length must
+            equal ``replicas``, each ``>= 0``). When ``None``, every replica starts
+            at ``temp0`` (so ``replicas=1`` reproduces the single-chain schedule);
+            supply an ascending ladder (e.g. ``(0.1, 0.5, 2.0)``) for a real
+            temperature spread. Each replica's temperature is still cooled by
+            ``cooling`` on every step it takes.
+        swap_every: Attempt adjacent replica-exchange swaps every ``swap_every``
+            iterations (``0`` default = never; also a no-op when ``replicas == 1``).
+            Exchanges use the standard replica-exchange Metropolis criterion and
+            only relabel already-feasible configurations, so no swap can introduce
+            a hard violation.
 
     Returns:
         A :class:`~bt4.optimize.exact_dp.SolveResult` whose ``dna`` is the best
@@ -134,7 +196,8 @@ def anneal_refine(
     Raises:
         ValueError: If ``seed_dna`` does not translate to ``residues``, if its
             length is not ``3 * len(residues)``, or if ``iterations``, ``temp0``,
-            or ``cooling`` are out of range.
+            ``cooling``, ``block_size``, ``block_prob``, ``replicas``, or ``temps``
+            are out of range.
     """
     n = len(residues)
     if len(seed_dna) != 3 * n:
@@ -154,6 +217,20 @@ def anneal_refine(
         raise ValueError(f"temp0 must be >= 0, got {temp0}")
     if not 0.0 < cooling <= 1.0:
         raise ValueError(f"cooling must be in (0, 1], got {cooling}")
+    if block_size < 1:
+        raise ValueError(f"block_size must be >= 1, got {block_size}")
+    if not 0.0 <= block_prob <= 1.0:
+        raise ValueError(f"block_prob must be in [0, 1], got {block_prob}")
+    if replicas < 1:
+        raise ValueError(f"replicas must be >= 1, got {replicas}")
+    if temps is not None:
+        temps = tuple(temps)
+        if len(temps) != replicas:
+            raise ValueError(
+                f"temps must have length replicas={replicas}, got {len(temps)}"
+            )
+        if any(t < 0.0 for t in temps):
+            raise ValueError(f"temps must all be >= 0, got {temps}")
 
     context_len = max((c.context_len() for c in constraints), default=0)
     # Codons after ``pos`` whose ok_suffix window still reaches the changed codon.
@@ -164,58 +241,73 @@ def anneal_refine(
 
     rng = random.Random(seed)
 
-    current_dna = seed_dna
-    current_score = score(seed_dna)
-    seed_score = current_score
-    best_dna = seed_dna
-    best_score = current_score
+    seed_score = score(seed_dna)
     # Whole-sequence hard-violation count for the non-local constraints. Refinement
     # may only drive this down, never up (invariant #5, global edition).
-    current_global = _global_hard(seed_dna, global_constraints)
+    seed_global = _global_hard(seed_dna, global_constraints)
+
+    # Best visited across *all* replicas, ranked lower-global-count-first then
+    # higher-score (see :func:`_better`) -- the mechanical guarantee that the
+    # delivered result satisfies invariant #5 even with tempering swaps in play.
+    best_dna = seed_dna
+    best_score = seed_score
+    best_global = seed_global
 
     if movable and iterations > 0:
-        temp = temp0
-        for _ in range(iterations):
-            pos = rng.choice(movable)
-            base = pos * 3
-            old_codon = current_dna[base : base + 3]
-            options = [c for c in synonymous_codons(residues[pos]) if c != old_codon]
-            new_codon = rng.choice(options)
+        # Each replica carries its own (dna, score, global-count, temperature).
+        # temps=None => every replica starts at temp0, so replicas=1 reproduces the
+        # single-chain schedule exactly (invariant #7).
+        start_temps = temps if temps is not None else (temp0,) * replicas
+        rep_dna = [seed_dna] * replicas
+        rep_score = [seed_score] * replicas
+        rep_global = [seed_global] * replicas
+        rep_temp = [float(t) for t in start_temps]
 
-            if not _move_feasible(current_dna, pos, new_codon, reach, context_len, constraints, n):
-                temp *= cooling
-                continue
+        # Block moves need >= 2 movable positions to be a "block"; with block_size
+        # left at its default of 1 (or too few movable positions) they are off, and
+        # -- because ``block_prob > 0.0`` short-circuits first -- no RNG draw is
+        # spent deciding, so the single-codon trajectory is byte-identical.
+        allow_block = block_size >= 2 and len(movable) >= 2
 
-            # A global (whole-sequence) constraint's veto cannot be checked by a
-            # bounded window, so we build the candidate and re-count its hard
-            # violations; a move that would raise the count is rejected outright.
-            if global_constraints:
-                candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
-                cand_global = _global_hard(candidate, global_constraints)
-                if cand_global > current_global:
-                    temp *= cooling
-                    continue
-                change = score(candidate) - current_score
-            elif delta_score is not None:
-                cand_global = current_global
-                change = delta_score(current_dna, pos, old_codon, new_codon)
-                candidate = None  # built lazily only on acceptance
-            else:
-                cand_global = current_global
-                candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
-                change = score(candidate) - current_score
+        for it in range(iterations):
+            for r in range(replicas):
+                is_block = allow_block and block_prob > 0.0 and rng.random() < block_prob
+                if is_block:
+                    cand_dna, cand_score, cand_global, accepted = _block_step(
+                        rep_dna[r], rep_score[r], rep_global[r], rep_temp[r],
+                        residues, movable, block_size, reach, context_len,
+                        constraints, global_constraints, score, rng, n,
+                    )
+                else:
+                    cand_dna, cand_score, cand_global, accepted = _single_step(
+                        rep_dna[r], rep_score[r], rep_global[r], rep_temp[r],
+                        residues, movable, reach, context_len,
+                        constraints, global_constraints, score, delta_score, rng, n,
+                    )
+                if accepted:
+                    rep_dna[r] = cand_dna
+                    rep_score[r] = cand_score
+                    rep_global[r] = cand_global
+                    if _better(cand_global, cand_score, best_global, best_score):
+                        best_global = cand_global
+                        best_score = cand_score
+                        best_dna = cand_dna
+                rep_temp[r] *= cooling
 
-            if _accept(change, temp, rng):
-                if candidate is None:
-                    candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
-                current_dna = candidate
-                current_score += change
-                current_global = cand_global
-                if current_score > best_score:
-                    best_score = current_score
-                    best_dna = current_dna
-
-            temp *= cooling
+            # Parallel-tempering exchange: swap adjacent replicas' (already-feasible)
+            # configurations by the standard replica-exchange Metropolis rule. Only
+            # relabels states, so no swap can introduce a hard violation; every
+            # config keeps global-count <= seed's, preserving invariant #5.
+            if swap_every > 0 and replicas > 1 and (it + 1) % swap_every == 0:
+                for r in range(replicas - 1):
+                    ti, tj = rep_temp[r], rep_temp[r + 1]
+                    if ti <= 0.0 or tj <= 0.0:
+                        continue  # replica-exchange criterion needs positive temps
+                    delta = (1.0 / ti - 1.0 / tj) * (rep_score[r + 1] - rep_score[r])
+                    if delta >= 0.0 or rng.random() < math.exp(delta):
+                        rep_dna[r], rep_dna[r + 1] = rep_dna[r + 1], rep_dna[r]
+                        rep_score[r], rep_score[r + 1] = rep_score[r + 1], rep_score[r]
+                        rep_global[r], rep_global[r + 1] = rep_global[r + 1], rep_global[r]
 
     certificate = OptimalityCertificate(
         status=OptimalityStatus.HEURISTIC,
@@ -227,12 +319,14 @@ def anneal_refine(
     )
     # Report the score recomputed on the delivered DNA, never the accumulator
     # (invariant #2, reported == computed). Guard against delta_score drift: if the
-    # best visited (chosen by the accumulator) recomputes worse than the seed, we
-    # deliver the seed, so refinement is never a regression even if a caller's
-    # delta_score violated its contract.
+    # best visited (chosen by the accumulator) recomputes *worse than the seed by our
+    # ranking*, we deliver the seed. Because every visited config has global-count
+    # <= the seed's, the fallback only ever fires on an equal-count, lower-score
+    # drift -- it can never *raise* the delivered hard-violation count (invariant #5).
     delivered_dna = best_dna
     delivered_score = score(best_dna)
-    if delivered_score < seed_score:
+    delivered_global = _global_hard(best_dna, global_constraints)
+    if _better(seed_global, seed_score, delivered_global, delivered_score):
         delivered_dna = seed_dna
         delivered_score = seed_score
     return SolveResult(
@@ -257,6 +351,164 @@ def _global_hard(dna: str, global_constraints: Sequence[Constraint]) -> int:
         for v in c.validate(dna)
         if v.severity is Severity.HARD
     )
+
+
+def _better(glob_a: int, score_a: float, glob_b: int, score_b: float) -> bool:
+    """Return whether state ``a`` outranks state ``b`` for delivery.
+
+    The ranking is **lower global hard-violation count first, then higher score** --
+    the ordering that makes invariant #5 hold on the delivered result: a config that
+    clears a dispersed max-repeat / uORF always beats one that does not, regardless
+    of objective score, and ties on the count break toward the better objective.
+    """
+    if glob_a != glob_b:
+        return glob_a < glob_b
+    return score_a > score_b
+
+
+def _single_step(
+    current_dna: str,
+    current_score: float,
+    current_global: int,
+    temp: float,
+    residues: Sequence[str],
+    movable: Sequence[int],
+    reach: int,
+    context_len: int,
+    constraints: Sequence[Constraint],
+    global_constraints: Sequence[Constraint],
+    score: Score,
+    delta_score: DeltaScore | None,
+    rng: random.Random,
+    n: int,
+) -> tuple[str, float, int, bool]:
+    """Propose and evaluate one single-codon synonymous swap for one replica.
+
+    Draws (position, replacement) from ``rng`` in the same order the original
+    single-chain loop did -- so with ``replicas=1`` and block moves off, the whole
+    trajectory is byte-identical (invariant #7). Returns
+    ``(dna, score, global_count, accepted)``: the candidate and its bookkeeping on
+    acceptance, or the unchanged state with ``accepted=False`` on veto/rejection.
+    Feasibility is checked incrementally (local) then by whole-sequence recount
+    (global); a move that would raise the global hard count is rejected (#5).
+    """
+    pos = rng.choice(movable)
+    base = pos * 3
+    old_codon = current_dna[base : base + 3]
+    options = [c for c in synonymous_codons(residues[pos]) if c != old_codon]
+    new_codon = rng.choice(options)
+
+    if not _move_feasible(current_dna, pos, new_codon, reach, context_len, constraints, n):
+        return current_dna, current_score, current_global, False
+
+    candidate: str | None
+    if global_constraints:
+        built = current_dna[:base] + new_codon + current_dna[base + 3 :]
+        cand_global = _global_hard(built, global_constraints)
+        if cand_global > current_global:
+            return current_dna, current_score, current_global, False
+        candidate = built
+        change = score(built) - current_score
+    elif delta_score is not None:
+        cand_global = current_global
+        change = delta_score(current_dna, pos, old_codon, new_codon)
+        candidate = None  # built lazily only on acceptance
+    else:
+        cand_global = current_global
+        candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
+        change = score(candidate) - current_score
+
+    if _accept(change, temp, rng):
+        if candidate is None:
+            candidate = current_dna[:base] + new_codon + current_dna[base + 3 :]
+        return candidate, current_score + change, cand_global, True
+    return current_dna, current_score, current_global, False
+
+
+def _block_step(
+    current_dna: str,
+    current_score: float,
+    current_global: int,
+    temp: float,
+    residues: Sequence[str],
+    movable: Sequence[int],
+    block_size: int,
+    reach: int,
+    context_len: int,
+    constraints: Sequence[Constraint],
+    global_constraints: Sequence[Constraint],
+    score: Score,
+    rng: random.Random,
+    n: int,
+) -> tuple[str, float, int, bool]:
+    """Propose and evaluate one **block move** (2..block_size coordinated swaps).
+
+    A block move swaps several movable positions at once, so a barrier that only
+    clears when two codons move *together* (a dispersed repeat, a uORF) becomes
+    reachable in a single step. Unlike a single move it **always full-``score``
+    re-scores** the candidate -- summing per-position deltas is valid only for
+    additive disjoint-context terms, which the non-local terms this engine serves
+    are not. Local feasibility is checked over the *union* of affected windows and
+    the global gate rejects any count increase, so invariant #5 holds move-by-move.
+    """
+    k = rng.randint(2, min(block_size, len(movable)))
+    positions = sorted(rng.sample(list(movable), k))
+    candidate = current_dna
+    for pos in positions:
+        base = pos * 3
+        old_codon = candidate[base : base + 3]
+        options = [c for c in synonymous_codons(residues[pos]) if c != old_codon]
+        new_codon = rng.choice(options)
+        candidate = candidate[:base] + new_codon + candidate[base + 3 :]
+
+    if not _block_feasible(candidate, positions, reach, context_len, constraints, n):
+        return current_dna, current_score, current_global, False
+
+    if global_constraints:
+        cand_global = _global_hard(candidate, global_constraints)
+        if cand_global > current_global:
+            return current_dna, current_score, current_global, False
+    else:
+        cand_global = current_global
+
+    change = score(candidate) - current_score
+    if _accept(change, temp, rng):
+        return candidate, current_score + change, cand_global, True
+    return current_dna, current_score, current_global, False
+
+
+def _block_feasible(
+    candidate: str,
+    positions: Sequence[int],
+    reach: int,
+    context_len: int,
+    constraints: Sequence[Constraint],
+    n_codons: int,
+) -> bool:
+    """Return whether a multi-position block ``candidate`` adds no hard violation.
+
+    The block candidate already has *all* its swaps applied, so we re-run
+    ``ok_suffix`` over the **union** of the affected codon windows (each changed
+    position plus the ``reach`` codons whose trailing context reaches it) against
+    the candidate's own bases -- exact because ``ok_suffix`` reads only the last
+    ``context_len`` characters. Any codon outside every affected window sees the
+    same context it saw in the (feasible) pre-move sequence, so it cannot newly
+    fail and need not be checked.
+    """
+    if not constraints:
+        return True
+    affected: set[int] = set()
+    for pos in positions:
+        for q in range(pos, min(n_codons, pos + reach + 1)):
+            affected.add(q)
+    for q in sorted(affected):
+        q_off = q * 3
+        tail = candidate[max(0, q_off - context_len) : q_off]
+        codon_q = candidate[q_off : q_off + 3]
+        for constraint in constraints:
+            if not constraint.ok_suffix(tail, codon_q):
+                return False
+    return True
 
 
 def _accept(change: float, temp: float, rng: random.Random) -> bool:
