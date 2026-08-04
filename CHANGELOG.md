@@ -7,6 +7,12 @@ its first tagged release.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-04
+
+First tagged release since 0.3.1, capturing the Phase 1 performance and Phase 3
+refinement/splice wave: the full Rust trellis port, richer refinement moves, the
+wrapped SpliceAI splice backend, and the last Phase 2 budget item.
+
 ### Added
 - **Full Rust trellis port** (`bt4_native.trellis_solve`) — the exact-DP inner
   loop of `bt4.optimize.exact_dp.solve_exact` now runs in Rust (Phase 1, CLAUDE.md
