@@ -189,15 +189,14 @@ class RiboNNExpressionModel:
         return is the honest "cannot score here" signal that keeps
         :func:`bt4.biomodels.expression.default` on the neutral placeholder.
         """
+        import importlib.util
+
         repo = self._resolve_repo_dir()
         if repo is None or self._resolve_weights_dir(repo) is None:
             return False
-        try:  # pragma: no cover - depends on optional heavy deps being installed
-            import pandas  # noqa: F401
-            import torch  # noqa: F401
-        except ImportError:
-            return False
-        return True
+        # Probe the optional heavy deps without importing them (keeps this light and
+        # avoids typed-import fragility): find_spec returns None when absent.
+        return all(importlib.util.find_spec(mod) is not None for mod in ("pandas", "torch"))
 
     def _verify_weights(self, weights_dir: Path) -> None:
         """Hash-verify every ``<species>`` state dict against the bundled pins.
@@ -261,7 +260,7 @@ class RiboNNExpressionModel:
         predict_mod = importlib.import_module("src.predict")
         predict = predict_mod.predict_using_nested_cross_validation_models
 
-        import pandas as pd
+        pd = importlib.import_module("pandas")  # Any-typed; keeps mypy env-independent
 
         runs_csv = weights / self.species / "runs.csv"
         run_df = pd.read_csv(runs_csv)
