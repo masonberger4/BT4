@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import pytest
 
+# The correlation primitives now live in the shared bt4.biomodels._stats; the
+# splice agreement layer re-exports pearson/spearman for its public surface.
+from bt4.biomodels._stats import _ranks
 from bt4.biomodels.splice import (
     ConsensusPwmSplicePredictor,
     SpliceResult,
     backend_agreement,
     spearman,
 )
-from bt4.biomodels.splice.agreement import _ranks, pearson
+from bt4.biomodels.splice.agreement import pearson
 from bt4.biomodels.splice.base import pooled_risk
 
 

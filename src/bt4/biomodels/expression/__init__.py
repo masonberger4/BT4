@@ -21,12 +21,22 @@ from __future__ import annotations
 
 from bt4.biomodels.expression.base import ExpressionPredictor, ExpressionResult
 from bt4.biomodels.expression.baseline import NullExpressionModel
+from bt4.biomodels.expression.gate import (
+    ExpressionEvalCase,
+    ExpressionGateReport,
+    run_expression_gate,
+    verify_expression_gate,
+)
 
 __all__ = [
+    "ExpressionEvalCase",
+    "ExpressionGateReport",
     "ExpressionPredictor",
     "ExpressionResult",
     "NullExpressionModel",
     "default",
+    "run_expression_gate",
+    "verify_expression_gate",
 ]
 
 

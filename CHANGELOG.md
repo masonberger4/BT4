@@ -8,6 +8,27 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Model-agnostic expression acceptance-gate harness**
+  (`bt4.biomodels.expression.gate`) — the honest gate a learned expression head
+  must pass to earn `calibrated=True` (CLAUDE.md §6/§8/§10.6, Phase 4). For a
+  log-TE regression head it reports **Spearman** (primary), **Pearson**, **R²**,
+  and **split-conformal coverage** at a target level (default 90%), evaluated on a
+  **group-disjoint split** (homology cluster / chromosome) so no group leaks
+  across calibration and test — the distribution-shift-aware check that a head
+  validated only on natural-gene TE has *not* earned calibration for BT4's
+  CDS-variant regime. `passed` requires both the Spearman threshold **and**
+  conformal coverage near target (point accuracy *and* honest uncertainty). The
+  gate never flips anything: thresholds are inputs set at gate time, and the
+  neutral `NullExpressionModel` provably cannot pass (its zero-variance scores
+  give Spearman 0). New `ExpressionEvalCase` / `ExpressionGateReport` and a
+  `run_expression_gate(predictor, samples)` wrapper. Fully dependency-free and
+  tested without torch or any real model, mirroring how the splice
+  fidelity/attestation machinery shipped before a calibrated backend.
+- **Shared dependency-free statistics** (`bt4.biomodels._stats`) — `pearson`,
+  `spearman` (moved from `splice.agreement`, which now re-exports them), plus
+  `r2_score`, `conformal_quantile` (finite-sample split-conformal), and
+  `empirical_coverage`. Single well-tested home for the estimators the splice
+  agreement report and the expression gate both use.
 - **License-clean splice fidelity-attestation layer**
   (`bt4.biomodels.splice.attestation`) — the honest promotion path for the wrapped
   Pangolin / SpliceAI backends (CLAUDE.md §6, §10). A `FidelityAttestation` records

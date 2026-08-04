@@ -29,10 +29,10 @@ numpy); it depends only on the :class:`SplicePredictor` protocol and
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from bt4.biomodels._stats import pearson, spearman
 from bt4.biomodels.splice.base import DEFAULT_TOP_K, SplicePredictor, pooled_risk
 
 __all__ = [
@@ -41,70 +41,6 @@ __all__ = [
     "pearson",
     "spearman",
 ]
-
-
-def _ranks(values: Sequence[float]) -> list[float]:
-    """Return fractional (tie-averaged) ranks of ``values``.
-
-    Ties share the average of the ranks they span, so Spearman on the ranks is
-    well defined in the presence of equal scores.
-    """
-    order = sorted(range(len(values)), key=lambda i: values[i])
-    ranks = [0.0] * len(values)
-    i = 0
-    while i < len(order):
-        j = i
-        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
-            j += 1
-        average = (i + j) / 2.0 + 1.0  # 1-based, averaged over the tie block
-        for k in range(i, j + 1):
-            ranks[order[k]] = average
-        i = j + 1
-    return ranks
-
-
-def pearson(x: Sequence[float], y: Sequence[float]) -> float:
-    """Return the Pearson correlation of ``x`` and ``y``.
-
-    Args:
-        x: First series.
-        y: Second series (same length as ``x``).
-
-    Returns:
-        The Pearson correlation in ``[-1, 1]``, or ``0.0`` when either series has
-        zero variance (correlation is undefined; ``0.0`` is the honest "no
-        detectable linear relationship" default).
-
-    Raises:
-        ValueError: If the series differ in length or are shorter than 2.
-    """
-    if len(x) != len(y):
-        raise ValueError(f"series differ in length: {len(x)} vs {len(y)}")
-    n = len(x)
-    if n < 2:
-        raise ValueError("correlation needs at least two points")
-    mean_x = math.fsum(x) / n
-    mean_y = math.fsum(y) / n
-    dx = [xi - mean_x for xi in x]
-    dy = [yi - mean_y for yi in y]
-    cov = math.fsum(a * b for a, b in zip(dx, dy, strict=True))
-    var_x = math.fsum(a * a for a in dx)
-    var_y = math.fsum(b * b for b in dy)
-    if var_x == 0.0 or var_y == 0.0:
-        return 0.0
-    return cov / math.sqrt(var_x * var_y)
-
-
-def spearman(x: Sequence[float], y: Sequence[float]) -> float:
-    """Return the Spearman rank correlation of ``x`` and ``y``.
-
-    Computed as the Pearson correlation of the tie-averaged ranks, so it measures
-    monotonic (rank) agreement rather than linear agreement.
-
-    Raises:
-        ValueError: If the series differ in length or are shorter than 2.
-    """
-    return pearson(_ranks(x), _ranks(y))
 
 
 @dataclass(frozen=True, slots=True)
