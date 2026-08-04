@@ -23,7 +23,7 @@ import math
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
-from bt4 import __version__, _accel
+from bt4 import __version__
 from bt4.biomodels.codon.pairs import build_codon_pair_table
 from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
 from bt4.biomodels.codon.tai import load_tai_provenance, load_tai_table
@@ -60,13 +60,7 @@ from bt4.objectives.minmax import MinMaxTerm
 from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
-from bt4.optimize import SolveResult, solve_exact
-from bt4.optimize.exact_dp import (
-    _NATIVE_MAX_CONTEXTS,
-    _NATIVE_MIN_RESIDUES,
-    _precompute_structure,
-    _solve_from_structure,
-)
+from bt4.optimize import SolveResult, frontier_solver, solve_exact
 from bt4.provenance import Manifest, build_manifest, resolve_git_commit
 
 __all__ = [
@@ -981,37 +975,24 @@ def run_frontier(
 
     axes = _frontier_axes(table, config)
     objective_context = max((term.context_len() for term in axes), default=0)
-    context_len = max([objective_context, *(c.context_len() for c in constraints)])
     grid = _simplex_grid(len(axes), steps)
     total = len(grid)
 
     # The frontier solves the same trellis (same residues + constraints) once per
-    # grid point, changing only the objective *weights*. When the objective is
-    # position-independent (no 5' ramp) and the native accelerator is present, we
-    # build the trellis transition graph *once* and reuse it for every point --
-    # only the cheap per-transition deltas are recomputed -- and run the DP inner
-    # loop in Rust. This is byte-identical to the pure-Python exact DP (each point
-    # is still a proven-optimal solve) but amortizes the precompute across the
-    # sweep (CLAUDE.md §7). A context-count cap keeps the precompute bounded;
-    # otherwise (or without the accelerator) each point uses the pure-Python DP.
-    structure = None
-    if _position_independent(axes) and _accel.ACCELERATED and len(residues) >= _NATIVE_MIN_RESIDUES:
-        structure = _precompute_structure(
-            residues, constraints, context_len, max_contexts=_NATIVE_MAX_CONTEXTS
-        )
-
-    def _solve_point(active: Sequence[tuple[ObjectiveTerm, float]]) -> SolveResult:
-        if structure is not None:
-            return _solve_from_structure(
-                structure, _scalar_delta(active), constraints, config.beam, len(residues)
-            )
-        return solve_exact(
-            residues,
-            scalar_delta=_scalar_delta(active),
-            constraints=constraints,
-            beam=config.beam,
-            objective_context=objective_context,
-        )
+    # grid point, changing only the objective *weights*. `frontier_solver` builds a
+    # reusable solver that, when the objective is position-independent (no 5' ramp)
+    # and the native accelerator is present, precomputes the trellis transition
+    # graph once and reuses it across every point (only the cheap deltas
+    # recomputed, DP inner loop in Rust) -- byte-identical to the pure-Python exact
+    # DP, but amortizing the precompute across the sweep (CLAUDE.md §7). Without
+    # that, each point falls back to the pure-Python DP. All native-path gating is
+    # encapsulated in the optimize layer behind this public seam.
+    solve_point = frontier_solver(
+        residues,
+        constraints,
+        objective_context=objective_context,
+        position_independent=_position_independent(axes),
+    )
 
     by_dna: dict[str, Result] = {}
     for i, weights in enumerate(grid):
@@ -1021,7 +1002,7 @@ def run_frontier(
             # frontier is honest -- just a coarser sample of the trade-off surface.
             break
         active = list(zip(axes, weights, strict=True))
-        solve = _solve_point(active)
+        solve = solve_point(_scalar_delta(active), config.beam)
         if solve.dna not in by_dna:
             by_dna[solve.dna] = _make_result(
                 protein=p,

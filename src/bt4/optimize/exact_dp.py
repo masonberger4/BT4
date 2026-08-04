@@ -29,7 +29,12 @@ from bt4.domain.certificate import OptimalityCertificate, OptimalityStatus
 from bt4.domain.contracts import Constraint
 from bt4.domain.genetic_code import synonymous_codons
 
-__all__ = ["InfeasibleError", "SolveResult", "solve_exact"]
+__all__ = ["InfeasibleError", "SolveResult", "frontier_solver", "solve_exact"]
+
+# A reusable solver: given a scalar objective delta and a beam width, return the
+# solve for that weighting. Used by the Pareto frontier, which solves the same
+# trellis (same residues + constraints) once per objective scalarization.
+ReusableSolver = Callable[[Callable[[str, str, int], float], "int | None"], "SolveResult"]
 
 # Minimum residue count before the native (precomputed-table) trellis path is
 # worth its precompute cost. Below this the pure-Python layer loop is already
@@ -428,6 +433,71 @@ def _solve_native(
     structure = _precompute_structure(residues, constraints, context_len)
     assert structure is not None  # no max_contexts cap here
     return _solve_from_structure(structure, scalar_delta, constraints, beam, len(residues))
+
+
+def frontier_solver(
+    residues: Sequence[str],
+    constraints: Sequence[Constraint],
+    *,
+    objective_context: int = 0,
+    position_independent: bool = False,
+) -> ReusableSolver:
+    """Build a reusable solver that shares one trellis structure across weightings.
+
+    The Pareto frontier solves the *same* trellis -- identical residues and
+    constraints -- once per objective scalarization, changing only the objective
+    weights. This is the public seam that lets that sweep amortize the work: when
+    the objective is ``position_independent`` (no ``POSITIONAL`` term) and the Rust
+    accelerator is present on a large-enough instance, the reachable-context
+    transition graph is precomputed **once** here and reused for every returned
+    solve (only the cheap per-transition deltas are recomputed, and the DP inner
+    loop runs in native code); otherwise every call falls back to the pure-Python
+    :func:`solve_exact`. Either way each returned solve is byte-identical to the
+    pure-Python exact DP (a proven-optimal, or explicitly beam-truncated, result).
+
+    The native-path gating (:data:`_NATIVE_MIN_RESIDUES`, :data:`_NATIVE_MAX_CONTEXTS`)
+    and the trellis-structure internals stay encapsulated here in the ``optimize``
+    layer -- callers get a plain public callable and never touch a private symbol
+    (CLAUDE.md §3/§10.9).
+
+    Args:
+        residues: Amino-acid letters including the trailing stop.
+        constraints: Hard-feasibility rules (the shared trellis structure).
+        objective_context: Extra trailing context the objective needs (as in
+            :func:`solve_exact`).
+        position_independent: Caller's guarantee that every weighting passed to the
+            returned solver is a pure function of ``(prefix[-K:], codon)`` with no
+            dependence on the codon index (see :func:`solve_exact`). Only then is
+            the native shared-structure path eligible.
+
+    Returns:
+        A :data:`ReusableSolver`: call it as ``solve(scalar_delta, beam)`` to get
+        the :class:`SolveResult` for that objective weighting.
+    """
+    context_len = max([objective_context, *(c.context_len() for c in constraints)])
+    n_residues = len(residues)
+    structure: _TrellisStructure | None = None
+    if position_independent and _accel.ACCELERATED and n_residues >= _NATIVE_MIN_RESIDUES:
+        structure = _precompute_structure(
+            residues, constraints, context_len, max_contexts=_NATIVE_MAX_CONTEXTS
+        )
+
+    def solve(
+        scalar_delta: Callable[[str, str, int], float], beam: int | None
+    ) -> SolveResult:
+        if structure is not None:
+            return _solve_from_structure(
+                structure, scalar_delta, constraints, beam, n_residues
+            )
+        return solve_exact(
+            residues,
+            scalar_delta=scalar_delta,
+            constraints=constraints,
+            beam=beam,
+            objective_context=objective_context,
+        )
+
+    return solve
 
 
 def _wins(new_score: float, new_dna: str, current: tuple[float, str]) -> bool:

@@ -9,13 +9,19 @@ dynamic program.
 from __future__ import annotations
 
 from bt4.optimize.anneal_refine import anneal_refine
-from bt4.optimize.exact_dp import InfeasibleError, SolveResult, solve_exact
+from bt4.optimize.exact_dp import (
+    InfeasibleError,
+    SolveResult,
+    frontier_solver,
+    solve_exact,
+)
 from bt4.optimize.sample import sample_sequences
 
 __all__ = [
     "InfeasibleError",
     "SolveResult",
     "anneal_refine",
+    "frontier_solver",
     "sample_sequences",
     "solve_exact",
 ]
