@@ -181,6 +181,60 @@ def test_top_k_override_pools_uniformly() -> None:
     assert all(d > 0 for d in deltas)
 
 
+class _TwoTrackBackend:
+    """A SpliceAI-shaped backend: BOTH donor and acceptor tracks populated.
+
+    Each sequence maps to (acceptor_prob, donor_prob) placed as one site each, so
+    pooled_risk pools two distinct sites -- exercising backend_agreement across a
+    backend whose SpliceResult shape differs from the donor-only fake.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        risk_by_seq: dict[str, tuple[float, float]],
+        top_k: int = 3,
+    ) -> None:
+        self._name = name
+        self._risk_by_seq = risk_by_seq
+        self.top_k = top_k
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def calibrated(self) -> bool:
+        return False
+
+    def score_sequence(self, dna: str) -> SpliceResult:
+        acc, don = self._risk_by_seq[dna.upper()]
+        return SpliceResult(donor=(don,), acceptor=(acc,), model_name=self._name, calibrated=False)
+
+    def delta_splicing(self, designed_dna: str, reference_dna: str) -> float:
+        return pooled_risk(self.score_sequence(reference_dna), self.top_k) - pooled_risk(
+            self.score_sequence(designed_dna), self.top_k
+        )
+
+
+def test_agreement_is_shape_agnostic_across_backends() -> None:
+    # A donor-only (Pangolin-shaped) backend and a both-tracks (SpliceAI-shaped)
+    # backend compare fine: backend_agreement works at the pooled-risk level, so
+    # the SpliceResult layout does not matter.
+    donor_only = _FakeBackend("pangolin-shaped", {"REF": 0.9, "X": 0.6, "Y": 0.7, "Z": 0.8})
+    two_track = _TwoTrackBackend(
+        "spliceai-shaped",
+        {"REF": (0.85, 0.9), "X": (0.55, 0.6), "Y": (0.65, 0.7), "Z": (0.75, 0.8)},
+    )
+    report = backend_agreement([donor_only, two_track], _CANDS, _REF)
+    assert set(report.backends) == {"pangolin-shaped", "spliceai-shaped"}
+    # Both rank candidates by risk the same way (X<Y<Z), so they agree.
+    assert report.rank_correlations[("pangolin-shaped", "spliceai-shaped")] == pytest.approx(1.0)
+    # The two-track backend pools two sites, so its deltas differ in magnitude
+    # from the donor-only one -- agreement is about ranking, not identical values.
+    assert report.delta_by_backend["spliceai-shaped"] != report.delta_by_backend["pangolin-shaped"]
+
+
 def test_real_baseline_backend_runs() -> None:
     # A realistic end-to-end pass with the actual PWM baseline as one backend.
     baseline = ConsensusPwmSplicePredictor()

@@ -54,8 +54,10 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   enforced, not a calibrated expression claim), and a **restriction-enzyme
   catalog** (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* codon tables out
-  of the box, plus real **tAI** tables for human, mouse, and yeast (GtRNAdb tRNA
-  counts); `bt4 build-table` builds an authentic codon table from your own CDS FASTA.
+  of the box, plus real **tAI** tables for eight organisms (human, mouse, rat,
+  zebrafish, *Drosophila*, *C. elegans*, *Arabidopsis*, and *S. cerevisiae*) from
+  GtRNAdb tRNA counts; `bt4 build-table` builds an authentic codon table from your
+  own CDS FASTA.
 - **Benchmarked against real tools:** `scripts/compare_tools.py` places BT4 next
   to GeneOptimizer / IDT / Twist / GenScript on a cited, CC BY 4.0 panel — every
   metric recomputed from the sequence, and BT4 never claimed "better", just placed.
@@ -81,14 +83,15 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   baseline as calibrated thermodynamics.
 
 > **Honest about scope.** BT4's design aims wider still — SpliceAI/Pangolin-class
-> splice models and a learned expression head. The **Pangolin** backend has now
-> landed as an inference-only wrapper (it drives your own installed, GPL-3.0
-> Pangolin — BT4 bundles neither its code nor its weights — and hash-pins the
-> weights it loads), together with a two-backend agreement harness. But it ships
-> **`calibrated=False`** until it passes an integration-fidelity gate, so BT4 still
-> refuses to present it as a validated result; the SpliceAI cross-check and the
-> learned expression head are **not shipped yet**. See [`CLAUDE.md`](./CLAUDE.md)
-> §9 for the full plan.
+> splice models and a learned expression head. **Both the Pangolin and SpliceAI
+> backends have now landed** as inference-only wrappers: each drives your own
+> installed model (BT4 bundles neither code nor weights — Pangolin is GPL-3.0;
+> SpliceAI's code is PolyForm Strict and its weights CC BY-NC 4.0, noncommercial)
+> and hash-pins the weights it loads, with a two-backend agreement harness that
+> turns running both into an uncertainty signal. But they ship
+> **`calibrated=False`** until they pass an integration-fidelity gate, so BT4 still
+> refuses to present them as validated results; the learned expression head is
+> **not shipped yet**. See [`CLAUDE.md`](./CLAUDE.md) §9 for the full plan.
 
 ---
 
@@ -274,7 +277,8 @@ objective is a new file plus its honesty property test — never an engine edit.
 
 ## Roadmap
 
-Phases 0–1 are done and Phase 2 is essentially complete: the multi-objective
+Phases 0–2 are complete (and Phase 3 groundwork has landed; Phase 5 is opened):
+the multi-objective
 frontier, the desktop app, **tAI** (real GtRNAdb tRNA data), 5′-ramp / CpG /
 %MinMax / **codon-pair-bias** objectives, tandem & inverted-repeat, internal-ATG,
 max-GC-run, max-repeat-length and **out-of-frame uORF** constraints, forbidden-
@@ -282,13 +286,13 @@ sequence presets, a cited tool benchmark, and two GC-budget backends — OR-Tool
 CP-SAT and an honest **exact budget DP** (which, unlike CP-SAT, keeps local
 constraints and pairwise terms under the budget) — have landed. Phase 3 groundwork
 is in (the `FoldingModel` and `SplicePredictor` contracts with honest baselines,
-the SA refinement engine, plotted per-site tracks), the first **wrapped published
-splice backend** (Pangolin, inference-only, hash-pinned, `calibrated=False` until
-its fidelity gate) with a two-backend agreement harness, and the
-**`ExpressionPredictor` contract is scaffolded** for Phase 4 (a neutral,
-honestly-uncalibrated placeholder until a validated head passes its gate). The
-SpliceAI cross-check, the validated expression model, and a Rust trellis port are
-next. See [`CLAUDE.md`](./CLAUDE.md) §9.
+the SA refinement engine, plotted per-site tracks), **both wrapped published
+splice backends** (Pangolin + SpliceAI, inference-only, hash-pinned,
+`calibrated=False` until their fidelity gates) with a two-backend agreement
+harness, and the **`ExpressionPredictor` contract is scaffolded** for Phase 4 (a
+neutral, honestly-uncalibrated placeholder until a validated head passes its
+gate). Recording the splice fidelity gates, the validated expression model, and a
+Rust trellis port are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
 
 ## Contributing
 

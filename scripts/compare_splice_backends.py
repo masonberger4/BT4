@@ -4,10 +4,12 @@ CLAUDE.md section 6 makes running more than one splice backend and **reporting
 their agreement** a first-class uncertainty signal, not redundancy. This script
 scores a panel of candidate coding sequences against a reference with every
 *available* :class:`~bt4.biomodels.splice.base.SplicePredictor` backend -- always
-the honestly-labeled PWM baseline, plus the wrapped **Pangolin** CNN when it is
-installed and its weights resolve -- and prints each backend's Delta-splicing
-ranking together with the cross-backend agreement report
-(:func:`bt4.biomodels.splice.backend_agreement`).
+the honestly-labeled PWM baseline, plus the wrapped **Pangolin** and **SpliceAI**
+CNNs when they are installed and their weights resolve -- and prints each
+backend's Delta-splicing ranking together with the cross-backend agreement report
+(:func:`bt4.biomodels.splice.backend_agreement`). With both CNNs installed, this
+is agreement between two real, independently-trained splice models -- the §6
+"run both, report agreement" uncertainty signal.
 
 Honest framing (read before reading the numbers):
 
@@ -24,9 +26,11 @@ Honest framing (read before reading the numbers):
   (high Spearman) that is corroboration; where they disagree, that disagreement
   is surfaced as uncertainty, not resolved.
 
-Pangolin is GPL-3.0 and is **not bundled** with BT4; install it separately from
-https://github.com/tkzeng/Pangolin (which provides the weights) and BT4 will pick
-it up. Without it, the harness runs with the baseline alone and says so.
+Neither CNN is bundled with BT4 (Pangolin is GPL-3.0; SpliceAI code is PolyForm
+Strict 1.0.0 and its weights are CC BY-NC 4.0, noncommercial). Install them
+separately (https://github.com/tkzeng/Pangolin, https://github.com/Illumina/SpliceAI,
+each of which provides its weights) and BT4 picks them up. Without them the
+harness runs with the baseline alone and says so.
 
 Being a standalone script (not part of the ``bt4`` package import graph), it runs
 through the stable :mod:`bt4.api` / :mod:`bt4.io` surfaces and reaches into
@@ -50,6 +54,7 @@ from bt4 import api
 from bt4.biomodels.splice import (
     ConsensusPwmSplicePredictor,
     PangolinSplicePredictor,
+    SpliceAiSplicePredictor,
     SplicePredictor,
     backend_agreement,
 )
@@ -67,9 +72,11 @@ _DEMO_PROTEIN = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALP
 def available_backends() -> tuple[list[SplicePredictor], list[str]]:
     """Return the runnable splice backends and notes on any that were skipped.
 
-    The PWM baseline is always available. The Pangolin backend is included only
-    when :meth:`PangolinSplicePredictor.available` is true (torch + the GPL
-    ``pangolin`` package installed and its weights resolvable).
+    The PWM baseline is always available. The Pangolin and SpliceAI CNN backends
+    are each included only when their ``available()`` reports true (the heavy dep
+    installed and their weights resolvable). When BOTH CNNs are present, agreement
+    between two real, independently-trained CNNs becomes reachable -- the §6
+    "run both, report agreement" uncertainty signal.
 
     Returns:
         A ``(backends, notes)`` pair: the usable backends and human-readable
@@ -77,6 +84,7 @@ def available_backends() -> tuple[list[SplicePredictor], list[str]]:
     """
     backends: list[SplicePredictor] = [ConsensusPwmSplicePredictor()]
     notes: list[str] = []
+
     pangolin = PangolinSplicePredictor()
     if pangolin.available():
         backends.append(pangolin)
@@ -89,9 +97,27 @@ def available_backends() -> tuple[list[SplicePredictor], list[str]]:
     else:
         notes.append(
             "Pangolin backend unavailable (install torch + the GPL 'pangolin' "
-            "package from https://github.com/tkzeng/Pangolin; showing the "
-            "baseline alone)."
+            "package from https://github.com/tkzeng/Pangolin)."
         )
+
+    spliceai = SpliceAiSplicePredictor()
+    if spliceai.available():
+        backends.append(spliceai)
+        if not spliceai.calibrated:
+            notes.append(
+                "SpliceAI is available but reports calibrated=False (its "
+                "integration-fidelity gate has not been run); its scores are a "
+                "prior, not a validated result. SpliceAI weights are CC BY-NC 4.0 "
+                "(noncommercial)."
+            )
+    else:
+        notes.append(
+            "SpliceAI backend unavailable (install tensorflow + the CC BY-NC "
+            "'spliceai' package from https://github.com/Illumina/SpliceAI)."
+        )
+
+    if len(backends) == 1:
+        notes.append("Only the PWM baseline is available; showing it alone.")
     return backends, notes
 
 

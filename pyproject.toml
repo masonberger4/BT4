@@ -31,6 +31,11 @@ ml = ["torch>=2.2", "numpy>=1.26"]
 # https://github.com/tkzeng/Pangolin (GPL-3.0). This extra pins only the runtime
 # BT4 imports directly (PyTorch); see bt4.biomodels.splice.pangolin.
 splice-pangolin = ["torch>=2.2"]
+# SpliceAI (Illumina) is even more restrictive: code is PolyForm Strict 1.0.0 and
+# weights are CC BY-NC 4.0 (noncommercial). NOT bundled; install the `spliceai`
+# package separately (it ships the weights). This extra pins only TensorFlow (the
+# runtime BT4 loads the Keras models with); see bt4.biomodels.splice.spliceai.
+splice-spliceai = ["tensorflow>=2.6"]
 app = ["PySide6>=6.7", "pyqtgraph>=0.13"]         # BT4 Studio native desktop app
 service = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]  # optional headless HTTP API (+ test client)
 assp = ["httpx>=0.27"]                            # opt-in online ASSP cross-check
