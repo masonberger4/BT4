@@ -27,14 +27,22 @@ from bt4.biomodels.expression.gate import (
     run_expression_gate,
     verify_expression_gate,
 )
+from bt4.biomodels.expression.ribonn import (
+    PINNED_WEIGHT_SHA256,
+    RiboNNExpressionModel,
+    load_pinned_sha256,
+)
 
 __all__ = [
+    "PINNED_WEIGHT_SHA256",
     "ExpressionEvalCase",
     "ExpressionGateReport",
     "ExpressionPredictor",
     "ExpressionResult",
     "NullExpressionModel",
+    "RiboNNExpressionModel",
     "default",
+    "load_pinned_sha256",
     "run_expression_gate",
     "verify_expression_gate",
 ]
