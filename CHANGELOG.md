@@ -26,6 +26,27 @@ its first tagged release.
   it across every scalarization point (only the cheap deltas recomputed) with the
   DP in Rust — a measured ~2.7–5.5x `run_frontier` speedup with **byte-identical**
   DNA, objective scalars, and certificates.
+- **Block/segment moves + parallel tempering in the SA refinement engine**
+  (`bt4.optimize.anneal_refine`, Phase 3 — CLAUDE.md §7, §9). The engine gained
+  four opt-in knobs: `block_size` / `block_prob` (coordinated multi-position
+  synonymous swaps) and `replicas` / `temps` / `swap_every` (a parallel-tempering
+  replica ladder with standard replica-exchange Metropolis swaps). These widen the
+  refinement's *reach* so it can cross a barrier that only clears when several
+  codons move **together** — a dispersed max-repeat or out-of-frame uORF the
+  single-codon chain could leave in place — **without weakening invariant #5**:
+  block candidates pass the same local (union-of-windows `ok_suffix`) and global
+  (whole-sequence recount) feasibility gates, every replica gates against its own
+  current hard-violation count, every visited configuration keeps a global count
+  `<=` the seed's, and the delivered result is ranked lower-global-count-first then
+  higher-score. All four default off, and with them off the engine reproduces the
+  prior single-chain trajectory **byte-for-byte** (invariant #7). Block moves
+  always full-`score` re-score (never `delta_score`), since summing per-position
+  deltas is only valid for additive disjoint-context terms. The honest
+  **feasibility floor** is preserved: a repeat pinned to synonymously-immovable
+  bases (Met `ATG` / Trp `TGG`) is unremovable by any move and is still reported as
+  a residual, never claimed clean. New Hypothesis tests pin the never-raise-global
+  guarantee under block+tempering, determinism/round-trip with replicas and blocks,
+  the default-knobs no-op, and the immovable-repeat feasibility floor.
 - **Wrapped SpliceAI splice backend** (`bt4.biomodels.splice.SpliceAiSplicePredictor`)
   — the second *wrapped published* splice CNN behind the `SplicePredictor`
   contract, the cross-check to Pangolin (Phase 3, CLAUDE.md §6). It runs the

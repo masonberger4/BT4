@@ -625,23 +625,30 @@ is a requirement, not a nice-to-have.
   trajectory (#7), and an honest **HEURISTIC** certificate. A **`--refine`** path
   wires the folding ΔG into an SA pass over the exact-DP seed, loudly flagging
   `folding_calibrated=False` when the baseline is used (per §6/§10.6).
-  **Known limitation (honestly disclosed, not hidden):** because moves are
-  *single-codon* and the global-constraint gate strictly forbids *any* increase
-  in the whole-sequence hard-violation count, the engine cannot cross a barrier
-  that requires a temporary count increase or a **coordinated multi-codon**
-  change — so it can leave a dispersed max-repeat / uORF in place even when some
-  simultaneous multi-position swap would clear it. (It *can* still traverse
-  count-`==` plateaus, since the gate rejects only strict increases, so some
-  multi-position effects are reachable as a sequence of lateral moves.) A repeat
-  pinned to synonymously-**immovable** bases — e.g. Met `ATG` / Trp `TGG`, or a
-  degenerate position all synonymous codons share — is unremovable by *any*
-  synonymous scheme and is a genuine feasibility floor, not an engine defect.
-  Every such case is reported as a disclosed residual (`max_repeat_residual`,
-  enforcement `"partial"`), never a silent "clean" claim. The **block/segment
-  moves** and **parallel-tempering** schedules below are the planned remedy:
-  block moves propose coordinated multi-position swaps; tempering lets hot
-  replicas accept uphill moves and swap them into the cold chain, crossing the
-  barrier without weakening invariant #5 on the delivered result. **Both wrapped
+  **Reaching farther without weakening #5 — block moves + parallel tempering have
+  landed.** `anneal_refine` now takes opt-in `block_size`/`block_prob` (coordinated
+  multi-position synonymous swaps) and `replicas`/`temps`/`swap_every` (a
+  parallel-tempering replica ladder with standard replica-exchange Metropolis
+  swaps). Block moves make a barrier that only clears when two codons move
+  *together* (a dispersed max-repeat / uORF) reachable in one step, and hot
+  replicas can accept uphill moves and swap their already-feasible configuration
+  into the cold chain — so the search crosses barriers the single-codon chain
+  could not. Invariant #5 is preserved *structurally*: block candidates pass the
+  same local (union-of-windows `ok_suffix`) and global (whole-sequence recount)
+  gates, every replica gates against **its own** current count, every visited
+  configuration keeps a global count `<=` the seed's, and the delivered result is
+  ranked **lower-global-count-first then higher-score** (`_better`). All four knobs
+  default off, and with them off the engine reproduces the prior single-chain
+  trajectory **byte-for-byte** (#7). Block moves **always full-`score` re-score**
+  (never `delta_score`) — summing per-position deltas is valid only for additive
+  disjoint-context terms, which folding/splice/expression are not.
+  **Feasibility floor (honestly disclosed, not hidden):** a repeat pinned to
+  synonymously-**immovable** bases — e.g. Met `ATG` / Trp `TGG`, or a degenerate
+  position all synonymous codons share — is unremovable by *any* synonymous scheme,
+  block move or hot replica alike, and is a genuine feasibility floor, not an engine
+  defect. Every such case is reported as a disclosed residual
+  (`max_repeat_residual`, enforcement `"partial"`), never a silent "clean" claim.
+  **Both wrapped
   published splice backends have landed**: `PangolinSplicePredictor`
   (`biomodels/splice/pangolin.py`, Pangolin — GPL-3.0, PyTorch, one combined
   `P(splice)` → `donor`) and `SpliceAiSplicePredictor`
@@ -659,9 +666,9 @@ is a requirement, not a nice-to-have.
   reports pairwise Spearman rank / sign agreement across whichever backends are
   available — with both CNNs installed, agreement between two real,
   independently-trained models — the first-class uncertainty signal of §6. Still
-  ahead: recording the fidelity gates to promote to `calibrated=True`,
-  parallel-tempering / block moves (to escape the single-codon barrier above), and
-  the opt-in **ASSP** cross-check (§6) with offline fixtures.
+  ahead: recording the fidelity gates to promote to `calibrated=True` and the
+  opt-in **ASSP** cross-check (§6) with offline fixtures (block/segment moves and
+  parallel tempering have now landed — see the refinement note above).
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
   each recomputed from the sequence, never fed to the solver) **and are plotted
