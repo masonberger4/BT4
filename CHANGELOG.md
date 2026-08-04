@@ -8,6 +8,27 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Wrapped Pangolin splice backend** (`bt4.biomodels.splice.PangolinSplicePredictor`)
+  — the first *wrapped published* splice model behind the existing
+  `SplicePredictor` contract (Phase 3, CLAUDE.md §6). It runs the already-validated
+  **Pangolin** CNN (Zeng & Li 2022) as an inference-only backend, feeding its
+  per-nucleotide `P(splice)` into the shipped Δsplicing / top-k-log-odds framing.
+  **License-clean:** Pangolin is **GPL-3.0** (the earlier roadmap's "MIT" was
+  wrong), so — exactly as BT4 wraps GPL ViennaRNA — the adapter **lazily imports
+  the user's own installed `pangolin` package and weights and bundles neither**;
+  BT4 stays MIT. Weights are **SHA-256 hash-pinned** (the published v1.0.2 digests)
+  and verified *before* they are unpickled, keeping runs
+  reproducible-from-manifest. The adapter reproduces upstream Pangolin's scores
+  **bit-for-bit** yet ships **`calibrated=False`** (no reference panel is bundled;
+  `verify_pangolin_fidelity` is the promotion gate), so `default()` keeps returning
+  the honest PWM baseline. Heavy deps behind the new `bt4[splice-pangolin]` extra,
+  lazily imported so `import bt4` stays light.
+- **Two-backend splice agreement harness** — `bt4.biomodels.splice.backend_agreement`
+  reports each available backend's Δsplicing ranking, pairwise **Spearman rank
+  agreement**, and sign agreement across candidates (the first-class uncertainty
+  signal of CLAUDE.md §6/§8); it reports, it does not judge. Exposed as the
+  standalone runner `scripts/compare_splice_backends.py` (`--fasta`, `--json`),
+  which degrades to the baseline alone — and says so — when Pangolin is absent.
 - **CpG / UpA whole-sequence count budget** (`dinuc_budget` + `dinuc_min` /
   `dinuc_max`; CLI `--cpg-min/--cpg-max` and `--upa-min/--upa-max`) — the last
   Phase 2 item. A dinucleotide count does not decompose per-codon (a 2-mer

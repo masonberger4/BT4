@@ -25,6 +25,12 @@ dependencies = []  # the pure core is stdlib-only; heavy deps live behind extras
 ilp = ["ortools>=9.10"]
 fold = ["ViennaRNA>=2.6"]
 ml = ["torch>=2.2", "numpy>=1.26"]
+# Wrapped published splice CNNs (inference only, out of the optimizer loop). The
+# adapter drives the user's own install; the GPL `pangolin` package + weights are
+# NOT bundled and must be installed separately from
+# https://github.com/tkzeng/Pangolin (GPL-3.0). This extra pins only the runtime
+# BT4 imports directly (PyTorch); see bt4.biomodels.splice.pangolin.
+splice-pangolin = ["torch>=2.2"]
 app = ["PySide6>=6.7", "pyqtgraph>=0.13"]         # BT4 Studio native desktop app
 service = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]  # optional headless HTTP API (+ test client)
 assp = ["httpx>=0.27"]                            # opt-in online ASSP cross-check

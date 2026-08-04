@@ -27,9 +27,13 @@ before writing code, and keep it current as the architecture evolves.
 > **Phase 5 has opened** with an honest **library / degenerate-design mode** (a
 > deterministic codon-distribution sampler with a `SAMPLED` certificate, not an
 > optimizer). Two more native `bt4_native` primitives (`max_gc_run`,
-> `longest_repeat`) also landed. Still ahead: the **validated splice backends**
-> (wrapping published **SpliceAI + Pangolin** for inference — no self-training),
-> the **learned expression head**, the **full Rust trellis port**, and packaged
+> `longest_repeat`) also landed. The first **wrapped published splice backend**
+> has now landed too: `PangolinSplicePredictor` drives the user's own installed
+> **Pangolin** (GPL-3.0, PyTorch — *not* bundled; lazily imported like ViennaRNA),
+> hash-pinned and reproducing upstream scores bit-for-bit, shipped
+> `calibrated=False` pending its integration-fidelity gate, with a two-backend
+> agreement harness. Still ahead: the **SpliceAI** cross-check backend, the
+> **learned expression head**, the **full Rust trellis port**, and packaged
 > installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
@@ -292,27 +296,42 @@ aborting with "no feasible codon".
   (SpliceAI/Pangolin were trained on the full GTEx/GENCODE corpus with serious
   compute) *and* **unvalidated** — which the honesty gate forbids shipping as
   calibrated anyway. Instead BT4 wraps the already-validated, published
-  **SpliceAI** (Illumina; GPL-3.0, TensorFlow) and **Pangolin** (MIT, PyTorch) as
-  *inference-only* backends behind the existing `SplicePredictor` contract,
-  feeding their dense per-nucleotide donor/acceptor scores into the
-  already-shipped **Δsplicing** framing `P(site|designed) − P(site|reference)`
-  with **top-k / log-odds pooling** (never saturating noisy-OR, §10.14). Both run
-  **out of the inner loop** — a ~10 kb-context CNN is far too slow to score per SA
-  move — as a **final audit / frontier reranker**, exactly where the contract
-  already places splice. Weights are **hash-pinned** (SHA-256, kept out of git,
+  **SpliceAI** (Illumina; GPL-3.0, TensorFlow) and **Pangolin** (Zeng & Li 2022;
+  **GPL-3.0**, PyTorch) as *inference-only* backends behind the existing
+  `SplicePredictor` contract, feeding their dense per-nucleotide site scores into
+  the already-shipped **Δsplicing** framing `P(site|designed) − P(site|reference)`
+  with **top-k / log-odds pooling** (never saturating noisy-OR, §10.14). *(License
+  correction — the earlier roadmap called Pangolin "MIT"; the upstream repo is in
+  fact **GPL-3.0**, same as SpliceAI. Both are handled the license-clean way BT4
+  already handles GPL ViennaRNA: the adapter **lazily imports the user's own
+  installed package and weights and never bundles or reimplements them**, so BT4
+  stays MIT. Pangolin also reports **one combined per-position `P(splice)`**, not a
+  separated donor/acceptor pair — the adapter puts it in `SpliceResult.donor` with
+  `acceptor` all-zero so the union-pooling counts each site once.)* Both run **out
+  of the inner loop** — a ~10 kb-context CNN is far too slow to score per SA move —
+  as a **final audit / frontier reranker**, exactly where the contract already
+  places splice. Weights are **hash-pinned** (SHA-256, kept out of git,
   content-hash in the manifest), so — unlike the BT3 ASSP scrape — local inference
   stays **reproducible-from-manifest**. Running *both* and reporting their
   **agreement/disagreement** is a first-class uncertainty signal (§8), not
   redundancy. `calibrated=True` is set only after an **integration-fidelity
   check** — the adapter reproduces the published model's scores on a panel of
   known real sites / non-sites — *not* a from-scratch held-out-chromosome training
-  gate. The heavy TF / PyTorch deps live behind optional extras
+  gate. The heavy PyTorch / TF deps live behind optional extras
   (`bt4[splice-pangolin]` / `bt4[splice-spliceai]`, lazily imported like
-  ViennaRNA); **Pangolin (MIT/PyTorch) is the recommended first backend**, with
-  SpliceAI added second as the cross-check (verify its weight license before
-  bundling anything). **Honest scope:** these predict splice-*site presence*, and
-  a lower Δ means lower *predicted cryptic-splice risk* — a strong prior, but not
-  the same as validated expression gain (the same CAI-as-weak-proxy caution).
+  ViennaRNA); **Pangolin is the recommended first backend** (PyTorch, weights in
+  its repo, single combined-site output), with SpliceAI added second as the
+  cross-check. **Status:** the **Pangolin adapter has landed**
+  (`biomodels/splice/pangolin.py`) with a two-backend agreement harness
+  (`biomodels/splice/agreement.py`, `scripts/compare_splice_backends.py`); it
+  reproduces upstream Pangolin's scores **bit-for-bit** (verified against the
+  published v1.0.2 weights) yet ships **`calibrated=False`** — no reference panel
+  is bundled (capturing one needs the GPL weights and yields GPL-derived numbers),
+  so `default()` keeps returning the PWM baseline and a maintainer promotes to
+  calibrated only after recording the fidelity gate. **Honest scope:** these
+  predict splice-*site presence*, and a lower Δ means lower *predicted
+  cryptic-splice risk* — a strong prior, but not the same as validated expression
+  gain (the same CAI-as-weak-proxy caution).
 - **Folding — ViennaRNA** MFE / partition-function ΔG (real thermodynamics, not
   a hand-weighted proxy); objective *and* constraint (avoid RBS/Kozak-occluding
   hairpins).
@@ -586,15 +605,24 @@ is a requirement, not a nice-to-have.
   moves** and **parallel-tempering** schedules below are the planned remedy:
   block moves propose coordinated multi-position swaps; tempering lets hot
   replicas accept uphill moves and swap them into the cold chain, crossing the
-  barrier without weakening invariant #5 on the delivered result. Still
-  ahead: the **wrapped published splice backends** — SpliceAI + Pangolin as
-  inference-only `SplicePredictor` implementations (no self-training), scored
-  out-of-loop as an audit/reranker, hash-pinned and reproducible, run as a pair so
-  their agreement is a reported uncertainty signal, and flipped to
-  `calibrated=True` only after an integration-fidelity check against known
-  sites/non-sites (§6); parallel-tempering / block moves (to escape the
-  single-codon barrier above); and the opt-in **ASSP** cross-check (§6) with
-  offline fixtures.
+  barrier without weakening invariant #5 on the delivered result. The first
+  **wrapped published splice backend has landed**: `PangolinSplicePredictor`
+  (`biomodels/splice/pangolin.py`) drives the user's own installed **Pangolin**
+  (GPL-3.0, PyTorch — *not* bundled or reimplemented; lazily imported like GPL
+  ViennaRNA), scored out-of-loop as an audit/reranker, with its **weights
+  hash-pinned** (SHA-256 of the published v1.0.2 files, verified *before* they are
+  unpickled) so runs stay reproducible-from-manifest. It reproduces upstream
+  Pangolin's per-nucleotide scores **bit-for-bit** yet ships `calibrated=False`
+  (no reference panel is bundled — the integration-fidelity gate
+  `verify_pangolin_fidelity` is the promotion path), so `default()` keeps
+  returning the PWM baseline. The **two-backend agreement harness**
+  (`backend_agreement` + `scripts/compare_splice_backends.py`) reports pairwise
+  Spearman rank / sign agreement across whichever backends are available — the
+  first-class uncertainty signal of §6. Still ahead: the **SpliceAI** backend
+  (GPL-3.0, TensorFlow — second, as the cross-check), recording the fidelity gate
+  to promote Pangolin to `calibrated=True`, parallel-tempering / block moves (to
+  escape the single-codon barrier above), and the opt-in **ASSP** cross-check
+  (§6) with offline fixtures.
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
   each recomputed from the sequence, never fed to the solver) **and are plotted
@@ -610,9 +638,10 @@ is a requirement, not a nice-to-have.
   **`SplicePredictor` contract**
   (`biomodels/splice/`) has now landed with an honestly-labeled uncalibrated
   **consensus/PWM baseline** (`calibrated=False`, top-k/log-odds Δsplicing pooling
-  -- never noisy-OR, §10.14) and a `default()` that never crashes; it is the
-  contract the trained model will slot behind, and until that model passes its
-  held-out gate the baseline is never presented as calibrated. The **uORF-pairing
+  -- never noisy-OR, §10.14) and a `default()` that never crashes; the wrapped
+  **Pangolin** CNN backend (above) now slots behind exactly this contract, and
+  until a backend passes its gate the baseline remains the never-calibrated
+  default. The **uORF-pairing
   constraint** (`constraints/uorf.py`, `avoid_uorf`/`uorf_region_nt`) has now
   landed as the genuinely non-local half of internal-ATG handling: an
   out-of-frame internal ATG paired with a downstream in-its-frame stop is a short
