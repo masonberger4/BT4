@@ -665,10 +665,26 @@ is a requirement, not a nice-to-have.
   agreement harness** (`backend_agreement` + `scripts/compare_splice_backends.py`)
   reports pairwise Spearman rank / sign agreement across whichever backends are
   available — with both CNNs installed, agreement between two real,
-  independently-trained models — the first-class uncertainty signal of §6. Still
-  ahead: recording the fidelity gates to promote to `calibrated=True` and the
-  opt-in **ASSP** cross-check (§6) with offline fixtures (block/segment moves and
-  parallel tempering have now landed — see the refinement note above).
+  independently-trained models — the first-class uncertainty signal of §6. The
+  **license-clean fidelity-attestation layer** (`biomodels/splice/attestation.py`)
+  now provides the honest promotion path: a `FidelityAttestation` records **only**
+  a passing gate's derived scalars (`passed`, `max_abs_deviation`, `n_cases`,
+  `tolerance`) plus the public pinned weight SHA-256s and the tool version —
+  **never** a `FidelityCase` raw per-position score (those *are* the license-
+  encumbered model outputs), a shape enforced structurally (`_ALLOWED_FIELDS` +
+  a "no raw-score field" test). It layers four ways: a **committed** attestation
+  (re-verifiable by anyone holding the same weights, with a deterministic
+  `content_hash` for the manifest), **private execution** where the weights live,
+  a **user opt-in** via `verified_predictor(predictor, attestation)` (which flips
+  `calibrated=True` only when the attestation passed, clears the
+  `MAX_ATTESTATION_TOLERANCE` floor, and its weight SHAs exactly match the
+  adapter's `PINNED_WEIGHT_SHA256` — a refusal, never a silent downgrade), and the
+  baseline **fallback**. Because BT4 is open-source and **non-commercial**, both
+  Pangolin (GPL) and SpliceAI (CC BY-NC) are eligible to certify. Still ahead:
+  running an actual gate to emit a committed attestation (human-only — needs the
+  licensed weights + a captured panel) and the opt-in **ASSP** cross-check (§6)
+  with offline fixtures (block/segment moves and parallel tempering have now
+  landed — see the refinement note above).
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
   each recomputed from the sequence, never fed to the solver) **and are plotted

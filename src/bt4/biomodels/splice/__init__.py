@@ -29,6 +29,14 @@ time.
 from __future__ import annotations
 
 from bt4.biomodels.splice.agreement import AgreementReport, backend_agreement, spearman
+from bt4.biomodels.splice.attestation import (
+    MAX_ATTESTATION_TOLERANCE,
+    AttestationError,
+    FidelityAttestation,
+    attest_backend,
+    load_attestation,
+    verified_predictor,
+)
 from bt4.biomodels.splice.base import (
     DEFAULT_TOP_K,
     SplicePredictor,
@@ -55,8 +63,11 @@ from bt4.biomodels.splice.spliceai import (
 __all__ = [
     "DEFAULT_TISSUES",
     "DEFAULT_TOP_K",
+    "MAX_ATTESTATION_TOLERANCE",
     "AgreementReport",
+    "AttestationError",
     "ConsensusPwmSplicePredictor",
+    "FidelityAttestation",
     "FidelityCase",
     "FidelityReport",
     "PangolinSplicePredictor",
@@ -65,12 +76,15 @@ __all__ = [
     "SpliceAiSplicePredictor",
     "SplicePredictor",
     "SpliceResult",
+    "attest_backend",
     "backend_agreement",
     "default",
+    "load_attestation",
     "logit",
     "pool_log_odds",
     "pooled_risk",
     "spearman",
+    "verified_predictor",
     "verify_pangolin_fidelity",
     "verify_spliceai_fidelity",
 ]
@@ -88,6 +102,12 @@ def default() -> SplicePredictor:
         honestly-labeled baseline is the default today. It is labeled
         ``calibrated is False`` so its pseudo-probabilities are never mistaken for
         calibrated splice probabilities (CLAUDE.md sections 4.3, 6, and 10.6).
-        When a calibrated backend lands, this function will prefer it.
+
+        A calibrated CNN backend is obtained explicitly, not here: construct the
+        backend with your own installed weights and promote it with
+        :func:`verified_predictor` against a passing
+        :class:`FidelityAttestation` (see :mod:`bt4.biomodels.splice.attestation`).
+        ``default`` needs no per-user weight/tissue configuration and so keeps
+        returning the honest baseline.
     """
     return ConsensusPwmSplicePredictor()

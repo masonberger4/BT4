@@ -7,6 +7,27 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **License-clean splice fidelity-attestation layer**
+  (`bt4.biomodels.splice.attestation`) — the honest promotion path for the wrapped
+  Pangolin / SpliceAI backends (CLAUDE.md §6, §10). A `FidelityAttestation` records
+  **only** a passing integration-fidelity gate's derived scalars (`passed`,
+  `max_abs_deviation`, `n_cases`, `tolerance`) plus the public pinned weight
+  SHA-256s and the tool version — **never** a `FidelityCase` raw per-position score
+  (those are the license-encumbered model outputs). The shape is enforced
+  structurally (`_ALLOWED_FIELDS` + an honesty test asserting no raw-score field is
+  serializable), and `from_dict` refuses any unexpected key. `attest_backend`
+  refuses to record a failing or too-loose gate; `verified_predictor(predictor,
+  attestation)` is the single seam that flips a backend to `calibrated=True`, and
+  only when the attestation passed, clears the `MAX_ATTESTATION_TOLERANCE` floor,
+  and its weight SHAs exactly match the adapter's `PINNED_WEIGHT_SHA256` (a
+  refusal, never a silent downgrade). A deterministic, timestamp-free
+  `content_hash` makes an attestation a provenance-manifest stamp. This layers the
+  committed-record / private-execution / user-opt-in / baseline-fallback options;
+  no attestation ships, so `default()` still returns the honest PWM baseline. Both
+  Pangolin (GPL) and SpliceAI (CC BY-NC) are eligible to certify under BT4's
+  open-source, non-commercial scope.
+
 ## [0.4.0] - 2026-08-04
 
 First tagged release since 0.3.1, capturing the Phase 1 performance and Phase 3
