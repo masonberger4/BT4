@@ -45,11 +45,27 @@ and green on `main`:
 
 ## What's left (priority order — see CLAUDE.md §9 for the authoritative list)
 
-1. **Validated splice model** (Phase 3) — a SpliceAI/Pangolin-class per-nucleotide
-   CNN trained on real GENCODE, Δsplicing objective, **held-out-chromosome gate**
-   (PR-AUC/MCC/ECE), hash-pinned artifact out of git. Slots behind the existing
-   `SplicePredictor` contract; until it passes its gate the PWM baseline stays
-   `calibrated=False`. Needs GPU + data.
+1. **Wrap published SpliceAI + Pangolin as calibrated splice backends** (Phase 3)
+   — **Decision (this session): no self-training.** Do **not** train a bespoke
+   CNN; wrap the already-validated **Pangolin** (MIT, PyTorch — do this first) and
+   **SpliceAI** (Illumina, GPL-3.0, TensorFlow — second, as the cross-check) as
+   *inference-only* backends behind the **existing** `SplicePredictor` contract.
+   The Δsplicing framing (`P(site|designed) − P(site|reference)`) and top-k/
+   log-odds pooling are **already implemented** in `biomodels/splice/base.py`; the
+   adapter just supplies per-nucleotide site probabilities. Run them **out of the
+   inner loop** (audit / frontier reranker — a 10 kb CNN can't be scored per SA
+   move), **hash-pin** the weights (SHA-256, out of git, in the manifest → stays
+   reproducible), run **both** and report their **agreement** as an uncertainty
+   signal, and set `calibrated=True` only after an **integration-fidelity check**
+   (adapter reproduces the published model's scores on known real sites/non-sites)
+   — *not* a from-scratch training gate. **Needs no GPU and no training data.**
+   Heavy deps behind optional extras (`bt4[splice-pangolin]` /
+   `bt4[splice-spliceai]`). Caveats: verify SpliceAI's weight license before
+   bundling; keep the honest scope note (predicts splice-*site presence*; lower Δ =
+   lower *predicted* cryptic-splice risk, a strong prior, not validated expression
+   gain). **Concrete first PR:** the Pangolin adapter + a small two-backend
+   comparison harness, with the PWM baseline still the `calibrated=False` default
+   until the fidelity check passes.
 2. **Learned expression head** (Phase 4) — trained on real MPRA / ribosome-load
    data, hash-pinned, calibrated + uncertainty (conformal). Slots behind the
    scaffolded `ExpressionPredictor` (set `calibrated=True` only after the gate).
@@ -117,12 +133,35 @@ and green on `main`:
 
 ## Suggested first move
 
-The self-contained, no-external-data options are the **full Rust trellis port**
-(item 3) and the **block/parallel-tempering refinement moves** (item 4) — both
-directly serve engine goals and need no GPU or data. The splice model (item 1)
-and expression head (item 2) are the highest-value items but both need **real
-held-out data + GPU**; confirm scope and data access with the maintainer before
-starting either, and never ship an uncalibrated model as if it were validated
-(§10.6). Packaged installers (item 5) can be advanced in the sandbox up to the
-point where signing/tag-pushing/release-cutting is needed (those are human-only
-here, HTTP 403).
+**Start with item 1 — the Pangolin splice adapter.** Since the decision is to
+*wrap* published models rather than train, item 1 no longer needs a GPU or
+training data: it's a laptop-sized integration (Pangolin behind the existing
+`SplicePredictor` contract, a two-backend comparison harness, `calibrated=False`
+until the integration-fidelity check). It's the highest-value item that is now
+also self-contained. The other no-external-data options remain the **full Rust
+trellis port** (item 3) and the **block/parallel-tempering refinement moves**
+(item 4). The **learned expression head** (item 2) is the one item that still
+needs real matched-regime data — defer it and never ship an uncalibrated
+composite as validated (§10.5/§10.6). Packaged installers (item 5) can be
+advanced up to the point where signing/tag-pushing/release-cutting is needed
+(human-only here, HTTP 403).
+
+---
+
+## Session archive marker (for continuity)
+
+**Last building session delivered (all merged to `main`, green):**
+- Phase 2 **completed** — CpG/UpA whole-sequence count budgets (PR #26).
+- Phase 5 **opened** — library / degenerate-design mode (PR #25).
+- Phase 1 perf — native `max_gc_run` + `longest_repeat` primitives (PR #27),
+  including a fix for an O(n²) `longest_repeat` fast-path that regressed the
+  pure-Python `MaxRepeatConstraint.validate` hot path.
+- Docs — status sync (PR #28), the single-codon-SA refinement limitation note
+  (PR #30), and this **splice decision** (wrap SpliceAI/Pangolin, no self-train).
+
+**Deliberately NOT done, and why:** no bespoke splice CNN and no expression head
+were trained — both would need real held-out data (+ GPU for a from-scratch CNN),
+and the constitution forbids shipping an uncalibrated model as validated. The
+splice path is now "wrap published models" (item 1); the expression head stays
+data-blocked (item 2). **To resume: read `../CLAUDE.md` (§6 Splice, §9 Phase 3)
+then this brief, and pick up at item 1.**

@@ -27,9 +27,10 @@ before writing code, and keep it current as the architecture evolves.
 > **Phase 5 has opened** with an honest **library / degenerate-design mode** (a
 > deterministic codon-distribution sampler with a `SAMPLED` certificate, not an
 > optimizer). Two more native `bt4_native` primitives (`max_gc_run`,
-> `longest_repeat`) also landed. Still ahead: the **validated splice model**
-> (SpliceAI/Pangolin-class), the **learned expression head**, the **full Rust
-> trellis port**, and packaged installers — see §9. This document was written
+> `longest_repeat`) also landed. Still ahead: the **validated splice backends**
+> (wrapping published **SpliceAI + Pangolin** for inference — no self-training),
+> the **learned expression head**, the **full Rust trellis port**, and packaged
+> installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
@@ -72,8 +73,10 @@ design:
   certificate** when it isn't; beam search only as an explicit speed knob. Every
   result states *how optimal it is and what was relaxed*.
 - The ML is **real and validated, or it refuses to claim otherwise**. Shipped,
-  hash-pinned, calibrated models (SpliceAI/Pangolin-class Δsplicing, ViennaRNA
-  folding, an optional learned expression head), gated on real held-out data.
+  hash-pinned, calibrated models (**published SpliceAI/Pangolin** wrapped for
+  Δsplicing inference, ViennaRNA folding, an optional learned expression head),
+  gated on real held-out data or — for a wrapped published model — an
+  integration-fidelity check against its known outputs.
 
 ### The governing principle
 
@@ -284,11 +287,32 @@ aborting with "no feasible codon".
 
 ### ML models (real or explicitly labeled baseline)
 
-- **Splice — SpliceAI/Pangolin-class.** Wide-context (~10 kb) dilated-residual
-  CNN, dense per-nucleotide donor/acceptor/neither. Objective reframed as
-  **Δsplicing**: `P(site|designed) − P(site|reference)`. Validated against MFASS
-  / Vex-seq / MPSA and cross-checked vs SpliceAI/Pangolin/SpliceBERT. Replace
-  BT3's saturating noisy-OR aggregation with top-k / log-odds pooling.
+- **Splice — wrap published SpliceAI + Pangolin (no self-training).** *Decision:*
+  BT4 does **not** train its own splice CNN. A bespoke model would be both *worse*
+  (SpliceAI/Pangolin were trained on the full GTEx/GENCODE corpus with serious
+  compute) *and* **unvalidated** — which the honesty gate forbids shipping as
+  calibrated anyway. Instead BT4 wraps the already-validated, published
+  **SpliceAI** (Illumina; GPL-3.0, TensorFlow) and **Pangolin** (MIT, PyTorch) as
+  *inference-only* backends behind the existing `SplicePredictor` contract,
+  feeding their dense per-nucleotide donor/acceptor scores into the
+  already-shipped **Δsplicing** framing `P(site|designed) − P(site|reference)`
+  with **top-k / log-odds pooling** (never saturating noisy-OR, §10.14). Both run
+  **out of the inner loop** — a ~10 kb-context CNN is far too slow to score per SA
+  move — as a **final audit / frontier reranker**, exactly where the contract
+  already places splice. Weights are **hash-pinned** (SHA-256, kept out of git,
+  content-hash in the manifest), so — unlike the BT3 ASSP scrape — local inference
+  stays **reproducible-from-manifest**. Running *both* and reporting their
+  **agreement/disagreement** is a first-class uncertainty signal (§8), not
+  redundancy. `calibrated=True` is set only after an **integration-fidelity
+  check** — the adapter reproduces the published model's scores on a panel of
+  known real sites / non-sites — *not* a from-scratch held-out-chromosome training
+  gate. The heavy TF / PyTorch deps live behind optional extras
+  (`bt4[splice-pangolin]` / `bt4[splice-spliceai]`, lazily imported like
+  ViennaRNA); **Pangolin (MIT/PyTorch) is the recommended first backend**, with
+  SpliceAI added second as the cross-check (verify its weight license before
+  bundling anything). **Honest scope:** these predict splice-*site presence*, and
+  a lower Δ means lower *predicted cryptic-splice risk* — a strong prior, but not
+  the same as validated expression gain (the same CAI-as-weak-proxy caution).
 - **Folding — ViennaRNA** MFE / partition-function ΔG (real thermodynamics, not
   a hand-weighted proxy); objective *and* constraint (avoid RBS/Kozak-occluding
   hairpins).
@@ -563,10 +587,14 @@ is a requirement, not a nice-to-have.
   block moves propose coordinated multi-position swaps; tempering lets hot
   replicas accept uphill moves and swap them into the cold chain, crossing the
   barrier without weakening invariant #5 on the delivered result. Still
-  ahead: the SpliceAI/Pangolin-class model trained on real GENCODE (Δsplicing
-  objective, held-out-chromosome gate, hash-pinned artifact), parallel-tempering
-  / block moves (to escape the single-codon barrier above), and the opt-in
-  **ASSP** cross-check (§6) with offline fixtures.
+  ahead: the **wrapped published splice backends** — SpliceAI + Pangolin as
+  inference-only `SplicePredictor` implementations (no self-training), scored
+  out-of-loop as an audit/reranker, hash-pinned and reproducible, run as a pair so
+  their agreement is a reported uncertainty signal, and flipped to
+  `calibrated=True` only after an integration-fidelity check against known
+  sites/non-sites (§6); parallel-tempering / block moves (to escape the
+  single-codon barrier above); and the opt-in **ASSP** cross-check (§6) with
+  offline fixtures.
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
   each recomputed from the sequence, never fed to the solver) **and are plotted
