@@ -28,11 +28,11 @@ and green on `main`:
   an honest deterministic codon-distribution sampler with a `SAMPLED` certificate
   (not an optimizer; local-constraint-respecting; no optimality/expression claim).
 - **Phase 3 groundwork:** `FoldingModel` (ViennaRNA + labeled baseline),
-  `SplicePredictor` (labeled PWM baseline **plus the wrapped Pangolin CNN
-  backend** — GPL-3.0, lazily imported, hash-pinned, `calibrated=False` until its
-  fidelity gate — and a two-backend agreement harness), the SA refinement engine
-  (with a global-constraint gate, invariant #5), per-site tracks plotted in BT4
-  Studio.
+  `SplicePredictor` (labeled PWM baseline **plus both wrapped CNN backends** —
+  Pangolin (GPL-3.0) and SpliceAI (PolyForm Strict code + CC BY-NC weights),
+  lazily imported, hash-pinned, `calibrated=False` until their fidelity gates —
+  and a two-backend agreement harness), the SA refinement engine (with a
+  global-constraint gate, invariant #5), per-site tracks plotted in BT4 Studio.
 - **`ExpressionPredictor` contract scaffolded** (`biomodels/expression/`) with a
   neutral, honestly-uncalibrated placeholder and a frontier-rerank hook that never
   steers delivery unless the predictor is calibrated.
@@ -52,31 +52,37 @@ and green on `main`:
    — **Decision: no self-training.** Wrap the already-validated **Pangolin** and
    **SpliceAI** as *inference-only* backends behind the **existing**
    `SplicePredictor` contract; the Δsplicing framing and top-k/log-odds pooling are
-   already in `biomodels/splice/base.py`. **✅ Pangolin adapter has landed
-   (this PR):** `bt4.biomodels.splice.PangolinSplicePredictor` +
-   `backend_agreement` + `scripts/compare_splice_backends.py`, with the PWM
-   baseline still the `calibrated=False` default.
-   - **License correction — Pangolin is GPL-3.0, not MIT.** The upstream repo
-     (github.com/tkzeng/Pangolin) is **GPL-3.0**, same as SpliceAI; the "MIT" in
-     the earlier brief was wrong. So the adapter follows BT4's GPL-ViennaRNA
-     pattern: it **lazily imports the user's own installed `pangolin` package and
-     weights and bundles neither code nor weights** — BT4 stays MIT. Install
-     Pangolin yourself from github.com/tkzeng/Pangolin (which ships the weights).
-   - **What landed:** lazy `torch`/`pangolin` imports (so `import bt4` stays
-     light), weights **SHA-256 hash-pinned** (published v1.0.2 digests) and
-     verified *before* unpickling, out-of-loop scoring, the combined-site
-     mapping (Pangolin emits one `P(splice)`, placed in `SpliceResult.donor` with
-     `acceptor` zero), and the `verify_pangolin_fidelity` gate. The adapter was
-     verified to reproduce upstream Pangolin **bit-for-bit** against the real
-     weights, but ships `calibrated=False` (no reference panel bundled).
-   - **What remains for item 1:** (a) the **SpliceAI** backend (GPL-3.0,
-     TensorFlow) as the second/cross-check, `bt4[splice-spliceai]`; (b) capturing a
-     reference panel and **recording the fidelity gate** to promote Pangolin to
-     `calibrated=True` (and having `default()` prefer it once calibrated); (c) the
-     opt-in **ASSP** cross-check with offline fixtures. Keep the honest scope note
-     (predicts splice-*site presence*; lower Δ = lower *predicted* cryptic-splice
-     risk, a strong prior, not validated expression gain). **Needs no GPU/training
-     data.**
+   already in `biomodels/splice/base.py`. **✅ Both adapters + the agreement harness
+   have landed:** `PangolinSplicePredictor` (PR #33) and `SpliceAiSplicePredictor`
+   (this PR, stacked on #33), plus `backend_agreement` +
+   `scripts/compare_splice_backends.py`, with the PWM baseline still the
+   `calibrated=False` default.
+   - **License corrections (both were wrong in the earlier brief).** Pangolin is
+     **GPL-3.0** (not MIT). SpliceAI is stricter still: **code = PolyForm Strict
+     1.0.0, weights = CC BY-NC 4.0** (noncommercial) — the `setup.py` "GPLv3"
+     string is contradicted by the authoritative LICENSE files. Both follow BT4's
+     GPL-ViennaRNA pattern: **lazily import the user's own installed package +
+     weights, bundle neither code nor weights** — BT4 stays MIT. Install each
+     yourself (github.com/tkzeng/Pangolin, github.com/Illumina/SpliceAI; each
+     ships its weights). SpliceAI's CC BY-NC weights make that backend
+     noncommercial-only.
+   - **What landed (both):** lazy heavy-dep imports (so `import bt4` stays light),
+     weights **SHA-256 hash-pinned** (published digests, re-verified by hand) and
+     checked *before* load, out-of-loop scoring, and per-adapter fidelity gates
+     (`verify_pangolin_fidelity` / `verify_spliceai_fidelity`). Pangolin emits one
+     combined `P(splice)` → `SpliceResult.donor` (acceptor zero); SpliceAI's 3-way
+     softmax maps cleanly to `donor` + `acceptor` (both populated). Each was
+     verified to reproduce its upstream model **bit-for-bit** against the real
+     weights, but ships `calibrated=False` (no reference panel bundled). The
+     agreement harness needed no change — with both CNNs installed it compares two
+     real, independently-trained models.
+   - **What remains for item 1:** (a) capturing reference panels and **recording
+     the fidelity gates** to promote either backend to `calibrated=True` (and
+     having `default()` prefer a calibrated one) — a maintainer step needing the
+     licensed weights, not fabricated here; (b) the opt-in **ASSP** cross-check
+     with offline fixtures. Keep the honest scope note (predicts splice-*site
+     presence*; lower Δ = lower *predicted* cryptic-splice risk, a strong prior,
+     not validated expression gain). **Needs no GPU/training data.**
 2. **Learned expression head** (Phase 4) — trained on real MPRA / ribosome-load
    data, hash-pinned, calibrated + uncertainty (conformal). Slots behind the
    scaffolded `ExpressionPredictor` (set `calibrated=True` only after the gate).
@@ -144,18 +150,20 @@ and green on `main`:
 
 ## Suggested first move
 
-**Item 1's Pangolin adapter is now done** (wrapped, hash-pinned, `calibrated=False`
-until its fidelity gate, with the agreement harness). The best next moves, all
+**Item 1's wrapped splice backends are both done** — Pangolin (PR #33) and
+SpliceAI (this PR), each hash-pinned and `calibrated=False` until its fidelity
+gate, with the two-backend agreement harness. The best next moves, all
 self-contained (no GPU, no external data):
 
-- **Finish item 1:** add the **SpliceAI** backend (GPL-3.0, TensorFlow) as the
-  second/cross-check behind the same contract and `backend_agreement` — the
-  natural continuation, now that the Pangolin path proves the pattern. (Promoting
-  Pangolin to `calibrated=True` needs a captured reference panel from the GPL
-  weights — a maintainer step; don't fabricate one.)
 - **Full Rust trellis port** (item 3) — the DP inner loop still runs in pure
-  Python.
-- **Block/segment + parallel-tempering refinement moves** (item 4).
+  Python. A grounded plan exists (position-independent-regime `trellis_solve`
+  primitive + byte-identical Python twin + inline-DP oracle).
+- **Block/segment + parallel-tempering refinement moves** (item 4) — a grounded
+  plan exists (opt-in replica/temper/block kwargs on `anneal_refine`, strict
+  global gate on every replica so invariant #5 holds).
+- **Finish item 1's tail:** record the fidelity gates to promote a backend to
+  `calibrated=True` — a maintainer step needing the licensed weights + a captured
+  panel; don't fabricate one. The opt-in **ASSP** cross-check also remains.
 
 The **learned expression head** (item 2) is the one item that still needs real
 matched-regime data — defer it and never ship an uncalibrated composite as
@@ -176,20 +184,24 @@ point where signing/tag-pushing/release-cutting is needed (human-only here, HTTP
 - Docs — status sync (PR #28), the single-codon-SA refinement limitation note
   (PR #30), and this **splice decision** (wrap SpliceAI/Pangolin, no self-train).
 
-**This session (in an open PR): the Pangolin splice adapter.**
-`PangolinSplicePredictor` (wraps the user's installed GPL-3.0 Pangolin — not
-bundled — hash-pinned weights verified before unpickling, `calibrated=False`
-until its fidelity gate), the `backend_agreement` two-backend harness +
-`scripts/compare_splice_backends.py`, the `bt4[splice-pangolin]` extra, and the
-**license correction** (Pangolin is GPL-3.0, not MIT). Verified to reproduce
-upstream Pangolin bit-for-bit against the real weights.
+**This session (open PRs): both wrapped splice adapters.**
+`PangolinSplicePredictor` (PR #33; wraps the user's installed GPL-3.0 Pangolin)
+and `SpliceAiSplicePredictor` (stacked PR on #33; wraps the user's installed
+SpliceAI — code PolyForm Strict 1.0.0, weights CC BY-NC 4.0) — neither bundled,
+hash-pinned weights verified before load, `calibrated=False` until per-adapter
+fidelity gates — plus the `backend_agreement` two-backend harness +
+`scripts/compare_splice_backends.py`, the `bt4[splice-pangolin]` /
+`bt4[splice-spliceai]` extras, and the **license corrections** (Pangolin is
+GPL-3.0 not MIT; SpliceAI is PolyForm+CC BY-NC not GPL). Both verified to
+reproduce their upstream models bit-for-bit against the real weights.
 
 **Deliberately NOT done, and why:** no bespoke splice CNN and no expression head
 were trained — both would need real held-out data (+ GPU for a from-scratch CNN),
-and the constitution forbids shipping an uncalibrated model as validated. Pangolin
-ships `calibrated=False` because **no reference panel is bundled** (capturing one
-needs the GPL weights and yields GPL-derived numbers) — the promotion is a
-maintainer step, not fabricated here. The **SpliceAI** backend and the
-data-blocked **expression head** (item 2) remain. **To resume: read
-`../CLAUDE.md` (§6 Splice, §9 Phase 3) then this brief; pick up at the SpliceAI
-cross-check (item 1 remainder) or items 3/4.**
+and the constitution forbids shipping an uncalibrated model as validated. Both
+CNN backends ship `calibrated=False` because **no reference panel is bundled**
+(capturing one needs the licensed weights and reproduces licensed outputs) — the
+promotion is a maintainer step, not fabricated here. The data-blocked
+**expression head** (item 2) remains. **To resume: read `../CLAUDE.md` (§6 Splice,
+§9 Phase 3) then this brief; pick up at the Rust trellis port (item 3), the
+block/tempering refinement moves (item 4), or recording the splice fidelity
+gates.**

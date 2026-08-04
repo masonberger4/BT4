@@ -8,6 +8,22 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Wrapped SpliceAI splice backend** (`bt4.biomodels.splice.SpliceAiSplicePredictor`)
+  — the second *wrapped published* splice CNN behind the `SplicePredictor`
+  contract, the cross-check to Pangolin (Phase 3, CLAUDE.md §6). It runs the
+  published **SpliceAI** model (Jaganathan et al. 2019) inference-only, and its
+  3-way per-position softmax (null/acceptor/donor) maps *cleanly* onto
+  `SpliceResult.acceptor` and `.donor` (both populated, unlike Pangolin's single
+  combined track). **License (verified): SpliceAI code is PolyForm Strict 1.0.0
+  and its weights are CC BY-NC 4.0 (noncommercial) — even more restrictive than
+  Pangolin's GPL, so no-bundle is mandatory**; the adapter lazily imports the
+  user's own installed `spliceai` package + weights, SHA-256 hash-pinning them
+  (verified before load). Ships **`calibrated=False`** (`verify_spliceai_fidelity`
+  is the gate; no reference panel bundled), so `default()` still returns the PWM
+  baseline. With both CNNs installed, the agreement harness now compares two real,
+  independently-trained splice models (no harness code change needed — it already
+  compares at the pooled-Δ level). New `bt4[splice-spliceai]` extra
+  (TensorFlow), lazily imported so `import bt4` stays light.
 - **Wrapped Pangolin splice backend** (`bt4.biomodels.splice.PangolinSplicePredictor`)
   — the first *wrapped published* splice model behind the existing
   `SplicePredictor` contract (Phase 3, CLAUDE.md §6). It runs the already-validated
