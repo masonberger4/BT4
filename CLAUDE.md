@@ -79,10 +79,13 @@ design:
   certificate** when it isn't; beam search only as an explicit speed knob. Every
   result states *how optimal it is and what was relaxed*.
 - The ML is **real and validated, or it refuses to claim otherwise**. Shipped,
-  hash-pinned, calibrated models (**published SpliceAI/Pangolin** wrapped for
-  Δsplicing inference, ViennaRNA folding, an optional learned expression head),
-  gated on real held-out data or — for a wrapped published model — an
-  integration-fidelity check against its known outputs.
+  hash-pinned models — **ViennaRNA folding** (calibrated today), the **published
+  SpliceAI/Pangolin** wrappers for Δsplicing inference (shipped `calibrated=False`
+  until their integration-fidelity gate is recorded), and a *planned* optional
+  learned expression head — each gated on real held-out data or, for a wrapped
+  published model, an integration-fidelity check against its known outputs. A
+  model reports `calibrated=True` only once its gate passes; until then it is
+  loudly labeled uncalibrated (§10.6).
 
 ### The governing principle
 
@@ -215,8 +218,13 @@ score_sequence(dna) -> per-position or scalar
 default() -> a hash-verified registered model, else a safe baseline; NEVER crashes
 ```
 
-Backends swap behind the contract; consumers never change. All models are
-content-addressed, SHA-256-verified, pickle-free, and calibrated.
+Backends swap behind the contract; consumers never change. Models are
+content-addressed and SHA-256-verified, and honestly labeled by calibration
+status — `calibrated=True` only after a validation / integration-fidelity gate
+passes; baselines and un-gated wrapped CNNs report `calibrated=False`. BT4's own
+bundled models are pickle-free; a wrapped published backend's weights (e.g.
+Pangolin's torch state dicts, SpliceAI's Keras `.h5`) are hash-verified *before*
+any unpickling/load, so unverified bytes are never loaded.
 
 ### 4.4 `Solver`
 

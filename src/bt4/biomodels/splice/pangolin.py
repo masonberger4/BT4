@@ -329,16 +329,17 @@ def _resolve_model_dir(explicit: str | None = None) -> Path | None:
 def _load_ensemble(model_dir: str, tissues: tuple[str, ...]) -> dict[str, list[Any]]:
     """Load and cache the Pangolin CV ensemble for ``tissues`` from ``model_dir``.
 
-    Each tissue loads its five cross-validation weight files, verifying every
-    file's SHA-256 pin *before* unpickling it. Cached per ``(model_dir, tissues)``
-    so the expensive load happens once per process.
+    Each tissue loads its three cross-validation weight files (folds 1-3, per
+    :data:`_CV_FOLDS`), verifying every file's SHA-256 pin *before* unpickling it.
+    Cached per ``(model_dir, tissues)`` so the expensive load happens once per
+    process.
 
     Args:
-        model_dir: Directory holding the ``final.{fold}.{i}.3`` weight files.
+        model_dir: Directory holding the ``final.{fold}.{i}.3.v2`` weight files.
         tissues: The tissue keys to load (subset of :data:`TISSUE_OUTPUTS`).
 
     Returns:
-        A map ``tissue -> [5 loaded, eval-mode Pangolin models]``.
+        A map ``tissue -> [3 loaded, eval-mode Pangolin models]``.
 
     Raises:
         ModuleNotFoundError: If ``torch`` or ``pangolin`` is not importable.

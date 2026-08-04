@@ -54,8 +54,10 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   enforced, not a calibrated expression claim), and a **restriction-enzyme
   catalog** (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* codon tables out
-  of the box, plus real **tAI** tables for human, mouse, and yeast (GtRNAdb tRNA
-  counts); `bt4 build-table` builds an authentic codon table from your own CDS FASTA.
+  of the box, plus real **tAI** tables for eight organisms (human, mouse, rat,
+  zebrafish, *Drosophila*, *C. elegans*, *Arabidopsis*, and *S. cerevisiae*) from
+  GtRNAdb tRNA counts; `bt4 build-table` builds an authentic codon table from your
+  own CDS FASTA.
 - **Benchmarked against real tools:** `scripts/compare_tools.py` places BT4 next
   to GeneOptimizer / IDT / Twist / GenScript on a cited, CC BY 4.0 panel — every
   metric recomputed from the sequence, and BT4 never claimed "better", just placed.
@@ -275,7 +277,8 @@ objective is a new file plus its honesty property test — never an engine edit.
 
 ## Roadmap
 
-Phases 0–1 are done and Phase 2 is essentially complete: the multi-objective
+Phases 0–2 are complete (and Phase 3 groundwork has landed; Phase 5 is opened):
+the multi-objective
 frontier, the desktop app, **tAI** (real GtRNAdb tRNA data), 5′-ramp / CpG /
 %MinMax / **codon-pair-bias** objectives, tandem & inverted-repeat, internal-ATG,
 max-GC-run, max-repeat-length and **out-of-frame uORF** constraints, forbidden-

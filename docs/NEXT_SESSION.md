@@ -8,8 +8,9 @@ it is the constitution and it overrides anything here that has drifted.**
 
 ## Where BT4 is right now
 
-Phases 0–2 complete; **Phase 3 groundwork landed**; **Phase 5 opened**. Shipped
-and green on `main`:
+Phases 0–2 complete; **Phase 3 groundwork landed**; **Phase 5 opened**. Merged
+and green on `main` (except the two wrapped splice CNN backends, which are on the
+open, green, stacked PRs #33/#34 from this session — flagged inline below):
 
 - **Honest exact-DP core** — codon trellis with true per-constraint context and a
   real optimality certificate; beam as an explicit knob.
@@ -28,10 +29,11 @@ and green on `main`:
   an honest deterministic codon-distribution sampler with a `SAMPLED` certificate
   (not an optimizer; local-constraint-respecting; no optimality/expression claim).
 - **Phase 3 groundwork:** `FoldingModel` (ViennaRNA + labeled baseline),
-  `SplicePredictor` (labeled PWM baseline **plus both wrapped CNN backends** —
-  Pangolin (GPL-3.0) and SpliceAI (PolyForm Strict code + CC BY-NC weights),
-  lazily imported, hash-pinned, `calibrated=False` until their fidelity gates —
-  and a two-backend agreement harness), the SA refinement engine (with a
+  `SplicePredictor` (labeled PWM baseline is on `main`; **both wrapped CNN
+  backends are on the open stacked PRs, not yet merged** — Pangolin (GPL-3.0, PR
+  #33) and SpliceAI (PolyForm Strict code + CC BY-NC weights, PR #34), lazily
+  imported, hash-pinned, `calibrated=False` until their fidelity gates, with a
+  two-backend agreement harness), the SA refinement engine (with a
   global-constraint gate, invariant #5), per-site tracks plotted in BT4 Studio.
 - **`ExpressionPredictor` contract scaffolded** (`biomodels/expression/`) with a
   neutral, honestly-uncalibrated placeholder and a frontier-rerank hook that never
@@ -46,7 +48,14 @@ and green on `main`:
   violations show *where* they occur), an optional FastAPI service, content-hashed
   provenance manifests.
 
-## What's left (priority order — see CLAUDE.md §9 for the authoritative list)
+## What's left (see CLAUDE.md §9 for the authoritative list)
+
+> **Live priority (this list is kept in original numbering for continuity):** item
+> 1 (wrap SpliceAI + Pangolin) is now **essentially done** — both adapters and the
+> agreement harness landed this session (PRs #33/#34); only a maintainer tail
+> remains (recording the fidelity gates + the ASSP cross-check). The genuinely
+> next self-contained work is **item 3 (Rust trellis port)** and **item 4
+> (block/tempering refinement)** — see "Suggested first move" below.
 
 1. **Wrap published SpliceAI + Pangolin as calibrated splice backends** (Phase 3)
    — **Decision: no self-training.** Wrap the already-validated **Pangolin** and
@@ -54,7 +63,7 @@ and green on `main`:
    `SplicePredictor` contract; the Δsplicing framing and top-k/log-odds pooling are
    already in `biomodels/splice/base.py`. **✅ Both adapters + the agreement harness
    have landed:** `PangolinSplicePredictor` (PR #33) and `SpliceAiSplicePredictor`
-   (this PR, stacked on #33), plus `backend_agreement` +
+   (PR #34, stacked on #33), plus `backend_agreement` +
    `scripts/compare_splice_backends.py`, with the PWM baseline still the
    `calibrated=False` default.
    - **License corrections (both were wrong in the earlier brief).** Pangolin is
@@ -151,7 +160,7 @@ and green on `main`:
 ## Suggested first move
 
 **Item 1's wrapped splice backends are both done** — Pangolin (PR #33) and
-SpliceAI (this PR), each hash-pinned and `calibrated=False` until its fidelity
+SpliceAI (PR #34), each hash-pinned and `calibrated=False` until its fidelity
 gate, with the two-backend agreement harness. The best next moves, all
 self-contained (no GPU, no external data):
 
@@ -184,16 +193,24 @@ point where signing/tag-pushing/release-cutting is needed (human-only here, HTTP
 - Docs — status sync (PR #28), the single-codon-SA refinement limitation note
   (PR #30), and this **splice decision** (wrap SpliceAI/Pangolin, no self-train).
 
-**This session (open PRs): both wrapped splice adapters.**
-`PangolinSplicePredictor` (PR #33; wraps the user's installed GPL-3.0 Pangolin)
-and `SpliceAiSplicePredictor` (stacked PR on #33; wraps the user's installed
-SpliceAI — code PolyForm Strict 1.0.0, weights CC BY-NC 4.0) — neither bundled,
-hash-pinned weights verified before load, `calibrated=False` until per-adapter
-fidelity gates — plus the `backend_agreement` two-backend harness +
-`scripts/compare_splice_backends.py`, the `bt4[splice-pangolin]` /
+**This session delivered (two open, green, stacked PRs): both wrapped splice
+adapters.** `PangolinSplicePredictor` (**PR #33**; wraps the user's installed
+GPL-3.0 Pangolin) and `SpliceAiSplicePredictor` (**PR #34**, stacked on #33; wraps
+the user's installed SpliceAI — code PolyForm Strict 1.0.0, weights CC BY-NC 4.0)
+— neither bundled, hash-pinned weights verified before load, `calibrated=False`
+until per-adapter fidelity gates — plus the `backend_agreement` two-backend
+harness + `scripts/compare_splice_backends.py`, the `bt4[splice-pangolin]` /
 `bt4[splice-spliceai]` extras, and the **license corrections** (Pangolin is
-GPL-3.0 not MIT; SpliceAI is PolyForm+CC BY-NC not GPL). Both verified to
-reproduce their upstream models bit-for-bit against the real weights.
+GPL-3.0 not MIT; SpliceAI is PolyForm+CC BY-NC not GPL). Both PRs are **CI-green**;
+each adapter was verified to reproduce its upstream model **bit-for-bit** against
+the real weights. #34 is stacked on #33 — merge #33 first (GitHub then retargets
+#34 to `main`).
+
+**Also produced this session (design plans, not code):** grounded,
+execution-ready implementation plans for the **Rust trellis port** (item 3) and
+the **block/segment + parallel-tempering refinement moves** (item 4), from a
+parallel design fan-out — so the next session can pick either up quickly (see
+"Suggested first move").
 
 **Deliberately NOT done, and why:** no bespoke splice CNN and no expression head
 were trained — both would need real held-out data (+ GPU for a from-scratch CNN),
