@@ -6,11 +6,12 @@ build-backend = "hatchling.build"
 name = "bt4"
 description = "Constrained, multi-objective protein to mRNA back-translation optimizer."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "BT4 authors" }]
 keywords = ["bioinformatics", "codon-optimization", "back-translation", "mRNA", "CAI"]
 classifiers = [
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -83,14 +84,14 @@ artifacts = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 strict = true
 packages = ["bt4"]
 mypy_path = "src"
