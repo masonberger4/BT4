@@ -247,6 +247,170 @@ def test_greedy_temp0_zero_never_decreases_objective() -> None:
     assert result.objective_scalar >= _CAI.score(seed_dna) - 1e-9
 
 
+def test_default_new_kwargs_are_a_no_op_for_the_trajectory() -> None:
+    """Passing the block/tempering knobs at their defaults changes nothing (#7).
+
+    ``block_size=1``, ``block_prob=0.0``, ``replicas=1``, ``swap_every=0`` must
+    reproduce the single-chain trajectory byte-for-byte, so no caller that never
+    touches the new arguments can see a different result.
+    """
+    protein = "MARKLESDEQVK"
+    residues = [*protein, "*"]
+    constraints = (HomopolymerConstraint(3),)
+    start = solve_exact(residues, scalar_delta=_cai_delta, constraints=constraints)
+
+    common = dict(
+        iterations=400, seed=7, delta_score=_cai_swap_delta, temp0=0.8, cooling=0.99
+    )
+    baseline = anneal_refine(start.dna, residues, _CAI.score, constraints, **common)  # type: ignore[arg-type]
+    explicit = anneal_refine(
+        start.dna, residues, _CAI.score, constraints,
+        block_size=1, block_prob=0.0, replicas=1, temps=None, swap_every=0,
+        **common,  # type: ignore[arg-type]
+    )
+    assert explicit.dna == baseline.dna
+    assert explicit.objective_scalar == baseline.objective_scalar
+
+
+@settings(max_examples=40, deadline=None)
+@given(
+    protein=st.text(alphabet=_DEGENERATE, min_size=3, max_size=9),
+    seed=st.integers(min_value=0, max_value=10),
+)
+def test_block_tempering_determinism_and_roundtrip(protein: str, seed: int) -> None:
+    """Block moves + parallel tempering stay deterministic (#7) and round-trip (#1)."""
+    residues = [*protein, "*"]
+    constraints = (HomopolymerConstraint(4),)
+    try:
+        start = solve_exact(residues, scalar_delta=_cai_delta, constraints=constraints)
+    except InfeasibleError:
+        return
+
+    def run() -> str:
+        return anneal_refine(
+            start.dna,
+            residues,
+            _CAI.score,
+            constraints,
+            iterations=150,
+            seed=seed,
+            block_size=3,
+            block_prob=0.4,
+            replicas=3,
+            temps=(0.2, 0.6, 1.5),
+            swap_every=10,
+        ).dna
+
+    first = run()
+    assert first == run()  # byte-identical across runs (#7)
+    assert translate(first) == protein + "*"  # still a valid back-translation (#1)
+
+
+def test_block_tempering_never_raises_global_hard_count() -> None:
+    """Invariant #5 under block moves + tempering: the global count never rises.
+
+    Block moves swap several codons at once and hot replicas accept uphill moves,
+    yet every replica passes the global gate against its own count and the delivered
+    result is ranked lower-count-first -- so the delivered hard count is <= the
+    seed's, and on this instance reaches zero (a coordinated barrier block moves are
+    built to cross).
+    """
+    from bt4.constraints.max_repeat import MaxRepeatConstraint
+    from bt4.domain import STOP
+
+    protein = "MEEPQSDPSVEPPLSQETFSDLWKLLPENNVLSPLPSQAMDDLM"
+    residues = [*protein, STOP]
+    seed = solve_exact(residues, scalar_delta=_cai_delta, constraints=())
+    mr = MaxRepeatConstraint(8)
+
+    def _hard(dna: str) -> int:
+        return sum(1 for v in mr.validate(dna) if v.severity is Severity.HARD)
+
+    seed_hard = _hard(seed.dna)
+
+    def score(dna: str) -> float:
+        return _CAI.score(dna) - 1e9 * _hard(dna)
+
+    result = anneal_refine(
+        seed.dna,
+        residues,
+        score,
+        (),
+        global_constraints=(mr,),
+        iterations=1500,
+        seed=1,
+        block_size=4,
+        block_prob=0.5,
+        replicas=3,
+        temps=(0.1, 0.5, 2.0),
+        swap_every=8,
+    )
+    assert translate(result.dna) == "".join(residues)
+    assert _hard(result.dna) <= seed_hard
+    assert result.certificate.status is OptimalityStatus.HEURISTIC
+
+
+def test_feasibility_floor_immovable_repeat_reported_not_hidden() -> None:
+    """A repeat pinned to synonymously-immovable codons is an honest residual.
+
+    Poly-methionine has only ``ATG`` per residue, so *no* synonymous scheme -- not a
+    block move, not a hot replica -- can break the ``ATGATG...`` repeat. Refinement
+    must leave the violation in place (count unchanged from the seed), never claim it
+    clean.
+    """
+    from bt4.constraints.max_repeat import MaxRepeatConstraint
+    from bt4.domain import STOP
+
+    residues = [*("M" * 8), STOP]
+    seed = solve_exact(residues, scalar_delta=_cai_delta, constraints=())
+    mr = MaxRepeatConstraint(4)
+
+    def _hard(dna: str) -> int:
+        return sum(1 for v in mr.validate(dna) if v.severity is Severity.HARD)
+
+    seed_hard = _hard(seed.dna)
+    assert seed_hard > 0  # the poly-Met repeat really is present
+
+    def score(dna: str) -> float:
+        return _CAI.score(dna) - 1e9 * _hard(dna)
+
+    result = anneal_refine(
+        seed.dna,
+        residues,
+        score,
+        (),
+        global_constraints=(mr,),
+        iterations=800,
+        seed=3,
+        block_size=4,
+        block_prob=0.6,
+        replicas=2,
+        temps=(0.3, 1.2),
+        swap_every=5,
+    )
+    # Unremovable by construction: the residual is still reported, never hidden.
+    assert _hard(result.dna) == seed_hard
+    assert translate(result.dna) == "".join(residues)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"block_size": 0}, "block_size"),
+        ({"block_prob": -0.1}, "block_prob"),
+        ({"block_prob": 1.5}, "block_prob"),
+        ({"replicas": 0}, "replicas"),
+        ({"replicas": 2, "temps": (0.1,)}, "temps"),
+        ({"replicas": 2, "temps": (0.1, -1.0)}, "temps"),
+    ],
+)
+def test_block_tempering_argument_validation(kwargs: dict[str, object], match: str) -> None:
+    residues = [*"MAKL", "*"]
+    seed = solve_exact(residues, scalar_delta=_cai_delta, constraints=())
+    with pytest.raises(ValueError, match=match):
+        anneal_refine(seed.dna, residues, _CAI.score, (), **kwargs)  # type: ignore[arg-type]
+
+
 def test_global_constraints_never_raise_hard_count() -> None:
     """Invariant #5, global edition: a non-local constraint's hard count never rises.
 
