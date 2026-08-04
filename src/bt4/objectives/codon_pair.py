@@ -67,13 +67,20 @@ class CpbTerm:
             prefix: The DNA placed so far; its last three characters are the
                 previous codon.
             codon: The 3-nt codon being placed at index ``pos``.
-            pos: The 0-based codon index. The first codon (``pos == 0``) has no
-                predecessor, so it contributes ``0.0``.
+            pos: Unused 0-based codon index. The "first codon has no predecessor"
+                case is detected from ``prefix`` (fewer than three trailing
+                characters), not from ``pos`` -- equivalent, since the DP prefix
+                key always holds the previous codon when one exists -- so this
+                term is a pure function of ``(prefix[-3:], codon)``. That makes it
+                genuinely position-independent, which lets the exact DP take its
+                native (precomputed-table) fast path (see
+                :func:`bt4.optimize.exact_dp.solve_exact`).
 
         Returns:
-            The pair score of ``(previous_codon, codon)``, or ``0.0`` at ``pos == 0``.
+            The pair score of ``(previous_codon, codon)``, or ``0.0`` when there
+            is no preceding codon.
         """
-        if pos == 0:
+        if len(prefix) < 3:
             return 0.0
         return self._pair(prefix[-3:], codon)
 

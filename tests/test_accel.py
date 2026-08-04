@@ -13,10 +13,13 @@ from bt4._accel import (
     _py_max_gc_run,
     _py_max_homopolymer_run,
     _py_reverse_complement,
+    _py_trellis_solve,
 )
 from bt4.constraints.gc_run import _max_gc_run
 from bt4.constraints.max_repeat import MaxRepeatConstraint
+from bt4.constraints.rules import HomopolymerConstraint
 from bt4.domain.result import Severity
+from bt4.optimize.exact_dp import _delta_tables, _precompute_structure
 
 _DNA = st.text(alphabet="ACGT", min_size=1, max_size=200)
 
@@ -113,6 +116,52 @@ def test_longest_repeat_matches_max_repeat_validate_crafted(seq: str, m: int) ->
         v.severity is Severity.HARD for v in MaxRepeatConstraint(m).validate(seq)
     )
     assert (_accel.longest_repeat(seq) > m) == has_violation
+
+
+_CODON_W = {
+    "ATG": 0.0, "GCT": 0.1, "GCC": 0.9, "GCA": 0.3, "GCG": 0.2,
+    "AAA": 0.4, "AAG": 0.8, "TGT": 0.5, "TGC": 0.7,
+    "TAA": 0.6, "TAG": 0.2, "TGA": 0.1,
+}
+
+
+def _codon_delta(prefix: str, codon: str, pos: int) -> float:
+    return _CODON_W.get(codon, 0.0)
+
+
+@given(
+    protein=st.text(alphabet="MAKC", min_size=0, max_size=8),
+    max_run=st.integers(min_value=2, max_value=4),
+    beam=st.one_of(st.none(), st.integers(min_value=1, max_value=5)),
+)
+def test_trellis_solve_native_matches_pure_python(
+    protein: str, max_run: int, beam: int | None
+) -> None:
+    # The Rust trellis_solve and its pure-Python twin must return byte-identical
+    # (dna, scalar, pruned) over the same precomputed transition tables.
+    residues = [*protein, "*"]
+    cons = (HomopolymerConstraint(max_run),)
+    context_len = max(c.context_len() for c in cons)
+    structure = _precompute_structure(residues, cons, context_len)
+    assert structure is not None
+    ld = _delta_tables(structure, _codon_delta)
+    args = (
+        list(structure.codons),
+        [list(x) for x in structure.layer_from],
+        [list(x) for x in structure.layer_to],
+        [list(x) for x in structure.layer_codon],
+        ld,
+    )
+    native = _accel.trellis_solve(*args, beam)
+    pure = _py_trellis_solve(*args, beam)
+    assert native == pure
+
+
+def test_trellis_solve_infeasible_returns_none_both_paths() -> None:
+    # A layer with no allowed transitions -> None on both the native and pure path.
+    tables = ([("ATG")], [[]], [[]], [[]], [[]])  # one layer, zero transitions
+    assert _accel.trellis_solve(*tables, None) is None
+    assert _py_trellis_solve(*tables, None) is None
 
 
 def test_rejects_non_acgt() -> None:

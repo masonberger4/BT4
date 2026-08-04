@@ -5,6 +5,8 @@
 //! keeps its surface intentionally minimal. No `unsafe`, no external crates
 //! beyond `pyo3`.
 
+use std::collections::HashMap;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -191,6 +193,125 @@ fn longest_repeat(seq: &str) -> PyResult<usize> {
     Ok(best)
 }
 
+/// Run the exact codon-trellis layer DP over precomputed, position-independent
+/// transition tables and return the maximum-scalar coding sequence.
+///
+/// This is the Rust port of the inner loop of `bt4.optimize.exact_dp.solve_exact`.
+/// Because the DP is callback-driven in Python (`scalar_delta` and each
+/// constraint's `ok_suffix`) and Rust must never call back into Python, the
+/// caller *precomputes* every transition in Python — but only in the regime where
+/// the objective is position-independent, so each `(context, codon)` transition
+/// has a single well-defined `(allowed, delta, new_context)`. The caller then
+/// passes, per trellis layer, the flat lists of the **allowed** transitions:
+///
+/// * `codons` — the global codon-string table, indexed by codon id.
+/// * `layer_from[l]` — source context id of each allowed transition in layer `l`.
+/// * `layer_to[l]` — destination context id (the merged trailing-context key).
+/// * `layer_codon[l]` — codon id placed by the transition (index into `codons`).
+/// * `layer_delta[l]` — the pre-summed scalar objective delta of the transition,
+///   computed in Python so the float summation order is fixed and the result is
+///   bit-for-bit identical to the pure-Python DP.
+///
+/// Context id `0` is the empty start context. The DP keeps, per context id, the
+/// best `(score, dna)` — highest scalar, ties broken toward the lexicographically
+/// smaller DNA, exactly as `solve_exact._wins` does. `beam`, when set, keeps at
+/// most that many contexts per layer (highest scalar first, ties by smaller DNA)
+/// and the returned `pruned` flag reports whether any layer was truncated.
+///
+/// Returns `None` when some layer has no reachable context (infeasible), so the
+/// caller can raise `InfeasibleError` with the offending constraint names; else
+/// `(best_dna, best_scalar, pruned)`.
+#[pyfunction]
+#[pyo3(signature = (codons, layer_from, layer_to, layer_codon, layer_delta, beam=None))]
+fn trellis_solve(
+    codons: Vec<String>,
+    layer_from: Vec<Vec<u32>>,
+    layer_to: Vec<Vec<u32>>,
+    layer_codon: Vec<Vec<u32>>,
+    layer_delta: Vec<Vec<f64>>,
+    beam: Option<usize>,
+) -> PyResult<Option<(String, f64, bool)>> {
+    let n_layers = layer_from.len();
+    if layer_to.len() != n_layers
+        || layer_codon.len() != n_layers
+        || layer_delta.len() != n_layers
+    {
+        return Err(PyValueError::new_err(
+            "layer_from/layer_to/layer_codon/layer_delta must have equal length",
+        ));
+    }
+
+    // The trellis starts with a single empty-context state (id 0, DNA "").
+    let mut cur: HashMap<u32, (f64, String)> = HashMap::new();
+    cur.insert(0u32, (0.0f64, String::new()));
+    let mut pruned = false;
+
+    for li in 0..n_layers {
+        let froms = &layer_from[li];
+        let tos = &layer_to[li];
+        let cods = &layer_codon[li];
+        let dels = &layer_delta[li];
+        if tos.len() != froms.len() || cods.len() != froms.len() || dels.len() != froms.len() {
+            return Err(PyValueError::new_err(
+                "per-layer transition lists must have equal length",
+            ));
+        }
+        let mut next: HashMap<u32, (f64, String)> = HashMap::new();
+        for t in 0..froms.len() {
+            if let Some((score, dna)) = cur.get(&froms[t]) {
+                let ns = score + dels[t];
+                let codon = &codons[cods[t] as usize];
+                let mut nd = String::with_capacity(dna.len() + codon.len());
+                nd.push_str(dna);
+                nd.push_str(codon);
+                let to = tos[t];
+                // Merge rule identical to solve_exact._wins: keep the strictly
+                // higher scalar, break exact ties toward the smaller DNA.
+                let replace = match next.get(&to) {
+                    None => true,
+                    Some((cs, cd)) => ns > *cs || (ns == *cs && nd < *cd),
+                };
+                if replace {
+                    next.insert(to, (ns, nd));
+                }
+            }
+        }
+        if next.is_empty() {
+            return Ok(None);
+        }
+        if let Some(b) = beam {
+            if next.len() > b {
+                // Keep the `b` highest-scalar states, ties toward smaller DNA -
+                // the same key as solve_exact's `sorted(..., key=(-score, dna))`.
+                let mut items: Vec<(u32, (f64, String))> = next.into_iter().collect();
+                items.sort_by(|a, c| {
+                    match c.1 .0.partial_cmp(&a.1 .0).unwrap_or(std::cmp::Ordering::Equal) {
+                        std::cmp::Ordering::Equal => a.1 .1.cmp(&c.1 .1),
+                        other => other,
+                    }
+                });
+                items.truncate(b);
+                next = items.into_iter().collect();
+                pruned = true;
+            }
+        }
+        cur = next;
+    }
+
+    // Best over the final layer: highest scalar, ties toward smaller DNA.
+    let mut best: Option<(f64, String)> = None;
+    for (_k, (s, d)) in cur.into_iter() {
+        let replace = match &best {
+            None => true,
+            Some((bs, bd)) => s > *bs || (s == *bs && d < *bd),
+        };
+        if replace {
+            best = Some((s, d));
+        }
+    }
+    Ok(best.map(|(s, d)| (d, s, pruned)))
+}
+
 /// The `bt4_native` extension module.
 #[pymodule]
 fn bt4_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -199,5 +320,6 @@ fn bt4_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(max_homopolymer_run, m)?)?;
     m.add_function(wrap_pyfunction!(max_gc_run, m)?)?;
     m.add_function(wrap_pyfunction!(longest_repeat, m)?)?;
+    m.add_function(wrap_pyfunction!(trellis_solve, m)?)?;
     Ok(())
 }

@@ -60,7 +60,7 @@ from bt4.objectives.minmax import MinMaxTerm
 from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
-from bt4.optimize import SolveResult, solve_exact
+from bt4.optimize import SolveResult, frontier_solver, solve_exact
 from bt4.provenance import Manifest, build_manifest, resolve_git_commit
 
 __all__ = [
@@ -431,6 +431,19 @@ def _global_audit(
     if config.avoid_uorf:
         audit["uorf_region_nt"] = config.uorf_region_nt
     return audit
+
+
+def _position_independent(terms: Sequence[ObjectiveTerm]) -> bool:
+    """True when no active objective term depends on the codon index ``pos``.
+
+    Every term except a ``POSITIONAL``-scope one (the 5' ramp) is a pure function
+    of ``(prefix[-K:], codon)``: CAI/tAI/GC/%MinMax ignore both prefix and pos,
+    and the PAIRWISE CpG and codon-pair terms read only the trailing context (the
+    codon-pair term detects the first codon from the prefix, not ``pos``). When
+    this holds the exact DP can take its native precomputed-table fast path, which
+    is byte-identical to the pure-Python DP (CLAUDE.md §7, Phase 1).
+    """
+    return all(term.scope() is not Scope.POSITIONAL for term in terms)
 
 
 def _scalar_delta(
@@ -848,6 +861,10 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     elif has_gc_budget:
         solve, certificate = _solve_with_gc_budget(residues, active, constraints, config)
     else:
+        # A single solve stays on the pure-Python exact DP: the native trellis's
+        # Python-side precompute costs about as much as the whole pure DP, so it
+        # only pays off when amortized across many solves (the frontier sweep,
+        # see run_frontier). Wiring it here would regress single-shot runs.
         solve = solve_exact(
             residues,
             scalar_delta=_scalar_delta(active),
@@ -960,6 +977,23 @@ def run_frontier(
     objective_context = max((term.context_len() for term in axes), default=0)
     grid = _simplex_grid(len(axes), steps)
     total = len(grid)
+
+    # The frontier solves the same trellis (same residues + constraints) once per
+    # grid point, changing only the objective *weights*. `frontier_solver` builds a
+    # reusable solver that, when the objective is position-independent (no 5' ramp)
+    # and the native accelerator is present, precomputes the trellis transition
+    # graph once and reuses it across every point (only the cheap deltas
+    # recomputed, DP inner loop in Rust) -- byte-identical to the pure-Python exact
+    # DP, but amortizing the precompute across the sweep (CLAUDE.md §7). Without
+    # that, each point falls back to the pure-Python DP. All native-path gating is
+    # encapsulated in the optimize layer behind this public seam.
+    solve_point = frontier_solver(
+        residues,
+        constraints,
+        objective_context=objective_context,
+        position_independent=_position_independent(axes),
+    )
+
     by_dna: dict[str, Result] = {}
     for i, weights in enumerate(grid):
         if should_cancel is not None and should_cancel():
@@ -968,13 +1002,7 @@ def run_frontier(
             # frontier is honest -- just a coarser sample of the trade-off surface.
             break
         active = list(zip(axes, weights, strict=True))
-        solve = solve_exact(
-            residues,
-            scalar_delta=_scalar_delta(active),
-            constraints=constraints,
-            beam=config.beam,
-            objective_context=objective_context,
-        )
+        solve = solve_point(_scalar_delta(active), config.beam)
         if solve.dna not in by_dna:
             by_dna[solve.dna] = _make_result(
                 protein=p,
