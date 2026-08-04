@@ -44,7 +44,8 @@ its first tagged release.
   agreement**, and sign agreement across candidates (the first-class uncertainty
   signal of CLAUDE.md §6/§8); it reports, it does not judge. Exposed as the
   standalone runner `scripts/compare_splice_backends.py` (`--fasta`, `--json`),
-  which degrades to the baseline alone — and says so — when Pangolin is absent.
+  which degrades to the baseline alone — and says so — when neither CNN backend
+  (Pangolin nor SpliceAI) is installed.
 - **CpG / UpA whole-sequence count budget** (`dinuc_budget` + `dinuc_min` /
   `dinuc_max`; CLI `--cpg-min/--cpg-max` and `--upa-min/--upa-max`) — the last
   Phase 2 item. A dinucleotide count does not decompose per-codon (a 2-mer

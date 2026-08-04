@@ -63,7 +63,7 @@ PRs #33 and #34, are now merged):
    `SplicePredictor` contract; the Δsplicing framing and top-k/log-odds pooling are
    already in `biomodels/splice/base.py`. **✅ Both adapters + the agreement harness
    have landed:** `PangolinSplicePredictor` (PR #33) and `SpliceAiSplicePredictor`
-   (PR #34, stacked on #33), plus `backend_agreement` +
+   (PR #34) — both merged to `main` — plus `backend_agreement` +
    `scripts/compare_splice_backends.py`, with the PWM baseline still the
    `calibrated=False` default.
    - **License corrections (both were wrong in the earlier brief).** Pangolin is
