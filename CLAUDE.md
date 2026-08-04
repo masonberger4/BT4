@@ -737,7 +737,23 @@ is a requirement, not a nice-to-have.
   license-clean, regime-matched CDS-variant panel (e.g. wrapping the published
   RiboNN log-TE CNN, Sanofi non-commercial — eligible under BT4's non-commercial
   scope, handled non-vendored/hash-pinned like SpliceAI) and running the gate; the
-  `calibrated` flip is earned on data, never assigned.
+  `calibrated` flip is earned on data, never assigned. **The wrapped RiboNN adapter
+  has now landed** (`biomodels/expression/ribonn.py`): `RiboNNExpressionModel`
+  drives the user's own RiboNN checkout (Sanofi **non-commercial** code + Zenodo
+  weights — *not* vendored; lazily imports the repo's `src`, pointed at via
+  `$BT4_RIBONN_DIR`), verifying every weight it loads against a bundled 180-entry
+  SHA-256 manifest (`data/ribonn_sha256.json`, 90 human + 90 mouse — public content
+  hashes only) *before* `torch.load`. It scores in RiboNN's native **CLR-residual
+  TE** units (never exponentiated — the model applies no log/exp itself, per the
+  paper's centered-log-ratio target) and exposes `delta_logte(designed, reference)`
+  — the UTR-fixed, CDS-attributable Δ that encodes the *avoid-expression-limiting-
+  sequences* framing (a negative Δ flags a CDS change predicted to reduce
+  expression), analogous to Pangolin's `delta_splicing`. It ships **`calibrated=False`**
+  (`default()` still returns the neutral placeholder): reproducing RiboNN faithfully
+  is not calibration *for BT4's regime* (RiboNN's own ablation puts only ~31% of
+  per-nt signal in the CDS), so promotion needs a passing `verify_expression_gate`
+  on a CDS-variant panel — human-only, data-gated. New `bt4[expression-ribonn]`
+  extra (torch + pandas, lazily imported so `import bt4` stays light).
 - **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
   `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
   gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a

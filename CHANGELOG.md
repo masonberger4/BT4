@@ -8,6 +8,26 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Wrapped RiboNN expression backend** (`bt4.biomodels.expression.RiboNNExpressionModel`)
+  — the Phase-4 learned expression head behind the `ExpressionPredictor` contract
+  (CLAUDE.md §6/§9). It runs the published **RiboNN** translation-efficiency CNN
+  (Zheng, Persyn, Wang et al., *Nat Biotechnol* 2025; Sanofi / Cenik Lab)
+  inference-only as an out-of-loop frontier reranker. **License:** RiboNN's code
+  and weights are each **Sanofi non-commercial** (academic/non-commercial only) —
+  compatible with BT4's open-source non-commercial scope and, like SpliceAI's
+  CC BY-NC weights, **never bundled**: the adapter drives the user's own RiboNN
+  clone (lazily importing the repo's `src`, pointed at via `$BT4_RIBONN_DIR`) and
+  their Zenodo weights. Every weight it loads is verified against a bundled
+  180-entry SHA-256 manifest (`data/ribonn_sha256.json`, 90 human + 90 mouse —
+  public content hashes only) **before** `torch.load`. The score is in RiboNN's
+  native **CLR-residual TE** units (never exponentiated); `delta_logte(designed,
+  reference)` gives the UTR-fixed, CDS-attributable Δ (negative = a CDS change
+  predicted to *reduce* expression), analogous to Pangolin's `delta_splicing`.
+  Ships **`calibrated=False`** (`default()` still returns `NullExpressionModel`):
+  faithful reproduction is not calibration for BT4's CDS-variant regime, so
+  promotion requires a passing `verify_expression_gate` on a regime-matched panel
+  (human-only, data-gated). New `bt4[expression-ribonn]` extra (torch + pandas),
+  lazily imported so `import bt4` stays light.
 - **Model-agnostic expression acceptance-gate harness**
   (`bt4.biomodels.expression.gate`) — the honest gate a learned expression head
   must pass to earn `calibrated=True` (CLAUDE.md §6/§8/§10.6, Phase 4). For a
