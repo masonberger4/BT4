@@ -122,15 +122,20 @@ mostly data-gated or human-only.
 
 ## Suggested first move
 
-All the self-contained engine work is done. The best next moves:
+The **expression/splice design flow is spec'd** in
+[`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) and its build
+order is fixed. Start there:
 
-- **RiboNN batch scoring + `num_workers=0`** (item 2 follow-up) — pure engineering,
-  no data, meaningfully cuts real-workflow runtime. A good, contained first PR.
-- **Finish the calibration tails** (items 1 & 2) — record the splice fidelity gates
-  and run the expression acceptance gate. Both need licensed weights / matched-regime
-  data and are human-only; don't fabricate a panel.
-- **Phase 5 breadth** (item 4) — more organisms with authoritative provenance is
-  self-contained and always welcome.
+- **Batched RiboNN scoring** (design step 1) — a `score_many` / `delta_logte_many`
+  on the RiboNN adapter that runs the whole candidate set in one RiboNN invocation
+  (amortizes the large fixed per-call overhead), plus an optional `num_workers=0`
+  path. Pure engineering, no data, testable without the GUI. **The recommended first
+  PR.**
+- **Finish the calibration tails** — record the splice fidelity gates and run the
+  expression acceptance gate. Both need licensed weights / matched-regime data and
+  are human-only; don't fabricate a panel.
+- **Phase 5 breadth** — more organisms with authoritative provenance is
+  self-contained and always welcome (a good non-expression alternative).
 
 The learned-expression calibration (item 2) is the one item gated on real
 matched-regime data — never ship an uncalibrated composite as validated
@@ -165,8 +170,28 @@ been implemented and merged — see the constitution.)
      preprocessing crashes; the UTRs carry most of RiboNN's signal anyway).
   Both are property-tested against a synthetic RiboNN output table; `calibrated`
   stays `False`.
-- **Docs sync** (this brief + CLAUDE.md §7/§9 + README) — recorded the above and the
-  Python-version change.
+- **Docs sync** (PR #44 — this brief + CLAUDE.md §7/§9 + README) — recorded the
+  Python-version change and the RiboNN validation.
+- **First real RiboNN score through BT4** — `RiboNNExpressionModel(species="human")`
+  scored a sequence end-to-end on the maintainer's machine (≈1.624 CLR-residual TE,
+  `calibrated=False`), validating the whole path against the licensed weights.
+- **Honest competitive positioning** (PR #45 — `docs/COMPARISON.md`, linked from the
+  README) — a sourced review of BT4 vs IDT/Twist/GeneArt/GenScript/ATUM/DNA Chisel
+  from a three-agent research sweep. Verdict: BT4 is near-unique on *rigor* (exact
+  multi-objective optimization + certificates, byte-reproducible provenance,
+  validated ML with honest calibration), but **not** yet differentiated on "expresses
+  better" — CAI barely predicts expression (Kudla 2009, Welch 2009) and the CDS is
+  only ~31% of the per-nt signal (RiboNN), and BT4's splice/expression models are
+  still `calibrated=False`.
+- **Expression/splice design of record** (PR #46 —
+  `docs/DESIGN_expression_splice_flow.md`) — the agreed A→D pipeline for wiring
+  cryptic-splice screening and RiboNN ranking into the design flow and BT4 Studio,
+  spec'd before any code. **Locked decisions:** the RiboNN-ranked library is sourced
+  from **frontier + repeat-fix variants**; the splice CNN **localize-and-flags now**
+  (`calibrated=False`) and gains an **auto-edit** path only once a backend passes its
+  fidelity gate. Heavy CNNs stay out-of-loop; the interacting constraints (repeats +
+  uORF + splice-motifs + forbidden) are resolved in one **jointly-gated** refinement
+  (invariant #5), not a linear chain.
 
 **Environment notes for the RiboNN backend (learned on real hardware this session):**
 RiboNN's own stack needs `numpy<2` (torch 1.13.1 ABI), `setuptools<81` (its older
@@ -177,6 +202,28 @@ a directory literally named `models/` under `$BT4_RIBONN_DIR` (so RiboNN's hard-
 **Deliberately NOT done, and why:** no splice/expression model was promoted to
 `calibrated=True` — that needs the licensed weights + captured/matched-regime panels
 (human-only), and the constitution forbids shipping an uncalibrated model as
-validated. **To resume: read `../CLAUDE.md` (§6, §9 Phases 3–4) then this brief; a
-good contained first PR is the RiboNN batch-scoring/`num_workers` perf follow-up
-(item 2), or Phase 5 organism breadth (item 4).**
+validated. No engine code was written for the expression/splice flow — it was
+**spec'd first** (`DESIGN_expression_splice_flow.md`) by explicit choice, so the
+build has a fixed target.
+
+**To resume — the next build is the expression/splice flow, and its order is
+already fixed in [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md)
+§"Implementation phasing":**
+1. **Batched RiboNN scoring** — a `score_many` / `delta_logte_many` on the RiboNN
+   adapter that runs the whole candidate set in **one** RiboNN invocation (amortizes
+   the large fixed per-call overhead), plus an optional `num_workers=0` path.
+   Independently useful, testable without the GUI. **← start here.**
+2. Strong splice-consensus donor/acceptor **motif constraint** (LOCAL; new file +
+   registry entry + `ok_suffix⇔validate` test; honestly a heuristic, not a CNN).
+3. **Candidate-set assembly + rerank** over frontier + repeat-fix library
+   (`rerank_by_expression` applied across the set, calibrated-gated selection).
+4. **Splice CNN localize-and-flag** audit (batched SpliceAI+Pangolin over the set).
+5. **BT4 Studio UI** — UTR fields, the two toggles, the annotated frontier + ranked
+   table with uncalibrated badges, on the background thread.
+6. **(Gated, human-data)** splice **auto-edit** + RiboNN **auto-select**, each
+   unlocked only when its backend passes its fidelity/acceptance gate.
+
+Read [`../CLAUDE.md`](../CLAUDE.md) (§6, §9 Phases 3–4, §10.6, invariants #5/#7),
+then [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) and
+[`COMPARISON.md`](COMPARISON.md), then this brief. Phase 5 organism breadth remains
+a good self-contained alternative if you want a non-expression PR.
