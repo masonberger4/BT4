@@ -287,6 +287,16 @@ def test_delta_logte_delegates_to_batch(monkeypatch: pytest.MonkeyPatch) -> None
     assert model.delta_logte("ATGAAATAA", "ATGGGGTGA") == 3.0
 
 
+def test_delta_logte_validates_design_before_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The score_sequence/delta_logte delegations must stay behavior-preserving: when
+    # both inputs are invalid DNA, the design's error surfaces first (as it did before
+    # the batch refactor), so delta_logte_many validates designs before the reference.
+    monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    with pytest.raises(ValueError, match=r"\['Z'\]"):  # the design's bad char, not the reference's
+        model.delta_logte("ATGZZZTAA", "GGGQQQTAA")
+
+
 def test_delta_logte_many_rejects_empty_utr(monkeypatch: pytest.MonkeyPatch) -> None:
     # Guard clauses still fire for the batched delta path too.
     monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)

@@ -322,8 +322,9 @@ class RiboNNExpressionModel:
         its DataLoader worker spawn (heavy on Windows) -- almost all of it *per
         invocation*, not per sequence (CLAUDE.md §6;
         ``docs/DESIGN_expression_splice_flow.md`` step 1). Routing the whole set
-        through one :meth:`_predict_te` call (one temporary TSV, one forward pass)
-        amortizes that overhead, so scoring a frontier costs roughly the
+        through one :meth:`_predict_te` call (one temporary TSV, one ``predict``
+        invocation -- RiboNN's ``top_k``-model ensemble runs inside that single
+        call) amortizes that overhead, so scoring a frontier costs roughly the
         wall-clock of scoring a single sequence. This reuses the existing batched
         ``_predict_te`` path; it does not add a second scoring route.
 
@@ -394,9 +395,11 @@ class RiboNNExpressionModel:
         """
         if not designed:
             return []
-        validate_dna(reference)
+        # Validate the designs before the reference, so the single-design
+        # ``delta_logte`` delegation reports errors in the same order it used to.
         for dna in designed:
             validate_dna(dna)
+        validate_dna(reference)
         # Score every design plus the single shared reference in ONE invocation;
         # the reference is the last element, so it is scored exactly once.
         *designed_te, reference_te = self._predict_te([*designed, reference])

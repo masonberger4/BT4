@@ -37,8 +37,9 @@ its first tagged release.
   *per-invocation* overhead (weight hashing + model load + its DataLoader worker
   spawn), so scoring a whole candidate set one sequence at a time paid that cost
   N times. The new public batch methods route the entire set through the existing
-  batched `_predict_te` path (one temporary TSV, one forward pass), so scoring a
-  Pareto frontier costs roughly the wall-clock of scoring a single sequence.
+  batched `_predict_te` path (one temporary TSV, one `predict` invocation — RiboNN's
+  `top_k`-model ensemble runs inside that single call), so scoring a Pareto frontier
+  costs roughly the wall-clock of scoring a single sequence.
   `delta_logte_many` additionally scores the shared **reference once** (appended to
   the batch), not once per design. Both preserve per-input validation (valid DNA,
   length-3N ending in a stop codon, non-empty `utr5`/`utr3`) and the `tx_id`

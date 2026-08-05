@@ -776,7 +776,8 @@ is a requirement, not a nice-to-have.
   scoring has now landed** (the expression/splice design flow's step 1,
   `docs/DESIGN_expression_splice_flow.md`): public `score_many(dnas)` /
   `delta_logte_many(designed, reference)` methods route a whole candidate set
-  through the existing batched `_predict_te` (one TSV, one forward pass), amortizing
+  through the existing batched `_predict_te` (one TSV, one `predict` invocation over
+  RiboNN's `top_k`-model ensemble), amortizing
   RiboNN's large fixed *per-invocation* overhead so scoring a frontier costs roughly
   one call rather than N; `delta_logte_many` scores the shared reference **once**;
   both keep the per-input validation and the `tx_id` realignment and return results
