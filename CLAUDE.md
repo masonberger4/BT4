@@ -736,6 +736,20 @@ is a requirement, not a nice-to-have.
   would be the §10.5/§10.6 trap. The rerank hook **only re-picks the delivered
   point when the predictor is calibrated**; with the placeholder it is a pure
   reporting no-op (an uncalibrated score never steers delivery). The
+  **candidate-set assembler** (design-flow step 3,
+  `pipeline/candidates.py::assemble_and_rank_candidates`, `bt4.api.candidates`) now
+  builds the finalist set that rerank ranks: the **Pareto frontier** plus, when a
+  GLOBAL rule is active *and* the delivered exact-DP seed violates it, a small
+  **deterministic library of repeat-refined variants**; de-duplicated and
+  batch-scored via the new `BatchExpressionPredictor` contract (`score_many`, e.g.
+  RiboNN) when available. It obeys the same calibrated-gating rule - **discovery
+  order + solver-delivered `chosen` when uncalibrated**, reorder + top pick when
+  calibrated - and hardens it: the delivered (`chosen`) sequence is **invariant to
+  `n`** (uncalibrated, the solver-delivered is pinned first; calibrated, the head's
+  top pick tops the top-n keep; cap applied after scoring), variants are labelled
+  `repeat_refined` (process, not a guaranteed fix) with residual GLOBAL violations
+  disclosed per member, and de-dup/cap counts plus the predictor identity (in the
+  manifest, invariant #9) are reported. The
   **model-agnostic acceptance gate** a head must pass to *earn* `calibrated=True`
   has now landed (`biomodels/expression/gate.py`): for a **log-TE regression**
   head it reports Spearman (primary) / Pearson / R² plus **split-conformal

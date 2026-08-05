@@ -725,6 +725,7 @@ def _refine(
     config: OptimizeConfig,
     *,
     with_folding: bool,
+    seed: int | None = None,
 ) -> tuple[str, OptimalityCertificate, dict[str, object], dict[str, object]]:
     """Run an SA refinement pass over the exact-DP seed (folding and/or repeats).
 
@@ -774,7 +775,7 @@ def _refine(
         constraints,
         global_constraints=globals_,
         iterations=config.refine_iterations,
-        seed=config.seed,
+        seed=config.seed if seed is None else seed,
     )
     extra_audit: dict[str, object] = {"refined": True}
     manifest_extra: dict[str, object] = {}

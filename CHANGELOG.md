@@ -31,6 +31,33 @@ its first tagged release.
   CPython ≤3.10 wheels.
 
 ### Added
+- **Candidate-set assembly + expression rerank** (`bt4.api.candidates` /
+  `assemble_and_rank_candidates`) — step 3 of the expression/splice design flow
+  (`docs/DESIGN_expression_splice_flow.md`). Assembles the finalist set an
+  expression head ranks: the **Pareto frontier** plus, when a GLOBAL rule is active
+  *and* the delivered exact-DP seed actually violates it, a small **deterministic
+  library of repeat-refined variants** (distinct refinement seeds over the delivered
+  seed). The set is de-duplicated and scored by an `ExpressionPredictor` — in **one
+  batched call** when the backend implements the new `BatchExpressionPredictor`
+  contract (`score_many`, e.g. RiboNN), else per sequence — and delivered under the
+  same **calibrated-gating** honesty rule as `rerank_by_expression`: an uncalibrated
+  head (the default placeholder, and the shipped RiboNN adapter) only *annotates* —
+  the set stays in **discovery order** (`order_basis="discovery"`) with the
+  solver-delivered sequence `chosen` — while a calibrated head reorders by predicted
+  expression (`order_basis="expression_rank"`, total order `(score desc, index asc)`)
+  and re-picks the top (CLAUDE.md §10.5/§10.6). Hardened for correctness/honesty: the
+  **delivered (`chosen`) sequence is invariant to `n`** (uncalibrated, the
+  solver-delivered sequence is pinned first in discovery order; calibrated, the
+  head's top pick is the top of the top-n keep — the cap is applied *after* scoring
+  so a calibrated reranker never loses its best candidate);
+  every member is a full `Result` (round-trips, metrics recomputed, certificate,
+  residual GLOBAL violations disclosed); variants are labelled `repeat_refined` (the
+  *process*, not a guaranteed fix); and de-dup/cap counts, the batch-path flag, and
+  the predictor identity (folded into the manifest, invariant #9) are all reported.
+  New `BatchExpressionPredictor` Protocol in `bt4.biomodels.expression`; `_refine`
+  gains an optional `seed` (default unchanged). API-level surface (UI wiring is
+  step 5). No calibration claim — ranking is a reporting no-op until a head is
+  calibrated.
 - **Strong splice-consensus motif constraint** (`bt4.constraints.SpliceSiteMotifConstraint`,
   `avoid_splice_sites`) — step 2 of the expression/splice design flow
   (`docs/DESIGN_expression_splice_flow.md`). A new **LOCAL, exact-in-the-trellis**

@@ -45,7 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-__all__ = ["ExpressionPredictor", "ExpressionResult"]
+__all__ = ["BatchExpressionPredictor", "ExpressionPredictor", "ExpressionResult"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,4 +110,25 @@ class ExpressionPredictor(Protocol):
             prediction when :attr:`calibrated` is ``True`` and an uncalibrated
             placeholder otherwise.
         """
+        ...
+
+
+@runtime_checkable
+class BatchExpressionPredictor(ExpressionPredictor, Protocol):
+    """An :class:`ExpressionPredictor` that can score a whole set in one call.
+
+    Some backends (notably :class:`~bt4.biomodels.expression.RiboNNExpressionModel`)
+    have a large fixed *per-invocation* cost, so scoring a candidate set one
+    sequence at a time pays it N times. Such backends additionally implement
+    :meth:`score_many`, which scores the whole set in a single invocation.
+
+    Consumers detect the capability with ``isinstance(backend,
+    BatchExpressionPredictor)`` (this Protocol is ``runtime_checkable``) and fall
+    back to :meth:`~ExpressionPredictor.score_sequence` otherwise. The two paths
+    **must** agree: ``score_many`` returns one result per input, in input order,
+    equal to calling ``score_sequence`` on each (only cheaper).
+    """
+
+    def score_many(self, dnas: list[str]) -> list[ExpressionResult]:
+        """Score every DNA in ``dnas`` in one invocation, in input order."""
         ...

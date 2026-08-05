@@ -19,7 +19,11 @@ This package depends only on the standard library.
 
 from __future__ import annotations
 
-from bt4.biomodels.expression.base import ExpressionPredictor, ExpressionResult
+from bt4.biomodels.expression.base import (
+    BatchExpressionPredictor,
+    ExpressionPredictor,
+    ExpressionResult,
+)
 from bt4.biomodels.expression.baseline import NullExpressionModel
 from bt4.biomodels.expression.gate import (
     ExpressionEvalCase,
@@ -35,6 +39,7 @@ from bt4.biomodels.expression.ribonn import (
 
 __all__ = [
     "PINNED_WEIGHT_SHA256",
+    "BatchExpressionPredictor",
     "ExpressionEvalCase",
     "ExpressionGateReport",
     "ExpressionPredictor",
