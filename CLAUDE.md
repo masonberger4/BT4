@@ -302,7 +302,12 @@ length" knob — LOCAL, exact), tandem **and reverse-complement/inverted** repea
 RC-aware — genuinely GLOBAL, so refinement-enforced and honestly reported, *never*
 merged into the trellis, §10.1), forbidden-motif (with named, documented
 **forbidden-sequence presets**), **restriction sites (REBASE-style, auto
-reverse-complement + IUPAC)**, internal-ATG → proper **Kozak context** + **uORF
+reverse-complement + IUPAC)**, **strong splice-consensus donor/acceptor motifs**
+(`SpliceSiteMotifConstraint`/`avoid_splice_sites` — LOCAL, exact, IUPAC,
+**sense-strand only** so *no* RC-banning; an honest structural heuristic that bans
+only the strong consensus — donor `GTRAGT`, acceptor `YYYYYYNYAGG` — never the bare
+`GT`/`AG`, and makes no calibrated splice claim, with the real audit deferred to
+the CNNs, §10.6), internal-ATG → proper **Kozak context** + **uORF
 pairing** (out-of-frame ATG..in-frame stop), **CpG content** (elevate for vaccines
 / deplete for stealth), **5′ folding**, splice. Hard constraints degrade
 gracefully via `relax()` and report *which* constraints conflict rather than

@@ -31,6 +31,24 @@ its first tagged release.
   CPython ≤3.10 wheels.
 
 ### Added
+- **Strong splice-consensus motif constraint** (`bt4.constraints.SpliceSiteMotifConstraint`,
+  `avoid_splice_sites`) — step 2 of the expression/splice design flow
+  (`docs/DESIGN_expression_splice_flow.md`). A new **LOCAL, exact-in-the-trellis**
+  hard constraint that forbids the *strong* splice-consensus **donor** (`GTRAGT`,
+  the intronic +1..+6 core) and **acceptor** (`YYYYYYNYAGG`, a polypyrimidine tract
+  + `NYAG|G`) motifs on the mRNA **sense strand only** (splicing is strand-specific,
+  so — unlike restriction/repeat motifs — there is **no** reverse-complement
+  banning). It is an honest **structural heuristic**, not a splice model: it reduces
+  only the most *obvious* cryptic-splice risk and makes no calibrated claim; the
+  wrapped SpliceAI/Pangolin CNNs do the real audit out of loop (CLAUDE.md §6,
+  §10.6). It **never** bans the ubiquitous bare `GT`/`AG` (governing rule 3). The
+  default patterns (Shapiro & Senapathy 1987; Zhang 1998; human/mammalian
+  major-spliceosome only) are deliberately specific (~1/2048 donor, ~1/8192
+  acceptor) so the hard veto rarely over-constrains a design, and are configurable
+  via `donor_motifs`/`acceptor_motifs`. `ok_suffix⇔validate` and `context_len`
+  sufficiency (5 donor / 10 acceptor) are property-tested (invariant #3). Wired
+  through `OptimizeConfig`, the `bt4` CLI (`--avoid-splice-sites`), the `service`
+  schema, and BT4 Studio (a checkbox with an explanatory tooltip); off by default.
 - **Batched RiboNN scoring** (`RiboNNExpressionModel.score_many` /
   `.delta_logte_many`) — the first step of the expression/splice design flow
   (`docs/DESIGN_expression_splice_flow.md`). RiboNN's cost is dominated by fixed

@@ -127,12 +127,13 @@ The **expression/splice design flow is spec'd** in
 [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) and its build
 order is fixed. Start there:
 
-- **Batched RiboNN scoring** (design step 1) — ✅ **landed**
-  (`RiboNNExpressionModel.score_many` / `.delta_logte_many`). The next design-flow
-  step is **step 2: the strong splice-consensus donor/acceptor motif constraint** —
-  a LOCAL constraint (new file + registry entry + `ok_suffix⇔validate` test,
-  honestly a heuristic, not a CNN), wired through config/CLI/app. **The recommended
-  next PR.**
+- **Batched RiboNN scoring** (design step 1) — ✅ **landed**. **Strong
+  splice-consensus motif constraint** (design step 2) — ✅ **landed**
+  (`bt4.constraints.SpliceSiteMotifConstraint` / `avoid_splice_sites`; LOCAL, IUPAC,
+  sense-strand-only, structural heuristic). The next design-flow step is **step 3:
+  candidate-set assembly + rerank over frontier + repeat-fix library**
+  (`rerank_by_expression` applied across the set, calibrated-gated selection). **The
+  recommended next PR.**
 - **Finish the calibration tails** — record the splice fidelity gates and run the
   expression acceptance gate. Both need licensed weights / matched-regime data and
   are human-only; don't fabricate a panel.
@@ -218,9 +219,11 @@ already fixed in [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_f
    parameter; batching already amortizes the one-time worker spawn).
 2. Strong splice-consensus donor/acceptor **motif constraint** (LOCAL; new file +
    registry entry + `ok_suffix⇔validate` test; honestly a heuristic, not a CNN).
-   **← start here.**
+   ✅ **Landed** (`SpliceSiteMotifConstraint` / `avoid_splice_sites`; IUPAC donor
+   `GTRAGT` + acceptor `YYYYYYNYAGG`, sense-strand only, never bans bare `GT`/`AG`).
 3. **Candidate-set assembly + rerank** over frontier + repeat-fix library
    (`rerank_by_expression` applied across the set, calibrated-gated selection).
+   **← start here.**
 4. **Splice CNN localize-and-flag** audit (batched SpliceAI+Pangolin over the set).
 5. **BT4 Studio UI** — UTR fields, the two toggles, the annotated frontier + ranked
    table with uncalibrated badges, on the background thread.

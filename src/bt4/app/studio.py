@@ -350,6 +350,16 @@ class StudioWindow(QtWidgets.QMainWindow):
             "that folds back on itself and can occlude ribosome loading. 0 = off.",
         )
 
+        self.splice_check = QtWidgets.QCheckBox("avoid strong splice-consensus motifs")
+        self.splice_check.setAccessibleName("Avoid strong splice-site consensus motifs")
+        self._add_row(
+            form, "Splice sites", self.splice_check,
+            "Forbid strong donor (GTRAGT) and acceptor (polypyrimidine + YAG) "
+            "splice-consensus motifs on the sense strand, to suppress the most "
+            "obvious cryptic splice sites. A structural heuristic (not a splice "
+            "CNN); it never bans the bare GT/AG and makes no calibrated risk claim.",
+        )
+
         self.internal_start_check = QtWidgets.QCheckBox("avoid strong-Kozak internal ATG")
         self.internal_start_check.setAccessibleName("Avoid internal start codons")
         self._add_row(
@@ -608,6 +618,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.cpb_cds_edit,
             self.tandem_spin,
             self.inverted_spin,
+            self.splice_check,
             self.internal_start_check,
             self.uorf_check,
             self.uorf_region_spin,
@@ -761,6 +772,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             minmax_direction=minmax_direction,
             tandem_unit=tandem if tandem > 0 else None,
             inverted_stem=inverted if inverted > 0 else None,
+            avoid_splice_sites=self.splice_check.isChecked(),
             avoid_internal_start=self.internal_start_check.isChecked(),
             avoid_uorf=self.uorf_check.isChecked(),
             uorf_region_nt=self.uorf_region_spin.value(),

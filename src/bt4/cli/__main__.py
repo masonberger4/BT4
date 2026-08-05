@@ -97,6 +97,7 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         tandem_copies=args.tandem_copies,
         inverted_stem=args.inverted_stem,
         inverted_loop=args.inverted_loop,
+        avoid_splice_sites=args.avoid_splice_sites,
         avoid_internal_start=args.avoid_internal_start,
         avoid_uorf=args.avoid_uorf,
         uorf_region_nt=args.uorf_region_nt,
@@ -160,6 +161,10 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
                         help="ban hairpins with this stem/arm length (off unless set)")
     parser.add_argument("--inverted-loop", type=int, default=0, dest="inverted_loop",
                         help="max hairpin loop length between arms (default 0)")
+    parser.add_argument("--avoid-splice-sites", action="store_true",
+                        dest="avoid_splice_sites",
+                        help="forbid strong splice-consensus donor/acceptor motifs "
+                        "(sense strand; structural heuristic, not a CNN)")
     parser.add_argument("--avoid-internal-start", action="store_true",
                         dest="avoid_internal_start",
                         help="forbid internal ATG in a strong Kozak context")
