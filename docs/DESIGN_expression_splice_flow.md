@@ -155,7 +155,11 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
    worker spawn).
 2. **Strong splice-consensus motif constraint** — a LOCAL constraint (new file +
    registry entry + `ok_suffix⇔validate` test), donor/acceptor consensus only,
-   honestly labeled a heuristic. Wired through config/CLI/app.
+   honestly labeled a heuristic. Wired through config/CLI/app. ✅ **Landed** —
+   `bt4.constraints.SpliceSiteMotifConstraint` (`avoid_splice_sites`), IUPAC donor
+   `GTRAGT` + acceptor `YYYYYYNYAGG`, **sense strand only** (no RC), never the bare
+   `GT`/`AG`, `calibrated`-free structural heuristic; wired through
+   `OptimizeConfig`, `--avoid-splice-sites`, the service schema, and BT4 Studio.
 3. **Candidate-set assembly + `rerank` over frontier+library** — an API surface
    that assembles the frontier + deterministic repeat-fix library and batch-ranks
    it (`rerank_by_expression` applied across the set, calibrated-gated selection).

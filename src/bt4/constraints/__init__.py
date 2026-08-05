@@ -19,9 +19,16 @@ from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint, available_enzymes
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
+from bt4.constraints.splice_motif import (
+    DEFAULT_ACCEPTOR_MOTIFS,
+    DEFAULT_DONOR_MOTIFS,
+    SpliceSiteMotifConstraint,
+)
 from bt4.constraints.uorf import UorfConstraint
 
 __all__ = [
+    "DEFAULT_ACCEPTOR_MOTIFS",
+    "DEFAULT_DONOR_MOTIFS",
     "FORBIDDEN_PRESETS",
     "Constraint",
     "ForbiddenMotifConstraint",
@@ -32,6 +39,7 @@ __all__ = [
     "InvertedRepeatConstraint",
     "MaxRepeatConstraint",
     "RestrictionSiteConstraint",
+    "SpliceSiteMotifConstraint",
     "TandemRepeatConstraint",
     "UorfConstraint",
     "available_enzymes",

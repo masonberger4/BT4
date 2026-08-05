@@ -34,6 +34,7 @@ from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
+from bt4.constraints.splice_motif import SpliceSiteMotifConstraint
 from bt4.constraints.uorf import UorfConstraint
 from bt4.domain import (
     CODON_TABLE,
@@ -143,6 +144,14 @@ class OptimizeConfig:
             repeat, or ``None`` to disable the inverted-repeat constraint.
         inverted_loop: Maximum loop length between the hairpin arms (only used
             when ``inverted_stem`` is set).
+        avoid_splice_sites: When ``True``, forbid strong splice-consensus donor
+            (``GTRAGT``) and acceptor (``YYYYYYNYAGG``) motifs on the mRNA sense
+            strand, to suppress the most obvious cryptic splice sites. LOCAL and
+            exact in the trellis. This is a **structural heuristic**, not a
+            calibrated splice-risk model -- it reduces obvious risk only; the
+            wrapped SpliceAI/Pangolin CNNs do the real audit out of loop
+            (CLAUDE.md §6, §10.6). Human/mammalian major-spliceosome consensus;
+            never bans the bare ``GT``/``AG``. Off by default.
         avoid_internal_start: When ``True``, forbid any internal ATG (past the
             first codon) sitting in a strong Kozak context (purine at -3 and G at
             +4) to suppress spurious re-initiation. Off by default.
@@ -216,6 +225,7 @@ class OptimizeConfig:
     tandem_copies: int = 3
     inverted_stem: int | None = None
     inverted_loop: int = 0
+    avoid_splice_sites: bool = False
     avoid_internal_start: bool = False
     avoid_uorf: bool = False
     uorf_region_nt: int = 100
@@ -390,6 +400,8 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
         constraints.append(
             InvertedRepeatConstraint(config.inverted_stem, config.inverted_loop)
         )
+    if config.avoid_splice_sites:
+        constraints.append(SpliceSiteMotifConstraint())
     if config.avoid_internal_start:
         constraints.append(InternalStartConstraint())
     return constraints
@@ -500,6 +512,7 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "tandem_copies": config.tandem_copies,
         "inverted_stem": config.inverted_stem,
         "inverted_loop": config.inverted_loop,
+        "avoid_splice_sites": config.avoid_splice_sites,
         "avoid_internal_start": config.avoid_internal_start,
         "avoid_uorf": config.avoid_uorf,
         "uorf_region_nt": config.uorf_region_nt,

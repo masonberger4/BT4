@@ -51,8 +51,10 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   **forbidden-sequence presets** (poly-A signal, TATA box, telomere repeat, …),
   **tandem & inverted-repeat** (hairpin) bans, an **internal strong-Kozak ATG**
   guard, an **out-of-frame uORF** suppressor (a structural flag, refinement-
-  enforced, not a calibrated expression claim), and a **restriction-enzyme
-  catalog** (IUPAC-aware, auto reverse-complement).
+  enforced, not a calibrated expression claim), a **strong splice-consensus**
+  donor/acceptor motif guard (sense-strand IUPAC heuristic — reduces obvious
+  cryptic-splice risk, never the bare GT/AG, no calibrated claim), and a
+  **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
 - **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* codon tables out
   of the box, plus real **tAI** tables for eight organisms (human, mouse, rat,
   zebrafish, *Drosophila*, *C. elegans*, *Arabidopsis*, and *S. cerevisiae*) from
@@ -197,6 +199,7 @@ bt4 optimize MAALKHETQW --max-homopolymer 5 --enzyme EcoRI    # summary
 bt4 optimize MAALKHETQW --max-gc-run 5 --max-repeat-length 10 # GC-run + repeat caps
 bt4 optimize MAALKHETQW --forbid-preset poly_a_signal         # ban a preset's motifs
 bt4 optimize MAALKHETQW --avoid-uorf                          # suppress out-of-frame uORFs
+bt4 optimize MAALKHETQW --avoid-splice-sites                  # ban strong splice-consensus motifs
 bt4 optimize MAALKHETQW --cpb-weight 1 --cpb-cds ref.fasta    # codon-pair bias (your CDS)
 bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest

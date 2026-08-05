@@ -59,6 +59,7 @@ class ConfigModel(BaseModel):
     tandem_copies: int = 3
     inverted_stem: int | None = None
     inverted_loop: int = 0
+    avoid_splice_sites: bool = False
     avoid_internal_start: bool = False
     avoid_uorf: bool = False
     uorf_region_nt: int = 100
@@ -104,6 +105,7 @@ class ConfigModel(BaseModel):
             tandem_copies=self.tandem_copies,
             inverted_stem=self.inverted_stem,
             inverted_loop=self.inverted_loop,
+            avoid_splice_sites=self.avoid_splice_sites,
             avoid_internal_start=self.avoid_internal_start,
             avoid_uorf=self.avoid_uorf,
             uorf_region_nt=self.uorf_region_nt,
