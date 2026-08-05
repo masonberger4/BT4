@@ -294,6 +294,16 @@ neutral, honestly-uncalibrated placeholder until a validated head passes its
 gate). Recording the splice fidelity gates, the validated expression model, and a
 Rust trellis port are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
 
+## How BT4 compares
+
+Wondering how BT4 stacks up against IDT, Twist, GeneArt, ATUM, or DNA Chisel?
+See **[`docs/COMPARISON.md`](docs/COMPARISON.md)** for an honest, sourced
+positioning — including where BT4 genuinely differs (exact multi-objective
+optimization, optimality certificates, reproducible provenance, validated ML with
+honest calibration) **and where it does not** (empirical expression grounding,
+synthesis-manufacturability), plus the peer-reviewed caveat that the CDS is only a
+minority of the expression signal.
+
 ## Contributing
 
 Contributions are welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md) and the
