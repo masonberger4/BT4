@@ -296,6 +296,11 @@ class RiboNNExpressionModel:
     def score_sequence(self, dna: str) -> ExpressionResult:
         """Return RiboNN's predicted mean TE for ``dna`` (CLR-residual units).
 
+        A thin single-sequence wrapper over :meth:`score_many` (one RiboNN
+        invocation), kept for the :class:`ExpressionPredictor` contract. When
+        scoring a whole candidate set, call :meth:`score_many` directly so the
+        large fixed per-call overhead is paid once, not once per sequence.
+
         Args:
             dna: A coding sequence over ``{A,C,G,T}`` (its start/stop codons
                 included, per RiboNN's input contract).
@@ -306,14 +311,51 @@ class RiboNNExpressionModel:
             ``calibrated`` mirrors :attr:`calibrated` (``False`` until the gate
             passes -- never read it as a validated expression prediction otherwise).
         """
-        validate_dna(dna)
-        (te,) = self._predict_te([dna])
-        return ExpressionResult(
-            score=te,
-            model_name=self.name,
-            calibrated=self.calibrated,
-            units=f"RiboNN CLR-residual TE (mean over {self.species} cell types)",
-        )
+        (result,) = self.score_many([dna])
+        return result
+
+    def score_many(self, dnas: list[str]) -> list[ExpressionResult]:
+        """Score a whole candidate set in a **single** RiboNN invocation.
+
+        The batched counterpart to :meth:`score_sequence`. RiboNN's cost is
+        dominated by fixed per-call overhead -- weight hashing, model load, and
+        its DataLoader worker spawn (heavy on Windows) -- almost all of it *per
+        invocation*, not per sequence (CLAUDE.md §6;
+        ``docs/DESIGN_expression_splice_flow.md`` step 1). Routing the whole set
+        through one :meth:`_predict_te` call (one temporary TSV, one ``predict``
+        invocation -- RiboNN's ``top_k``-model ensemble runs inside that single
+        call) amortizes that overhead, so scoring a frontier costs roughly the
+        wall-clock of scoring a single sequence. This reuses the existing batched
+        ``_predict_te`` path; it does not add a second scoring route.
+
+        Per-input validation is preserved: every sequence must be valid DNA and
+        (inside ``_predict_te``) length-3N ending in a stop codon, and ``utr5`` /
+        ``utr3`` must be non-empty -- the same guards as :meth:`score_sequence`.
+
+        Args:
+            dnas: Coding sequences over ``{A,C,G,T}`` (start/stop codons included).
+                An empty list returns ``[]`` without touching the checkout.
+
+        Returns:
+            One :class:`ExpressionResult` per input, **in input order**. Each
+            ``score`` is the mean predicted TE across cell types in native
+            CLR-residual units (larger is better); ``calibrated`` mirrors
+            :attr:`calibrated` (``False`` until the gate passes).
+        """
+        if not dnas:
+            return []
+        for dna in dnas:
+            validate_dna(dna)
+        units = f"RiboNN CLR-residual TE (mean over {self.species} cell types)"
+        return [
+            ExpressionResult(
+                score=te,
+                model_name=self.name,
+                calibrated=self.calibrated,
+                units=units,
+            )
+            for te in self._predict_te(dnas)
+        ]
 
     def delta_logte(self, designed_dna: str, reference_dna: str) -> float:
         """Return ``TE(designed) - TE(reference)`` -- the CDS-attributable signal.
@@ -322,12 +364,46 @@ class RiboNNExpressionModel:
         positive value predicts higher expression, a negative value flags a CDS
         change RiboNN predicts will *reduce* expression (the maintainer's
         limiting-sequence framing). Analogous to
-        :meth:`bt4.biomodels.splice.PangolinSplicePredictor.delta_splicing`.
+        :meth:`bt4.biomodels.splice.PangolinSplicePredictor.delta_splicing`. A
+        thin single-design wrapper over :meth:`delta_logte_many`; batch a whole
+        candidate set through that method to score the reference only once.
         """
-        validate_dna(designed_dna)
-        validate_dna(reference_dna)
-        designed, reference = self._predict_te([designed_dna, reference_dna])
-        return designed - reference
+        (delta,) = self.delta_logte_many([designed_dna], reference_dna)
+        return delta
+
+    def delta_logte_many(self, designed: list[str], reference: str) -> list[float]:
+        """Return ``TE(designed_i) - TE(reference)`` for every design, batched.
+
+        Because the UTRs are held fixed, the reference is one shared baseline: it
+        is scored **once**, appended to the batch, not once per design. Every
+        design *and* the reference go through a single RiboNN invocation (one
+        :meth:`_predict_te` call), amortizing the fixed per-call overhead across
+        the whole set -- so ranking a frontier by ΔTE costs roughly one RiboNN
+        call, not one per candidate (CLAUDE.md §6;
+        ``docs/DESIGN_expression_splice_flow.md`` step 1). The same per-input
+        validation as :meth:`delta_logte` is preserved.
+
+        Args:
+            designed: Candidate coding sequences (each with start/stop codons). An
+                empty list returns ``[]`` without scoring the reference.
+            reference: The baseline CDS each design is compared against, scored once.
+
+        Returns:
+            One CDS-attributable Δ per design, **in input order** (a positive value
+            predicts higher expression; a negative value flags a predicted
+            reduction).
+        """
+        if not designed:
+            return []
+        # Validate the designs before the reference, so the single-design
+        # ``delta_logte`` delegation reports errors in the same order it used to.
+        for dna in designed:
+            validate_dna(dna)
+        validate_dna(reference)
+        # Score every design plus the single shared reference in ONE invocation;
+        # the reference is the last element, so it is scored exactly once.
+        *designed_te, reference_te = self._predict_te([*designed, reference])
+        return [te - reference_te for te in designed_te]
 
 
 def _reduce_te_by_tx_id(out_df: Any, tx_ids: list[str]) -> list[float]:
@@ -377,6 +453,16 @@ def _run_predict_with_models_layout(
         RuntimeError: If neither layout can be arranged (e.g. the platform refuses
             the symlink and the directory is not named ``models``).
     """
+    # num_workers note (design step 1, optional): RiboNN's DataLoader worker count
+    # is set inside the repo's own ``predict``/``data`` code, and
+    # ``predict_using_nested_cross_validation_models`` exposes no worker-count
+    # parameter, so the adapter cannot cleanly request ``num_workers=0`` from here
+    # without patching RiboNN internals -- which would violate the "wrap, never
+    # reimplement" contract this adapter is built on. It is therefore deliberately
+    # left out. Batching (``score_many`` / ``delta_logte_many``) already amortizes
+    # the dominant fixed overhead -- weight hashing + model load + the one-time
+    # worker spawn -- across the whole candidate set, which is the real win; the
+    # per-invocation worker spawn is paid once for the batch either way.
     import os as _os
     import tempfile
 

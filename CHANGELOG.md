@@ -31,6 +31,28 @@ its first tagged release.
   CPython ≤3.10 wheels.
 
 ### Added
+- **Batched RiboNN scoring** (`RiboNNExpressionModel.score_many` /
+  `.delta_logte_many`) — the first step of the expression/splice design flow
+  (`docs/DESIGN_expression_splice_flow.md`). RiboNN's cost is dominated by fixed
+  *per-invocation* overhead (weight hashing + model load + its DataLoader worker
+  spawn), so scoring a whole candidate set one sequence at a time paid that cost
+  N times. The new public batch methods route the entire set through the existing
+  batched `_predict_te` path (one temporary TSV, one `predict` invocation — RiboNN's
+  `top_k`-model ensemble runs inside that single call), so scoring a Pareto frontier
+  costs roughly the wall-clock of scoring a single sequence.
+  `delta_logte_many` additionally scores the shared **reference once** (appended to
+  the batch), not once per design. Both preserve per-input validation (valid DNA,
+  length-3N ending in a stop codon, non-empty `utr5`/`utr3`) and the `tx_id`
+  realignment; results come back **in input order**. `score_sequence` /
+  `delta_logte` now delegate to the batch methods (single source of truth). A
+  `num_workers=0` DataLoader path was investigated and **deliberately left out**:
+  RiboNN's `predict_using_nested_cross_validation_models` exposes no worker-count
+  parameter, so requesting 0 workers would mean patching RiboNN internals (against
+  the "wrap, never reimplement" contract), and batching already amortizes the
+  one-time worker spawn across the set. `calibrated` stays **`False`** — no
+  calibration claim. Tested without torch / pandas / the RiboNN checkout (batch
+  ordering, ensemble averaging per `tx_id`, reference-scored-once, and the
+  empty-UTR / bad-CDS guards still firing).
 - **Wrapped RiboNN expression backend** (`bt4.biomodels.expression.RiboNNExpressionModel`)
   — the Phase-4 learned expression head behind the `ExpressionPredictor` contract
   (CLAUDE.md §6/§9). It runs the published **RiboNN** translation-efficiency CNN

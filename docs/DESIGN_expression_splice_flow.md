@@ -146,7 +146,13 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
 
 1. **Batched RiboNN scoring** — a `score_many` / `delta_logte_many` on the adapter
    that runs the whole candidate set in one RiboNN invocation. Independently
-   useful, testable without the GUI. *(First PR.)*
+   useful, testable without the GUI. *(First PR.)* ✅ **Landed** —
+   `RiboNNExpressionModel.score_many` / `.delta_logte_many` reuse the batched
+   `_predict_te` path; `delta_logte_many` scores the shared reference once;
+   `score_sequence` / `delta_logte` delegate to them; `calibrated` stays `False`.
+   The optional `num_workers=0` path was left out (RiboNN's predict entry point
+   exposes no worker-count parameter; batching already amortizes the one-time
+   worker spawn).
 2. **Strong splice-consensus motif constraint** — a LOCAL constraint (new file +
    registry entry + `ok_suffix⇔validate` test), donor/acceptor consensus only,
    honestly labeled a heuristic. Wired through config/CLI/app.
