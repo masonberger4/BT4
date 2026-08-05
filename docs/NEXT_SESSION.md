@@ -1,19 +1,21 @@
 # BT4 — next-session build brief
 
-A ready-to-use prompt/brief for the next building session. Paste it (or point the
-session at this file) to resume work. **Read [`../CLAUDE.md`](../CLAUDE.md) first —
-it is the constitution and it overrides anything here that has drifted.**
+A ready-to-use brief for the next building session. Paste it (or point the session
+at this file) to resume work. **Read [`../CLAUDE.md`](../CLAUDE.md) first — it is
+the constitution and it overrides anything here that has drifted.**
 
 ---
 
 ## Where BT4 is right now
 
-Phases 0–2 complete; **Phase 3 groundwork landed**; **Phase 5 opened**. All
-merged and green on `main` (the two wrapped splice CNN backends from this session,
-PRs #33 and #34, are now merged):
+Phases 0–2 complete; **Phase 3 groundwork landed**; **Phase 4 in progress**;
+**Phase 5 opened**. All merged and green on `main`.
 
 - **Honest exact-DP core** — codon trellis with true per-constraint context and a
-  real optimality certificate; beam as an explicit knob.
+  real optimality certificate; beam as an explicit knob. The **full DP inner loop
+  is now ported to Rust** (`bt4_native.trellis_solve`, regime-gated with a
+  byte-identical pure-Python twin + equivalence test; the win is the amortized
+  Pareto frontier, ~2.7–5.5× faster, byte-identical output/certificates).
 - **Objectives:** CAI, tAI (8 organisms, real GtRNAdb data), GC-proximity, 5′
   ramp, CpG, %MinMax, and **codon-pair bias** (built from a user reference CDS).
   Returned as a multi-objective **Pareto frontier**.
@@ -22,203 +24,159 @@ PRs #33 and #34, are now merged):
   + **named presets**, restriction sites (IUPAC, RC), strong-Kozak internal-ATG,
   and **out-of-frame uORF** (GLOBAL/refinement-enforced, structural).
 - **Budget backends:** OR-Tools CP-SAT and an honest Lagrangian/exact-bucketed
-  budget DP — now **context-aware**, so **CpG/UpA whole-sequence count budgets**
+  budget DP — context-aware, so **CpG/UpA whole-sequence count budgets**
   (`dinuc_budget`/`dinuc_min`/`dinuc_max`) ship as exact, proven-optimal
   dinucleotide-count budgets (completed the last Phase 2 item).
-- **Library / degenerate-design mode (Phase 5):** `api.library` / `bt4 library` —
-  an honest deterministic codon-distribution sampler with a `SAMPLED` certificate
-  (not an optimizer; local-constraint-respecting; no optimality/expression claim).
-- **Phase 3 groundwork:** `FoldingModel` (ViennaRNA + labeled baseline),
-  `SplicePredictor` (labeled PWM baseline **plus both wrapped CNN backends, now
-  merged to `main`** — Pangolin (GPL-3.0, PR #33) and SpliceAI (PolyForm Strict
-  code + CC BY-NC weights, PR #34), lazily imported, hash-pinned,
-  `calibrated=False` until their fidelity gates, with a two-backend agreement
-  harness), the SA refinement engine (with a global-constraint gate, invariant
-  #5), per-site tracks plotted in BT4 Studio.
-- **`ExpressionPredictor` contract scaffolded** (`biomodels/expression/`) with a
-  neutral, honestly-uncalibrated placeholder and a frontier-rerank hook that never
-  steers delivery unless the predictor is calibrated.
-- **Native primitives:** `bt4_native` now also ships `max_gc_run` and
-  `longest_repeat` (byte-identical Python fallbacks + equivalence tests);
-  `max_gc_run` backs the GC-run `ok_suffix` veto.
-- **Surfaces:** stable `bt4.api`, the `bt4` CLI, BT4 Studio (PySide6, tooltips on
-  every control, and a sequence viewer that renders **inline violation
-  annotations** — each `Violation` highlighted over its `[start, end)` span,
-  HARD red / SOFT amber, with a hover tooltip and legend, so residual GLOBAL
-  violations show *where* they occur), an optional FastAPI service, content-hashed
-  provenance manifests.
+- **Refinement:** the incremental SA engine (`optimize/anneal_refine.py`) now has
+  **block/segment moves + parallel tempering** (opt-in `block_size`/`block_prob`
+  and `replicas`/`temps`/`swap_every`), so it can cross barriers a single-codon
+  chain cannot — **without weakening invariant #5** on the delivered result (every
+  replica gates against its own whole-sequence hard-violation count; all knobs
+  default off and reproduce the prior single-chain trajectory byte-for-byte). A
+  repeat pinned to synonymously-immovable bases is an honestly-disclosed
+  feasibility floor (`max_repeat_residual`, enforcement `"partial"`), not a defect.
+- **Splice (Phase 3):** `SplicePredictor` with a labeled PWM baseline **plus both
+  wrapped CNN backends** — `PangolinSplicePredictor` (GPL-3.0) and
+  `SpliceAiSplicePredictor` (PolyForm Strict code + CC BY-NC weights) — each lazily
+  imported from the user's own install, hash-pinned, reproducing upstream
+  bit-for-bit, `calibrated=False` until its fidelity gate, with a two-backend
+  agreement harness and a license-clean fidelity-attestation layer.
+- **Expression (Phase 4):** `ExpressionPredictor` contract + a neutral
+  `NullExpressionModel` placeholder + a frontier-rerank hook that never steers
+  delivery unless calibrated, **plus the wrapped `RiboNNExpressionModel`**
+  (`biomodels/expression/ribonn.py`, Sanofi non-commercial, driven from the user's
+  own checkout via `$BT4_RIBONN_DIR`, hash-pinned against a bundled 180-entry
+  manifest, CLR-residual TE units, `delta_logte` the CDS-attributable signal). Ships
+  `calibrated=False`; `default()` still returns the placeholder. The model-agnostic
+  acceptance gate (`biomodels/expression/gate.py`, `verify_expression_gate`) is the
+  promotion path. **`RiboNNExpressionModel` has now had its first real end-to-end
+  runs against the licensed weights** (a maintainer's machine — non-commercial
+  weights, never bundled or CI-run), which validated the adapter and fixed two
+  live-only integration bugs (see the archive marker below).
+- **Native primitives:** `bt4_native` ships `gc_count`, `max_homopolymer_run`,
+  `reverse_complement`, `max_gc_run`, `longest_repeat`, and `trellis_solve` — each
+  with a byte-identical Python fallback + equivalence test.
+- **Surfaces:** stable `bt4.api`; the `bt4` CLI; BT4 Studio (PySide6, tooltips on
+  every control, per-site risk tracks, and a sequence viewer with inline
+  HARD/SOFT violation annotations); an optional FastAPI service; content-hashed
+  provenance manifests; per-site reporting tracks (`api.tracks` / `bt4 tracks`).
+- **Packaging:** now supports **Python 3.10+** (was 3.11+), so the RiboNN backend
+  installs into the same environment as its pinned `torch==1.13.1` stack.
 
 ## What's left (see CLAUDE.md §9 for the authoritative list)
 
-> **Live priority (this list is kept in original numbering for continuity):** item
-> 1 (wrap SpliceAI + Pangolin) is now **essentially done** — both adapters and the
-> agreement harness landed this session (PRs #33/#34); only a maintainer tail
-> remains (recording the fidelity gates + the ASSP cross-check). The genuinely
-> next self-contained work is **item 3 (Rust trellis port)** and **item 4
-> (block/tempering refinement)** — see "Suggested first move" below.
+The two big self-contained engine items from the last brief — the **Rust trellis
+port** and **block/tempering refinement** — have both **landed**. What remains is
+mostly data-gated or human-only.
 
-1. **Wrap published SpliceAI + Pangolin as calibrated splice backends** (Phase 3)
-   — **Decision: no self-training.** Wrap the already-validated **Pangolin** and
-   **SpliceAI** as *inference-only* backends behind the **existing**
-   `SplicePredictor` contract; the Δsplicing framing and top-k/log-odds pooling are
-   already in `biomodels/splice/base.py`. **✅ Both adapters + the agreement harness
-   have landed:** `PangolinSplicePredictor` (PR #33) and `SpliceAiSplicePredictor`
-   (PR #34) — both merged to `main` — plus `backend_agreement` +
-   `scripts/compare_splice_backends.py`, with the PWM baseline still the
-   `calibrated=False` default.
-   - **License corrections (both were wrong in the earlier brief).** Pangolin is
-     **GPL-3.0** (not MIT). SpliceAI is stricter still: **code = PolyForm Strict
-     1.0.0, weights = CC BY-NC 4.0** (noncommercial) — the `setup.py` "GPLv3"
-     string is contradicted by the authoritative LICENSE files. Both follow BT4's
-     GPL-ViennaRNA pattern: **lazily import the user's own installed package +
-     weights, bundle neither code nor weights** — BT4 stays MIT. Install each
-     yourself (github.com/tkzeng/Pangolin, github.com/Illumina/SpliceAI; each
-     ships its weights). SpliceAI's CC BY-NC weights make that backend
-     noncommercial-only.
-   - **What landed (both):** lazy heavy-dep imports (so `import bt4` stays light),
-     weights **SHA-256 hash-pinned** (published digests, re-verified by hand) and
-     checked *before* load, out-of-loop scoring, and per-adapter fidelity gates
-     (`verify_pangolin_fidelity` / `verify_spliceai_fidelity`). Pangolin emits one
-     combined `P(splice)` → `SpliceResult.donor` (acceptor zero); SpliceAI's 3-way
-     softmax maps cleanly to `donor` + `acceptor` (both populated). Each was
-     verified to reproduce its upstream model **bit-for-bit** against the real
-     weights, but ships `calibrated=False` (no reference panel bundled). The
-     agreement harness needed no change — with both CNNs installed it compares two
-     real, independently-trained models.
-   - **What remains for item 1:** (a) capturing reference panels and **recording
-     the fidelity gates** to promote either backend to `calibrated=True` (and
-     having `default()` prefer a calibrated one) — a maintainer step needing the
-     licensed weights, not fabricated here; (b) the opt-in **ASSP** cross-check
-     with offline fixtures. Keep the honest scope note (predicts splice-*site
-     presence*; lower Δ = lower *predicted* cryptic-splice risk, a strong prior,
-     not validated expression gain). **Needs no GPU/training data.**
-2. **Learned expression head** (Phase 4) — trained on real MPRA / ribosome-load
-   data, hash-pinned, calibrated + uncertainty (conformal). Slots behind the
-   scaffolded `ExpressionPredictor` (set `calibrated=True` only after the gate).
-   **Blocker/watch-out:** the honest hard part is *matched-regime data* — most
-   uORF/ribosome-load data is 5′UTR, but the tool controls the CDS (see the
-   uORF-calibration analysis). Do **not** relabel a hand-weighted composite as
-   "calibrated" (§10.5/§10.6).
-3. **Full Rust trellis port** (Phase 1 perf) — the DP inner loop still runs in
-   pure Python. The `bt4_native` primitive set has grown (`gc_count`,
-   `max_homopolymer_run`, `reverse_complement`, `max_gc_run`, `longest_repeat`),
-   but porting the **DP inner loop** to `bt4_native` (PyO3/maturin, numpy
-   fallback, `abi3` wheels) remains. Runtime is a first-class concern (§7); keep
-   the perf regression test green. *(Lesson from this wave: a whole-sequence
-   O(n²) native call on a per-move hot path is a pessimization in the
-   no-extension case — measure before wiring, and keep the pure-Python path
-   fast.)*
-4. **Refinement reach: block/segment moves + parallel tempering** (Phase 3,
-   self-contained, no data) — the SA engine (`optimize/anneal_refine.py`) only
-   proposes **single-codon** moves and its global gate strictly forbids any
-   increase in the hard-violation count, so it can leave a dispersed
-   **max-repeat / uORF** in place when clearing it needs a *coordinated
-   multi-codon* change or a temporary count increase (it can already traverse
-   count-`==` plateaus, so pure lateral multi-position effects are reachable). Add
-   **block/segment moves** (propose synonymous swaps at several positions at once)
-   and a **parallel-tempering** schedule (hot replicas may accept uphill moves and
-   swap into the cold chain) so refinement can cross those barriers **without
-   weakening invariant #5 on the delivered result**. Keep it honest: a repeat
-   pinned to synonymously-immovable bases (Met `ATG` / Trp `TGG`, or a
-   base-locked degenerate position) is a genuine feasibility floor — still report
-   it as a residual, don't pretend a block move can remove it. (An alternative
-   worth weighing: encode max-repeat as a global constraint in an ILP/CP-SAT
-   solve for an exact answer — currently it lives only in the refinement layer.)
-   See CLAUDE.md §7 and §9 Phase 3.
-5. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
+1. **Promote the splice CNNs to `calibrated=True`** (Phase 3 tail, human-only) —
+   capture reference panels and **record the fidelity gates**
+   (`verify_pangolin_fidelity` / `verify_spliceai_fidelity`, then a committed
+   `FidelityAttestation` via the attestation layer), so `default()` can prefer a
+   calibrated backend. Needs the licensed weights — a maintainer step, not
+   fabricated. Also the opt-in **ASSP** cross-check with offline fixtures.
+2. **Promote RiboNN to `calibrated=True`** (Phase 4 tail, data-gated, human-only) —
+   assemble a **license-clean, regime-matched CDS-variant TE panel** and run
+   `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
+   split). Reproducing RiboNN faithfully is *not* calibration for BT4's CDS-variant
+   regime (its own ablation puts only ~31% of per-nt signal in the CDS). Do **not**
+   relabel a hand-weighted composite as "calibrated" (§10.5/§10.6).
+   - **RiboNN perf/UX follow-up (self-contained, no data):** scoring is dominated by
+     fixed per-call overhead (weight hashing + model load + Windows DataLoader
+     worker-process spawn), and it is mostly *per RiboNN invocation*, not per
+     sequence. `score_sequence` runs one CDS per call and `delta_logte` two, so
+     scoring a whole frontier one-at-a-time pays that cost N times. Worth adding: a
+     **public batch scoring method** (amortize a whole frontier in one call) and a
+     `num_workers=0` path (usually faster on Windows for small inference jobs).
+3. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
    Linux; polish Studio theming/accessibility; optional external-validation report.
-6. **Phase 5 (continued)** — library/degenerate-design mode has **landed**;
-   remaining Phase 5 is **more organisms with authoritative provenance**,
-   restriction-enzyme catalog growth, and tissue/condition-specific tables. A
-   natural follow-up: add a library-mode control to BT4 Studio (kept out of this
-   wave to avoid touching the app layer).
+   Advance up to the point where signing / tag-pushing / release-cutting is needed
+   (human-only here — HTTP 403 in the sandbox).
+4. **Phase 5 (continued)** — library/degenerate-design mode has landed; remaining is
+   **more organisms with authoritative provenance**, restriction-enzyme catalog
+   growth, and tissue/condition-specific tables. A natural follow-up: a library-mode
+   control in BT4 Studio.
 
 ## Working agreements (do not violate)
 
-- **Honesty is structural.** Never present an unenforced constraint, an
-  unvalidated number, or a heuristic result as if it were real. New model →
-  `calibrated=False` until it passes a held-out gate. Never fabricate a data table
-  — refuse and say why (as tAI / codon-pair bias do).
-- **Adding a constraint/objective/model = a new file + a registry/export entry +
-  its honesty property test** (`ok_suffix⇔validate` / `delta==score` / calibration
+- **Honesty is structural.** Never present an unenforced constraint, an unvalidated
+  number, or a heuristic result as if it were real. New model → `calibrated=False`
+  until it passes a held-out / fidelity gate. Never fabricate a data table — refuse
+  and say why (as tAI / codon-pair bias do).
+- **Adding a constraint/objective/model = a new file + a registry/export entry + its
+  honesty property test** (`ok_suffix⇔validate` / `delta==score` / calibration
   gate). Never an engine edit. Keep the strict layering (import-linter enforces it).
 - **Keep CLAUDE.md current in the same change** (§10.11). Update README when a
   user-facing surface changes.
 - **Single-trunk + CI.** Branch, open a PR, merge on green. The full local gate:
   ```
   python -m ruff check src tests scripts
-  python -m mypy <changed files>            # whole-package mypy shows env-only
-                                            # cpsat/_accel noise; CI's dep-free
-                                            # quality job is the source of truth
+  python -m mypy                            # whole-package; CI's dep-free quality
+                                            # job is the source of truth
   lint-imports
   QT_QPA_PLATFORM=offscreen python -m pytest tests/ -p no:cacheprovider
   ```
 - **Sandbox limits (must be done by a human):** deleting remote branches, pushing
-  git tags, and cutting releases are blocked here (HTTP 403). Leave those for the
-  maintainer; don't work around them.
+  git tags, cutting releases, and anything needing the licensed splice/expression
+  weights are blocked here. Leave those for the maintainer; don't work around them.
 
 ## Suggested first move
 
-**Item 1's wrapped splice backends are both done** — Pangolin (PR #33) and
-SpliceAI (PR #34), each hash-pinned and `calibrated=False` until its fidelity
-gate, with the two-backend agreement harness. The best next moves, all
-self-contained (no GPU, no external data):
+All the self-contained engine work is done. The best next moves:
 
-- **Full Rust trellis port** (item 3) — the DP inner loop still runs in pure
-  Python. A grounded plan exists (position-independent-regime `trellis_solve`
-  primitive + byte-identical Python twin + inline-DP oracle).
-- **Block/segment + parallel-tempering refinement moves** (item 4) — a grounded
-  plan exists (opt-in replica/temper/block kwargs on `anneal_refine`, strict
-  global gate on every replica so invariant #5 holds).
-- **Finish item 1's tail:** record the fidelity gates to promote a backend to
-  `calibrated=True` — a maintainer step needing the licensed weights + a captured
-  panel; don't fabricate one. The opt-in **ASSP** cross-check also remains.
+- **RiboNN batch scoring + `num_workers=0`** (item 2 follow-up) — pure engineering,
+  no data, meaningfully cuts real-workflow runtime. A good, contained first PR.
+- **Finish the calibration tails** (items 1 & 2) — record the splice fidelity gates
+  and run the expression acceptance gate. Both need licensed weights / matched-regime
+  data and are human-only; don't fabricate a panel.
+- **Phase 5 breadth** (item 4) — more organisms with authoritative provenance is
+  self-contained and always welcome.
 
-The **learned expression head** (item 2) is the one item that still needs real
-matched-regime data — defer it and never ship an uncalibrated composite as
-validated (§10.5/§10.6). Packaged installers (item 5) can be advanced up to the
-point where signing/tag-pushing/release-cutting is needed (human-only here, HTTP
-403).
+The learned-expression calibration (item 2) is the one item gated on real
+matched-regime data — never ship an uncalibrated composite as validated
+(§10.5/§10.6). Packaged installers (item 3) can be advanced up to signing/release
+(human-only here).
 
 ---
 
 ## Session archive marker (for continuity)
 
-**Last building session delivered (all merged to `main`, green):**
-- Phase 2 **completed** — CpG/UpA whole-sequence count budgets (PR #26).
-- Phase 5 **opened** — library / degenerate-design mode (PR #25).
-- Phase 1 perf — native `max_gc_run` + `longest_repeat` primitives (PR #27),
-  including a fix for an O(n²) `longest_repeat` fast-path that regressed the
-  pure-Python `MaxRepeatConstraint.validate` hot path.
-- Docs — status sync (PR #28), the single-codon-SA refinement limitation note
-  (PR #30), and this **splice decision** (wrap SpliceAI/Pangolin, no self-train).
+**Prior building session delivered (all merged to `main`, green):** both wrapped
+splice adapters — `PangolinSplicePredictor` (PR #33) and `SpliceAiSplicePredictor`
+(PR #34) — plus the two-backend agreement harness, and design plans for the Rust
+trellis port and the block/tempering refinement moves. (Those two plans have since
+been implemented and merged — see the constitution.)
 
-**This session delivered (both PRs merged to `main`, green): both wrapped splice
-adapters.** `PangolinSplicePredictor` (**PR #33**, merged; wraps the user's
-installed GPL-3.0 Pangolin) and `SpliceAiSplicePredictor` (**PR #34**, stacked on
-#33 then retargeted to `main` and merged; wraps the user's installed SpliceAI —
-code PolyForm Strict 1.0.0, weights CC BY-NC 4.0) — neither bundled, hash-pinned
-weights verified before load, `calibrated=False` until per-adapter fidelity gates
-— plus the `backend_agreement` two-backend harness +
-`scripts/compare_splice_backends.py`, the `bt4[splice-pangolin]` /
-`bt4[splice-spliceai]` extras, and the **license corrections** (Pangolin is
-GPL-3.0 not MIT; SpliceAI is PolyForm+CC BY-NC not GPL). Both were CI-green before
-merge; each adapter was verified to reproduce its upstream model **bit-for-bit**
-against the real weights. (This archive doc-sync itself is a small follow-up PR.)
+**This session delivered (all merged to `main`, green):**
+- **Python 3.10 support** (PR #42) — `requires-python >=3.10`, 3.10 classifier,
+  ruff/mypy target 3.10, CI quality matrix adds 3.10. Pure compatibility widening
+  (the core uses no 3.11-only features). It unblocks installing BT4 into the same
+  environment as the RiboNN backend, whose pinned `torch==1.13.1` ships only CPython
+  ≤3.10 wheels.
+- **RiboNN adapter fixes** (PR #43) — the **first real end-to-end runs against the
+  licensed RiboNN weights** (maintainer's Windows machine) surfaced two integration
+  bugs that only appear once the live forward pass runs, both fixed:
+  1. RiboNN returns its ensemble as **one row per cross-validation model**, so the
+     per-input realignment now **groups by `tx_id` and averages** (mean over cell
+     types *and* the ensemble) via the tested helper `_reduce_te_by_tx_id` — a plain
+     `set_index` left duplicate labels and `float(Series)` raised `TypeError`.
+  2. Scoring now **requires non-empty `utr5`/`utr3`** and refuses empty ones up front
+     (RiboNN's loader reads an all-empty UTR column as `NaN` and its `.str`
+     preprocessing crashes; the UTRs carry most of RiboNN's signal anyway).
+  Both are property-tested against a synthetic RiboNN output table; `calibrated`
+  stays `False`.
+- **Docs sync** (this brief + CLAUDE.md §7/§9 + README) — recorded the above and the
+  Python-version change.
 
-**Also produced this session (design plans, not code):** grounded,
-execution-ready implementation plans for the **Rust trellis port** (item 3) and
-the **block/segment + parallel-tempering refinement moves** (item 4), from a
-parallel design fan-out — so the next session can pick either up quickly (see
-"Suggested first move").
+**Environment notes for the RiboNN backend (learned on real hardware this session):**
+RiboNN's own stack needs `numpy<2` (torch 1.13.1 ABI), `setuptools<81` (its older
+`pytorch_lightning` calls `pkg_resources`), and the Zenodo `weights.zip` extracted to
+a directory literally named `models/` under `$BT4_RIBONN_DIR` (so RiboNN's hard-coded
+`models/<species>/<run_id>/state_dict.pth` path resolves without a Windows symlink).
 
-**Deliberately NOT done, and why:** no bespoke splice CNN and no expression head
-were trained — both would need real held-out data (+ GPU for a from-scratch CNN),
-and the constitution forbids shipping an uncalibrated model as validated. Both
-CNN backends ship `calibrated=False` because **no reference panel is bundled**
-(capturing one needs the licensed weights and reproduces licensed outputs) — the
-promotion is a maintainer step, not fabricated here. The data-blocked
-**expression head** (item 2) remains. **To resume: read `../CLAUDE.md` (§6 Splice,
-§9 Phase 3) then this brief; pick up at the Rust trellis port (item 3), the
-block/tempering refinement moves (item 4), or recording the splice fidelity
-gates.**
+**Deliberately NOT done, and why:** no splice/expression model was promoted to
+`calibrated=True` — that needs the licensed weights + captured/matched-regime panels
+(human-only), and the constitution forbids shipping an uncalibrated model as
+validated. **To resume: read `../CLAUDE.md` (§6, §9 Phases 3–4) then this brief; a
+good contained first PR is the RiboNN batch-scoring/`num_workers` perf follow-up
+(item 2), or Phase 5 organism breadth (item 4).**

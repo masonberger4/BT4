@@ -36,9 +36,16 @@ before writing code, and keep it current as the architecture evolves.
 > gates, with a two-backend agreement harness that makes agreement between two
 > real CNNs an uncertainty signal. The **full Rust trellis port** has also landed
 > (`bt4_native.trellis_solve`, regime-gated with a byte-identical pure-Python
-> fallback, amortized across the Pareto frontier). Still ahead: recording the
-> fidelity gates to promote to `calibrated=True`, the **learned expression head**,
-> and packaged installers — see §9. This document was written
+> fallback, amortized across the Pareto frontier). The **wrapped RiboNN expression
+> head** has landed too (`RiboNNExpressionModel`, Sanofi non-commercial, driven
+> from the user's own checkout, hash-pinned, `calibrated=False` until its
+> CDS-variant gate) and has now had its **first real end-to-end runs against the
+> licensed weights**, which validated the adapter and fixed two live-only
+> integration bugs (ensemble row-per-model aggregation; a required-non-empty-UTR
+> guard). BT4 now also supports **Python 3.10** (was 3.11+), so RiboNN installs into
+> the same environment as its `torch==1.13.1` stack. Still ahead: recording the
+> fidelity/acceptance gates to promote splice + expression to `calibrated=True`, and
+> packaged installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
@@ -433,7 +440,7 @@ is a requirement, not a nice-to-have.
 
 ## 7. Engineering
 
-- **Stack:** Python 3.11+ for orchestration/API; a compiled **Rust core (PyO3 /
+- **Stack:** Python 3.10+ for orchestration/API; a compiled **Rust core (PyO3 /
   maturin)** for the trellis inner loop and incremental scorers, with a
   pure-numpy fallback when the extension isn't built. Rust over Cython for
   memory safety, GIL-free DP, and rayon parallelism (Pareto sweep + batch).
@@ -454,7 +461,7 @@ is a requirement, not a nice-to-have.
   (`scripts/benchmark.py`) comparing BT4 vs input vs GeneOptimizer/IDT/Twist on
   CAI/tAI/GC/CpG/repeats/splice/folding over a pinned panel (revive
   `almost-there`'s benchmark corpus).
-- **CI from commit #1** (BT3 had none): GitHub Actions matrix (3.11/3.12/3.13)
+- **CI from commit #1** (BT3 had none): GitHub Actions matrix (3.10/3.11/3.12/3.13)
   running ruff, `mypy --strict`, import-linter (layering), pytest + coverage
   gate, determinism job, and per-extra jobs (`[ml]`/`[fold]`/`[ilp]`). Merge
   blocked on failure. `abi3` wheels for the Rust core across platforms.
@@ -753,7 +760,19 @@ is a requirement, not a nice-to-have.
   is not calibration *for BT4's regime* (RiboNN's own ablation puts only ~31% of
   per-nt signal in the CDS), so promotion needs a passing `verify_expression_gate`
   on a CDS-variant panel — human-only, data-gated. New `bt4[expression-ribonn]`
-  extra (torch + pandas, lazily imported so `import bt4` stays light).
+  extra (torch + pandas, lazily imported so `import bt4` stays light). **First real
+  end-to-end runs against the licensed weights have now happened** (on a
+  maintainer's machine, human-run — the weights are non-commercial and never
+  bundled/CI-run), validating the adapter and surfacing two integration bugs that
+  only appear once the live forward pass executes, both since fixed: (1) RiboNN
+  returns its ensemble as **one row per cross-validation model**, so the per-input
+  realignment must **group by `tx_id` and average** (mean over cell types *and* the
+  ensemble) — a plain `set_index` left duplicate labels and `float(Series)` raised;
+  (2) scoring now **requires non-empty `utr5`/`utr3`** and refuses empty ones up
+  front with a clear message (RiboNN's loader reads an all-empty UTR column as NaN
+  and its `.str` preprocessing crashes — and the UTRs carry most of RiboNN's signal,
+  so an empty-UTR score is not meaningful anyway). Both are property-tested against a
+  synthetic RiboNN output table; `calibrated` stays `False` (unchanged).
 - **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
   `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
   gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a

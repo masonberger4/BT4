@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/masonberger4/BT4/actions/workflows/ci.yml/badge.svg)](https://github.com/masonberger4/BT4/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
 **BT4 turns a protein into an optimized coding DNA / mRNA sequence** for a target
 organism (default *Homo sapiens*) — choosing synonymous codons to maximize codon
@@ -151,7 +151,7 @@ and Windows certificates just to remove a warning you click through once.
 
 ## Install for developers (from source)
 
-BT4 is also a `bt4` CLI and a `bt4.api` Python library. It needs **Python 3.11+**.
+BT4 is also a `bt4` CLI and a `bt4.api` Python library. It needs **Python 3.10+**.
 
 ```bash
 git clone https://github.com/masonberger4/BT4
