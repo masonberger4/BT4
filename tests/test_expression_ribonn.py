@@ -71,9 +71,21 @@ def test_unavailable_without_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_scoring_without_checkout_raises_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
-    model = RiboNNExpressionModel()
+    # Non-empty UTRs so we get past the UTR guard and reach the missing-checkout error.
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
     with pytest.raises(RuntimeError, match=r"BT4_RIBONN_DIR|clone not found"):
         model.score_sequence("ATGGCCTAA")
+
+
+def test_scoring_rejects_empty_utr(monkeypatch: pytest.MonkeyPatch) -> None:
+    # RiboNN's loader can't preprocess an all-empty UTR column (read back as NaN); the
+    # adapter refuses up front with a clear message instead of a deep pandas crash.
+    monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
+    model = RiboNNExpressionModel()  # utr5/utr3 empty by default
+    with pytest.raises(ValueError, match=r"UTR"):
+        model.score_sequence("ATGGCCTAA")
+    with pytest.raises(ValueError, match=r"UTR"):
+        RiboNNExpressionModel(utr5="GCC").score_sequence("ATGGCCTAA")  # only 3' empty
 
 
 def test_rejects_cds_not_ending_in_stop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,6 +129,42 @@ def test_sha256_file_roundtrip(tmp_path) -> None:  # type: ignore[no-untyped-def
     path = tmp_path / "x.bin"
     path.write_bytes(blob)
     assert _sha256_file(path) == hashlib.sha256(blob).hexdigest()
+
+
+def test_reduce_te_averages_ensemble_rows() -> None:
+    # RiboNN returns one row per ensemble model, so a single input yields several rows
+    # sharing a tx_id. The reducer must average them (mean over cell types, then over
+    # the ensemble) into one scalar per input -- the bug was float() on a Series.
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    out_df = pd.DataFrame(
+        {
+            "tx_id": ["bt4_0", "bt4_0", "bt4_1"],
+            "predicted_TE_cellA": [1.0, 3.0, 10.0],
+            "predicted_TE_cellB": [1.0, 3.0, 20.0],
+        }
+    )
+    # bt4_0: row means [1.0, 3.0] -> ensemble mean 2.0; bt4_1: single row mean 15.0.
+    assert _reduce_te_by_tx_id(out_df, ["bt4_0", "bt4_1"]) == [2.0, 15.0]
+
+
+def test_reduce_te_missing_tx_id_raises() -> None:
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    out_df = pd.DataFrame({"tx_id": ["bt4_0"], "predicted_TE_x": [1.0]})
+    with pytest.raises(ValueError, match=r"length cap|no prediction"):
+        _reduce_te_by_tx_id(out_df, ["bt4_0", "bt4_1"])
+
+
+def test_reduce_te_no_te_columns_raises() -> None:
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    out_df = pd.DataFrame({"tx_id": ["bt4_0"], "other_col": [1.0]})
+    with pytest.raises(RuntimeError, match=r"predicted_TE"):
+        _reduce_te_by_tx_id(out_df, ["bt4_0"])
 
 
 def test_default_stays_null_placeholder() -> None:

@@ -120,11 +120,13 @@ class RiboNNExpressionModel:
         species: ``"human"`` (default) or ``"mouse"`` -- selects the weight set.
         top_k: Number of top cross-validation runs (by ``val_r2``) to ensemble,
             matching RiboNN's ``predict_using_nested_cross_validation_models``.
-        utr5: Fixed 5' UTR context prepended to every scored CDS. Empty by default;
-            because BT4 varies only the CDS, holding the UTRs constant is the
-            intended use (a modeling choice, documented, never silently zero-padded
-            into the model's own channels).
-        utr3: Fixed 3' UTR context (as ``utr5``).
+        utr5: Fixed 5' UTR context prepended to every scored CDS. Empty by default,
+            but **scoring requires it non-empty**: RiboNN's data loader reads an
+            all-empty UTR column as NaN and cannot preprocess it, and the UTRs carry
+            most of RiboNN's signal in any case. Because BT4 varies only the CDS,
+            holding the real UTRs constant is the intended use (a modeling choice,
+            documented, never silently zero-padded into the model's own channels).
+        utr3: Fixed 3' UTR context (as ``utr5``; likewise required non-empty to score).
         repo_dir: Path to the RiboNN clone (its ``src`` package). ``None`` resolves
             from ``$BT4_RIBONN_DIR``.
         weights_dir: Directory holding ``<species>/<run_id>/state_dict.pth`` and
@@ -242,6 +244,18 @@ class RiboNNExpressionModel:
                     f"input {i} (len {len(dna)}, ends {dna[-3:]!r}) does not"
                 )
 
+        # RiboNN's data loader runs pandas ``.str`` preprocessing on the UTR columns;
+        # an all-empty UTR column is read back as NaN (float) and crashes deep inside
+        # that loader. Refuse up front with a clear message -- and the UTRs carry most
+        # of RiboNN's signal anyway, so an empty-UTR score would not be meaningful.
+        if not self.utr5 or not self.utr3:
+            raise ValueError(
+                "RiboNN requires non-empty 5' and 3' UTR context (an all-empty UTR "
+                "column is read as NaN and breaks its .str preprocessing). Set "
+                "utr5=/utr3= to the transcript's real UTRs; they are held fixed while "
+                "the CDS varies."
+            )
+
         repo = self._resolve_repo_dir()
         if repo is None:
             raise RuntimeError(
@@ -277,23 +291,7 @@ class RiboNNExpressionModel:
                 predict, weights, str(in_path), self.species, run_df, self.top_k
             )
 
-        te_cols = [c for c in out_df.columns if str(c).startswith("predicted_TE_")]
-        if not te_cols:
-            raise RuntimeError("RiboNN output had no predicted_TE_* columns")
-        means = out_df[te_cols].mean(axis=1)
-        # Realign to input order by tx_id. RiboNN silently drops rows exceeding its
-        # length caps (5'UTR > 1381 or CDS+3'UTR > 11937 nt), so a missing tx_id means
-        # that CDS was filtered -- surface it honestly rather than KeyError.
-        ordered = out_df.assign(_te=means).set_index("tx_id")["_te"]
-        results: list[float] = []
-        for i, tx_id in enumerate(tx_ids):
-            if tx_id not in ordered.index:
-                raise ValueError(
-                    f"RiboNN produced no prediction for input {i}; its CDS likely "
-                    "exceeds RiboNN's length cap (CDS+3'UTR <= 11937 nt)"
-                )
-            results.append(float(ordered[tx_id]))
-        return results
+        return _reduce_te_by_tx_id(out_df, tx_ids)
 
     def score_sequence(self, dna: str) -> ExpressionResult:
         """Return RiboNN's predicted mean TE for ``dna`` (CLR-residual units).
@@ -330,6 +328,36 @@ class RiboNNExpressionModel:
         validate_dna(reference_dna)
         designed, reference = self._predict_te([designed_dna, reference_dna])
         return designed - reference
+
+
+def _reduce_te_by_tx_id(out_df: Any, tx_ids: list[str]) -> list[float]:
+    """Reduce RiboNN's raw prediction table to one mean-TE per input, in input order.
+
+    RiboNN returns the ensemble's predictions as **multiple rows per input** -- one per
+    cross-validation model kept by ``top_k`` -- each carrying the ``predicted_TE_*``
+    per-cell-type columns. The decision-relevant scalar is the mean over cell types
+    *and* over the ensemble, so we average the per-cell-type columns within each row and
+    then average those rows per ``tx_id``. Grouping collapses the ensemble (and is a
+    no-op when the table already has one row per input); a plain ``set_index`` left
+    duplicate ``tx_id`` labels, so ``float(ordered[tx_id])`` saw a Series and raised.
+
+    A ``tx_id`` absent from the output was dropped by RiboNN's length cap (5'UTR > 1381
+    or CDS+3'UTR > 11937 nt), so it is surfaced honestly rather than as a ``KeyError``.
+    """
+    te_cols = [c for c in out_df.columns if str(c).startswith("predicted_TE_")]
+    if not te_cols:
+        raise RuntimeError("RiboNN output had no predicted_TE_* columns")
+    means = out_df[te_cols].mean(axis=1)
+    ordered = out_df.assign(_te=means).groupby("tx_id")["_te"].mean()
+    results: list[float] = []
+    for i, tx_id in enumerate(tx_ids):
+        if tx_id not in ordered.index:
+            raise ValueError(
+                f"RiboNN produced no prediction for input {i}; its CDS likely "
+                "exceeds RiboNN's length cap (CDS+3'UTR <= 11937 nt)"
+            )
+        results.append(float(ordered[tx_id]))
+    return results
 
 
 def _run_predict_with_models_layout(

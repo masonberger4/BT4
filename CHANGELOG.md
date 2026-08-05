@@ -7,6 +7,20 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **RiboNN adapter: correct ensemble aggregation and honest empty-UTR guard.** The
+  first end-to-end runs against real RiboNN weights surfaced two integration bugs.
+  (1) RiboNN returns the ensemble as **one row per cross-validation model**, so a
+  single input yields several rows sharing a `tx_id`; the adapter's `set_index`
+  realignment then made `float(ordered[tx_id])` operate on a Series and raised
+  `TypeError: cannot convert the series to <class 'float'>`. Realignment now groups
+  by `tx_id` and averages (the ensemble mean, also averaging over cell types) via a
+  new tested helper `_reduce_te_by_tx_id` — a no-op when rows are already unique.
+  (2) Scoring with the default **empty** `utr5`/`utr3` crashed deep inside RiboNN's
+  data loader (pandas reads an all-empty UTR column as `NaN` and its `.str`
+  preprocessing fails); the adapter now refuses up front with a clear message, since
+  the UTRs carry most of RiboNN's signal and an empty-UTR score is not meaningful.
+
 ### Changed
 - **Python 3.10 is now supported** (was 3.11+). `requires-python` is lowered to
   `>=3.10`, the 3.10 classifier is added, ruff/mypy target 3.10, and CI's quality
