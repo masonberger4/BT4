@@ -19,6 +19,7 @@ import re
 import pytest
 
 from bt4.biomodels.expression import (
+    ExpressionResult,
     NullExpressionModel,
     RiboNNExpressionModel,
     default,
@@ -172,3 +173,144 @@ def test_default_stays_null_placeholder() -> None:
     predictor = default()
     assert isinstance(predictor, NullExpressionModel)
     assert predictor.calibrated is False
+
+
+# --- Batched scoring (score_many / delta_logte_many) --------------------------
+#
+# These pin the batch surface without a live model: the real _predict_te needs
+# torch + the checkout, so the wrapping/ordering tests stub it on the class (the
+# adapter is a frozen, slotted dataclass, so patch the method on the class, which
+# monkeypatch restores), and the guard-clause tests drive the real _predict_te far
+# enough to hit its validation, exactly as the single-sequence tests above do.
+
+
+def test_score_many_empty_returns_empty() -> None:
+    # An empty candidate set is a no-op: no validation, no RiboNN invocation.
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    assert model.score_many([]) == []
+
+
+def test_score_many_preserves_order_and_wraps(monkeypatch: pytest.MonkeyPatch) -> None:
+    # score_many wraps each _predict_te value in an ExpressionResult, in input
+    # order, carrying the honest calibrated=False and the CLR-residual units.
+    scores = {"ATGTTTTGA": 0.25, "ATGGCCTAA": 1.5, "ATGAAATAA": -2.0}
+
+    def fake_predict_te(self: RiboNNExpressionModel, dnas: list[str]) -> list[float]:
+        return [scores[d] for d in dnas]  # keyed by content => order-sensitive
+
+    monkeypatch.setattr(RiboNNExpressionModel, "_predict_te", fake_predict_te)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    dnas = ["ATGGCCTAA", "ATGAAATAA", "ATGTTTTGA"]  # not the dict's order
+    results = model.score_many(dnas)
+
+    assert [r.score for r in results] == [1.5, -2.0, 0.25]  # input order, not dict
+    assert all(isinstance(r, ExpressionResult) for r in results)
+    assert all(r.calibrated is False for r in results)
+    assert all(r.model_name == "ribonn[human]" for r in results)
+    assert all("CLR-residual" in r.units for r in results)
+
+
+def test_score_sequence_delegates_to_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # score_sequence is now a one-element score_many; it must still return a single
+    # ExpressionResult with the batched value.
+    def fake_predict_te(self: RiboNNExpressionModel, dnas: list[str]) -> list[float]:
+        assert dnas == ["ATGGCCTAA"]
+        return [3.14]
+
+    monkeypatch.setattr(RiboNNExpressionModel, "_predict_te", fake_predict_te)
+    result = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT").score_sequence("ATGGCCTAA")
+    assert result.score == 3.14
+    assert result.calibrated is False
+
+
+def test_score_many_validates_each_dna(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every input is validate_dna'd before any RiboNN work; a bad base rejects the
+    # whole batch (validation fires before _predict_te is reached).
+    monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    with pytest.raises(ValueError, match="non-ACGT"):
+        model.score_many(["ATGGCCTAA", "ATGXYZTAA"])
+
+
+def test_score_many_rejects_bad_cds(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The per-input length-3N + stop-codon guard still fires inside the batch path.
+    monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    with pytest.raises(ValueError, match=r"3N ending in a stop codon"):
+        model.score_many(["ATGGCCTAA", "ATGGCCGCC"])  # second lacks a stop codon
+
+
+def test_score_many_rejects_empty_utr(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The non-empty-UTR guard still fires for the batch path (empty by default).
+    monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
+    model = RiboNNExpressionModel()
+    with pytest.raises(ValueError, match=r"UTR"):
+        model.score_many(["ATGGCCTAA"])
+
+
+def test_delta_logte_many_empty_returns_empty() -> None:
+    # No designs => no deltas, and the reference is not even scored.
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    assert model.delta_logte_many([], "ATGGCCTAA") == []
+
+
+def test_delta_logte_many_scores_reference_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The reference is a single shared baseline: scored ONCE (appended to the batch),
+    # not once per design, in a single _predict_te invocation.
+    calls: list[list[str]] = []
+
+    def fake_predict_te(self: RiboNNExpressionModel, dnas: list[str]) -> list[float]:
+        calls.append(list(dnas))
+        return [float(len(d)) for d in dnas]  # deterministic, per-input
+
+    monkeypatch.setattr(RiboNNExpressionModel, "_predict_te", fake_predict_te)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    designed = ["ATGAAATAA", "ATGTTTTTTTAA"]  # lengths 9 and 12
+    reference = "ATGGGGTGA"  # length 9, distinct from every design
+
+    deltas = model.delta_logte_many(designed, reference)
+
+    assert len(calls) == 1  # a single RiboNN invocation for the whole set
+    assert calls[0] == [*designed, reference]  # reference appended last...
+    assert calls[0].count(reference) == 1  # ...exactly once
+    assert deltas == [9.0 - 9.0, 12.0 - 9.0]  # TE(design) - TE(reference), in order
+
+
+def test_delta_logte_delegates_to_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # delta_logte is now a one-design delta_logte_many; the scalar must match.
+    def fake_predict_te(self: RiboNNExpressionModel, dnas: list[str]) -> list[float]:
+        assert dnas == ["ATGAAATAA", "ATGGGGTGA"]  # [designed, reference]
+        return [5.0, 2.0]
+
+    monkeypatch.setattr(RiboNNExpressionModel, "_predict_te", fake_predict_te)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    assert model.delta_logte("ATGAAATAA", "ATGGGGTGA") == 3.0
+
+
+def test_delta_logte_many_rejects_empty_utr(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Guard clauses still fire for the batched delta path too.
+    monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
+    model = RiboNNExpressionModel()
+    with pytest.raises(ValueError, match=r"UTR"):
+        model.delta_logte_many(["ATGGCCTAA"], "ATGGGGTGA")
+
+
+def test_reduce_te_preserves_input_order_over_scrambled_df() -> None:
+    # The reducer keys on tx_id and returns results in *input* (tx_id) order even
+    # when RiboNN's output rows arrive scrambled and multi-row-per-input (ensemble),
+    # so a batched score_many keeps its inputs aligned to their outputs.
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    out_df = pd.DataFrame(
+        {
+            "tx_id": ["bt4_2", "bt4_0", "bt4_1", "bt4_2", "bt4_0", "bt4_1"],
+            "predicted_TE_cA": [30.0, 10.0, 20.0, 32.0, 12.0, 22.0],
+            "predicted_TE_cB": [30.0, 10.0, 20.0, 28.0, 8.0, 18.0],
+        }
+    )
+    # Per-row cell-type means then the ensemble mean per tx_id:
+    #   bt4_0: mean(10,10)=10, mean(12,8)=10  -> 10.0
+    #   bt4_1: mean(20,20)=20, mean(22,18)=20 -> 20.0
+    #   bt4_2: mean(30,30)=30, mean(32,28)=30 -> 30.0
+    assert _reduce_te_by_tx_id(out_df, ["bt4_0", "bt4_1", "bt4_2"]) == [10.0, 20.0, 30.0]

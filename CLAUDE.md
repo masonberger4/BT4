@@ -772,7 +772,18 @@ is a requirement, not a nice-to-have.
   front with a clear message (RiboNN's loader reads an all-empty UTR column as NaN
   and its `.str` preprocessing crashes — and the UTRs carry most of RiboNN's signal,
   so an empty-UTR score is not meaningful anyway). Both are property-tested against a
-  synthetic RiboNN output table; `calibrated` stays `False` (unchanged).
+  synthetic RiboNN output table; `calibrated` stays `False` (unchanged). **Batched
+  scoring has now landed** (the expression/splice design flow's step 1,
+  `docs/DESIGN_expression_splice_flow.md`): public `score_many(dnas)` /
+  `delta_logte_many(designed, reference)` methods route a whole candidate set
+  through the existing batched `_predict_te` (one TSV, one forward pass), amortizing
+  RiboNN's large fixed *per-invocation* overhead so scoring a frontier costs roughly
+  one call rather than N; `delta_logte_many` scores the shared reference **once**;
+  both keep the per-input validation and the `tx_id` realignment and return results
+  in input order, and `score_sequence`/`delta_logte` now delegate to them. A
+  `num_workers=0` path was investigated and left out (RiboNN's predict entry point
+  exposes no worker-count parameter, and batching already amortizes the one-time
+  worker spawn); `calibrated` remains `False` (no calibration claim).
 - **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
   `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
   gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a

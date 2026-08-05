@@ -81,13 +81,14 @@ mostly data-gated or human-only.
    split). Reproducing RiboNN faithfully is *not* calibration for BT4's CDS-variant
    regime (its own ablation puts only ~31% of per-nt signal in the CDS). Do **not**
    relabel a hand-weighted composite as "calibrated" (§10.5/§10.6).
-   - **RiboNN perf/UX follow-up (self-contained, no data):** scoring is dominated by
-     fixed per-call overhead (weight hashing + model load + Windows DataLoader
-     worker-process spawn), and it is mostly *per RiboNN invocation*, not per
-     sequence. `score_sequence` runs one CDS per call and `delta_logte` two, so
-     scoring a whole frontier one-at-a-time pays that cost N times. Worth adding: a
-     **public batch scoring method** (amortize a whole frontier in one call) and a
-     `num_workers=0` path (usually faster on Windows for small inference jobs).
+   - **RiboNN perf/UX follow-up (self-contained, no data):** ✅ **Done** (design
+     step 1). `RiboNNExpressionModel.score_many` / `.delta_logte_many` now amortize
+     RiboNN's large fixed *per-invocation* overhead (weight hashing + model load +
+     DataLoader worker spawn) across a whole candidate set in one call;
+     `delta_logte_many` scores the shared reference once; `score_sequence` /
+     `delta_logte` delegate to them; `calibrated` stays `False`. The `num_workers=0`
+     path was investigated and left out (RiboNN's predict entry point exposes no
+     worker-count parameter; batching already amortizes the one-time worker spawn).
 3. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
    Linux; polish Studio theming/accessibility; optional external-validation report.
    Advance up to the point where signing / tag-pushing / release-cutting is needed
@@ -126,11 +127,12 @@ The **expression/splice design flow is spec'd** in
 [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) and its build
 order is fixed. Start there:
 
-- **Batched RiboNN scoring** (design step 1) — a `score_many` / `delta_logte_many`
-  on the RiboNN adapter that runs the whole candidate set in one RiboNN invocation
-  (amortizes the large fixed per-call overhead), plus an optional `num_workers=0`
-  path. Pure engineering, no data, testable without the GUI. **The recommended first
-  PR.**
+- **Batched RiboNN scoring** (design step 1) — ✅ **landed**
+  (`RiboNNExpressionModel.score_many` / `.delta_logte_many`). The next design-flow
+  step is **step 2: the strong splice-consensus donor/acceptor motif constraint** —
+  a LOCAL constraint (new file + registry entry + `ok_suffix⇔validate` test,
+  honestly a heuristic, not a CNN), wired through config/CLI/app. **The recommended
+  next PR.**
 - **Finish the calibration tails** — record the splice fidelity gates and run the
   expression acceptance gate. Both need licensed weights / matched-regime data and
   are human-only; don't fabricate a panel.
@@ -209,12 +211,14 @@ build has a fixed target.
 **To resume — the next build is the expression/splice flow, and its order is
 already fixed in [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md)
 §"Implementation phasing":**
-1. **Batched RiboNN scoring** — a `score_many` / `delta_logte_many` on the RiboNN
-   adapter that runs the whole candidate set in **one** RiboNN invocation (amortizes
-   the large fixed per-call overhead), plus an optional `num_workers=0` path.
-   Independently useful, testable without the GUI. **← start here.**
+1. **Batched RiboNN scoring** — `score_many` / `delta_logte_many` on the RiboNN
+   adapter that run the whole candidate set in **one** RiboNN invocation (amortize
+   the large fixed per-call overhead). ✅ **Landed** (the `num_workers=0` path was
+   investigated and left out — RiboNN's predict entry point has no worker-count
+   parameter; batching already amortizes the one-time worker spawn).
 2. Strong splice-consensus donor/acceptor **motif constraint** (LOCAL; new file +
    registry entry + `ok_suffix⇔validate` test; honestly a heuristic, not a CNN).
+   **← start here.**
 3. **Candidate-set assembly + rerank** over frontier + repeat-fix library
    (`rerank_by_expression` applied across the set, calibrated-gated selection).
 4. **Splice CNN localize-and-flag** audit (batched SpliceAI+Pangolin over the set).
