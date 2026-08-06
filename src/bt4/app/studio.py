@@ -43,6 +43,23 @@ _METRIC_ROWS = (
 _LONG_PROTEIN_WARN = 500
 
 
+def _distinct_site_count(positions: list[int], match_window: int) -> int:
+    """Count distinct splice sites, merging positions within ``match_window``.
+
+    ``positions`` must be sorted ascending. Two flags whose anchors are no more
+    than ``match_window`` nt apart are treated as the same localized site (the
+    same co-occurrence rule the audit uses for cross-backend matching), so a site
+    flagged by several backends is counted once rather than once per backend.
+    """
+    sites = 0
+    last: int | None = None
+    for pos in positions:
+        if last is None or pos - last > match_window:
+            sites += 1
+        last = pos
+    return sites
+
+
 def _is_dark() -> bool:
     """Guess whether the running app uses a dark theme from its window colour."""
     app = QtWidgets.QApplication.instance()
@@ -160,7 +177,6 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._cancel_requested = False
         self._cand_thread: QtCore.QThread | None = None
         self._cand_worker: CandidatesWorker | None = None
-        self._cand_cancel_requested = False
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls_scroll = QtWidgets.QScrollArea()
@@ -663,12 +679,11 @@ class StudioWindow(QtWidgets.QMainWindow):
             "background thread; the UI stays responsive."
         )
         self.rank_btn.clicked.connect(self._start_candidates)
-        self.cand_cancel_btn = QtWidgets.QPushButton("Cancel")
-        self.cand_cancel_btn.setAccessibleName("Cancel candidate ranking")
-        self.cand_cancel_btn.clicked.connect(self._cancel_candidates)
-        self.cand_cancel_btn.setEnabled(False)
+        # No Cancel button here: unlike the point-wise-cancelable frontier sweep,
+        # the assemble->audit flow exposes no cancellation hook, so a Cancel
+        # control would be a dishonest no-op. The disabled "Ranking..." button is
+        # the honest in-flight indicator instead.
         buttons.addWidget(self.rank_btn)
-        buttons.addWidget(self.cand_cancel_btn)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
@@ -978,10 +993,22 @@ class StudioWindow(QtWidgets.QMainWindow):
         worker.finished.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_optimize_thread)
         # Keep references so neither is garbage-collected mid-run.
         self._thread = thread
         self._worker = worker
         thread.start()
+
+    def _clear_optimize_thread(self) -> None:
+        """Drop the finished optimize thread/worker refs once the thread has quit.
+
+        Symmetric to :meth:`_clear_candidates_thread`. Without this, ``self._thread``
+        would stay non-``None`` forever after the first optimize, and the
+        candidate flow's ``self._thread is None`` liveness gate would then leave the
+        Optimize button permanently disabled after an optimize-then-rank sequence.
+        """
+        self._thread = None
+        self._worker = None
 
     def _cancel_optimize(self) -> None:
         """Ask the running worker to stop after its current frontier point."""
@@ -1007,7 +1034,6 @@ class StudioWindow(QtWidgets.QMainWindow):
             return
         config, steps = self._build_config(enzymes)
 
-        self._cand_cancel_requested = False
         self._set_candidates_running(True)
         message = "Ranking candidates..."
         if self._cpb_warning:
@@ -1038,18 +1064,6 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._cand_worker = worker
         thread.start()
 
-    def _cancel_candidates(self) -> None:
-        """Request cancellation of the running candidate flow.
-
-        The candidate flow is not point-wise cancelable, so this only prevents
-        the *next* run and disables the button; the current call runs to
-        completion. It is here so the control mirrors the Optimize flow and never
-        leaves the user without a Cancel affordance.
-        """
-        self._cand_cancel_requested = True
-        self.cand_cancel_btn.setEnabled(False)
-        self.statusBar().showMessage("Finishing the current candidate run...")
-
     def _clear_candidates_thread(self) -> None:
         """Drop the finished thread/worker references once the thread has quit."""
         self._cand_thread = None
@@ -1059,7 +1073,6 @@ class StudioWindow(QtWidgets.QMainWindow):
         """Toggle controls while a candidate run is in flight."""
         self.rank_btn.setEnabled(not running)
         self.rank_btn.setText("Ranking..." if running else "Rank && audit")
-        self.cand_cancel_btn.setEnabled(running)
         # Avoid two engine runs competing at once.
         self.optimize_btn.setEnabled(not running and self._thread is None)
 
@@ -1435,13 +1448,19 @@ class StudioWindow(QtWidgets.QMainWindow):
             )
             return
 
-        # Per-candidate flag count = total localized sites across all backends.
+        # Per-candidate count = distinct localized sites, NOT the raw cross-backend
+        # flag sum: a site flagged by two backends is one site, so positions within
+        # the audit's match window are merged before counting (else the column
+        # would grow just from running more backends).
         for entry in audit.candidates:
             if not 0 <= entry.index < self.candidates_table.rowCount():
                 continue
-            n_flags = sum(len(b.flags) for b in entry.by_backend)
+            n_sites = _distinct_site_count(
+                sorted(f.position for b in entry.by_backend for f in b.flags),
+                audit.match_window,
+            )
             self.candidates_table.setItem(
-                entry.index, 7, QtWidgets.QTableWidgetItem(str(n_flags))
+                entry.index, 7, QtWidgets.QTableWidgetItem(str(n_sites))
             )
         header = self.candidates_table.horizontalHeaderItem(7)
         if header is not None:

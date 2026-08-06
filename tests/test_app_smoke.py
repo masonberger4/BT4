@@ -249,6 +249,38 @@ def test_window_renders_candidates() -> None:
     assert window.rank_btn.isEnabled()
 
 
+def test_distinct_site_count_merges_close_positions() -> None:
+    """Co-located flags (within the match window) count as one site."""
+    from bt4.app.studio import _distinct_site_count
+
+    assert _distinct_site_count([], 3) == 0
+    assert _distinct_site_count([10], 3) == 1
+    # 10 and 12 are within the window (one site); 40 is a second site.
+    assert _distinct_site_count([10, 12, 40], 3) == 2
+    # A chain each within the window collapses to a single site.
+    assert _distinct_site_count([10, 13, 16, 19], 3) == 1
+
+
+def test_optimize_button_survives_optimize_then_rank() -> None:
+    """An optimize then a candidate run must not leave Optimize stuck-disabled.
+
+    Regression: the candidate flow gates Optimize on ``self._thread is None``; if
+    the optimize thread ref is never cleared, Optimize stays disabled forever
+    after an optimize-then-rank sequence.
+    """
+    window = StudioWindow()
+    # Simulate an optimize having run and its thread having finished.
+    window._thread = object()  # type: ignore[assignment]
+    window._clear_optimize_thread()
+    assert window._thread is None
+
+    # A candidate run starts and finishes; Optimize must come back enabled.
+    window._set_candidates_running(True)
+    assert not window.optimize_btn.isEnabled()
+    window._set_candidates_running(False)
+    assert window.optimize_btn.isEnabled()
+
+
 def test_candidates_failure_resets_panel() -> None:
     """A candidate-flow failure clears the table and re-enables the rank button."""
     window = StudioWindow()
