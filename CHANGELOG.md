@@ -31,6 +31,31 @@ its first tagged release.
   CPython ≤3.10 wheels.
 
 ### Added
+- **Localize-and-flag splice audit** (`bt4.api.splice_audit` /
+  `bt4.biomodels.splice.audit_splice`) — step 4 of the expression/splice design
+  flow (`docs/DESIGN_expression_splice_flow.md` Stage C). An **out-of-loop,
+  advisory** audit that runs the available `SplicePredictor` backends over a step-3
+  candidate set to **localize** residual cryptic splice sites (one flag per
+  contiguous above-threshold run, at its peak — non-maximal suppression) and attach
+  the whole-panel **backend agreement** (pooled rank + sign, via the existing
+  `backend_agreement`) as the authoritative cross-backend confidence signal. **It
+  never edits** the sequences — a targeted synonymous auto-edit at flagged loci is a
+  deliberately deferred, calibrated-gated future step. Honesty (CLAUDE.md §6/§10.6):
+  every shipped backend is `calibrated=False` today, so `all_calibrated` is `False`
+  and every `SpliceFlag` carries its **emitting backend's** `calibrated` flag; the
+  site `threshold` is a **heuristic display knob** (not a validated cutoff) and the
+  PWM baseline's per-position `score` is an uncalibrated **arbitrary-units**
+  pseudo-score. Per-flag `added_risk_vs_reference` is **positive = worse** and
+  strictly *intra-backend*, kept distinct from the panel-level `delta_splicing`
+  (larger = better). Cross-backend `also_flagged_by` is a **raw positional
+  co-occurrence** (±`match_window` nt, sized to the backends' anchor offsets),
+  explicitly **not** a kind-level agreement (Pangolin reports one combined
+  `P(splice)` and so can never disagree on kind — its flags are labelled `"splice"`,
+  never donor-specific). New `biomodels/splice/audit.py` (raw-sequence core, imports
+  only `domain` + the splice backends) + `pipeline/splice_audit.py` (the
+  `CandidateSet` adapter + `available_splice_backends()`, which adds the wrapped
+  SpliceAI/Pangolin CNNs when installed). Deterministic (#7). API-level surface (the
+  BT4 Studio annotation UI is step 5).
 - **Candidate-set assembly + expression rerank** (`bt4.api.candidates` /
   `assemble_and_rank_candidates`) — step 3 of the expression/splice design flow
   (`docs/DESIGN_expression_splice_flow.md`). Assembles the finalist set an

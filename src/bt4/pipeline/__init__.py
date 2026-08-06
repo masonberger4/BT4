@@ -24,6 +24,7 @@ from bt4.pipeline.optimize import (
     run_validate,
 )
 from bt4.pipeline.rerank import rerank_by_expression
+from bt4.pipeline.splice_audit import audit_candidate_set, available_splice_backends
 from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 
 __all__ = [
@@ -37,6 +38,8 @@ __all__ = [
     "TracksResult",
     "ValidationReport",
     "assemble_and_rank_candidates",
+    "audit_candidate_set",
+    "available_splice_backends",
     "rerank_by_expression",
     "run_frontier",
     "run_library",

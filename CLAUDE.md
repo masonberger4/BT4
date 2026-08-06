@@ -677,7 +677,21 @@ is a requirement, not a nice-to-have.
   agreement harness** (`backend_agreement` + `scripts/compare_splice_backends.py`)
   reports pairwise Spearman rank / sign agreement across whichever backends are
   available — with both CNNs installed, agreement between two real,
-  independently-trained models — the first-class uncertainty signal of §6. The
+  independently-trained models — the first-class uncertainty signal of §6. On top
+  of it the **localize-and-flag splice audit** (design-flow step 4,
+  `biomodels/splice/audit.py::audit_splice`, `pipeline/splice_audit.py`,
+  `bt4.api.splice_audit`) runs the available backends over a step-3 candidate set to
+  **localize** residual cryptic sites (one flag per contiguous above-threshold run,
+  at its peak) and attach that pooled agreement as the authoritative cross-backend
+  signal. It is **out-of-loop and advisory — it never edits** (a targeted
+  synonymous auto-edit is a deferred, per-backend-`calibrated`-gated future step);
+  `all_calibrated` is `False` today, every `SpliceFlag` carries its emitting
+  backend's `calibrated`, the site threshold is a heuristic display knob (the PWM
+  baseline's score an arbitrary-units pseudo-score), per-flag `added_risk_vs_reference`
+  is positive-worse and intra-backend (distinct from the larger-is-better panel
+  `delta_splicing`), and cross-backend `also_flagged_by` is a raw ±window positional
+  co-occurrence, never a kind-level agreement (Pangolin's combined track can't
+  disagree on kind, so its flags are labelled `"splice"`). The
   **license-clean fidelity-attestation layer** (`biomodels/splice/attestation.py`)
   now provides the honest promotion path: a `FidelityAttestation` records **only**
   a passing gate's derived scalars (`passed`, `max_abs_deviation`, `n_cases`,
