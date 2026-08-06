@@ -20,7 +20,7 @@ from PySide6 import QtWidgets
 
 from bt4 import api
 from bt4.app.studio import SequenceViewer, StudioWindow
-from bt4.app.worker import OptimizeWorker
+from bt4.app.worker import CandidatesResult, CandidatesWorker, OptimizeWorker
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -192,6 +192,74 @@ def test_clean_result_hides_violation_legend() -> None:
     assert delivered.violations == ()  # feasible run: nothing to annotate
     assert not window.violations_legend.isVisible()
     assert len(window.sequence_view.extraSelections()) == 0
+
+
+def test_candidates_worker_computes() -> None:
+    """The candidates worker assembles a set and splice-audits it synchronously."""
+    worker = CandidatesWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        steps=5,
+        n=8,
+        repeat_variants=2,
+        include_cnns=False,
+    )
+    result = worker.compute()
+    assert isinstance(result, CandidatesResult)
+    assert result.candidate_set.candidates
+    delivered = result.candidate_set.delivered()
+    assert delivered is not None
+    # The default expression head is the neutral placeholder: uncalibrated, so
+    # the set stays in discovery order (never presented as a ranking).
+    assert result.candidate_set.calibrated is False
+    assert result.candidate_set.order_basis == "discovery"
+    # A splice audit ran over a non-empty set and is advisory (no CNN installed).
+    assert result.audit is not None
+    assert result.audit.all_calibrated is False
+
+
+def test_window_renders_candidates() -> None:
+    """Feeding a candidate result populates the table and honest banners."""
+    app = QtWidgets.QApplication.instance()
+    assert isinstance(app, QtWidgets.QApplication)
+
+    window = StudioWindow()
+    worker = CandidatesWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        steps=5,
+        n=8,
+        repeat_variants=2,
+        include_cnns=False,
+    )
+    result = worker.compute()
+
+    window._on_cand_finished(result)
+    app.processEvents()
+
+    assert window.candidates_table.rowCount() == len(result.candidate_set.candidates)
+    # Uncalibrated head => the banner says "discovery order, not a ranking".
+    assert "not a ranking" in window.cand_banner.text().lower()
+    # The splice audit is advisory and says so.
+    assert "advisory" in window.splice_banner.text().lower()
+    # The splice-flags column is filled for the delivered candidate.
+    chosen = result.candidate_set.chosen
+    assert window.candidates_table.item(chosen, 7) is not None
+    # The rank button is re-enabled after a finished run.
+    assert window.rank_btn.isEnabled()
+
+
+def test_candidates_failure_resets_panel() -> None:
+    """A candidate-flow failure clears the table and re-enables the rank button."""
+    window = StudioWindow()
+    window._set_candidates_running(True)
+    assert not window.rank_btn.isEnabled()
+
+    window._on_cand_failed(api.InfeasibleError(["homopolymer"]))
+
+    assert window.candidates_table.rowCount() == 0
+    assert window.rank_btn.isEnabled()
+    assert "satisfy these settings" in window.statusBar().currentMessage()
 
 
 def test_tai_axis_tracks_organism_availability() -> None:

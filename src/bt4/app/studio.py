@@ -23,7 +23,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from bt4 import api
 from bt4.app import theme
-from bt4.app.worker import OptimizeWorker
+from bt4.app.worker import CandidatesResult, CandidatesWorker, OptimizeWorker
 
 __all__ = ["StudioWindow", "main"]
 
@@ -158,6 +158,9 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._worker: OptimizeWorker | None = None
         self._msgbox: QtWidgets.QMessageBox | None = None
         self._cancel_requested = False
+        self._cand_thread: QtCore.QThread | None = None
+        self._cand_worker: CandidatesWorker | None = None
+        self._cand_cancel_requested = False
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls_scroll = QtWidgets.QScrollArea()
@@ -178,6 +181,7 @@ class StudioWindow(QtWidgets.QMainWindow):
 
         self._set_tab_order()
         self._reset_results()
+        self._reset_candidates()
 
     # ---- construction -----------------------------------------------------
 
@@ -493,7 +497,22 @@ class StudioWindow(QtWidgets.QMainWindow):
         form.addRow(label, widget)
 
     def _build_results(self) -> QtWidgets.QWidget:
-        """Build the right results panel."""
+        """Build the right results area: a Design tab and a Candidates tab.
+
+        The Design tab shows the delivered frontier result (badge, metrics,
+        frontier scatter, sequence, tracks). The Candidates tab runs the
+        expression/splice design flow (:func:`bt4.api.candidates` +
+        :func:`bt4.api.splice_audit`) and shows the ranked, honestly-labeled
+        candidate set with its advisory splice audit.
+        """
+        tabs = QtWidgets.QTabWidget()
+        tabs.setAccessibleName("Results")
+        tabs.addTab(self._build_design_tab(), "Design")
+        tabs.addTab(self._build_candidates_tab(), "Candidates && splice audit")
+        return tabs
+
+    def _build_design_tab(self) -> QtWidgets.QWidget:
+        """Build the delivered-frontier results tab."""
         panel = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(panel)
 
@@ -565,6 +584,125 @@ class StudioWindow(QtWidgets.QMainWindow):
         exports.addWidget(self.export_json_btn)
         exports.addStretch(1)
         layout.addLayout(exports)
+
+        return panel
+
+    _CANDIDATE_COLS = (
+        "#",
+        "Source",
+        "CAI",
+        "GC %",
+        "Expression",
+        "Calibrated",
+        "Hard viol.",
+        "Splice flags",
+    )
+
+    def _build_candidates_tab(self) -> QtWidgets.QWidget:
+        """Build the candidate-set + splice-audit tab (design-flow steps 3-4).
+
+        A small control bar (candidate count, repeat-refined variants, an
+        opt-in to run the installed splice CNNs) drives a background
+        :class:`~bt4.app.worker.CandidatesWorker`; the result is an honestly
+        labeled table plus advisory splice-audit banners. Every score here is
+        uncalibrated today, and the UI says so rather than implying a ranking.
+        """
+        panel = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(panel)
+
+        intro = QtWidgets.QLabel(
+            "Assemble the Pareto frontier (plus repeat-refined variants) into a "
+            "finalist set, annotate each with the expression head, and run an "
+            "advisory cryptic-splice audit. Uses the same design controls on the "
+            "left; press <b>Rank &amp; audit</b> after (or instead of) Optimize."
+        )
+        intro.setWordWrap(True)
+        intro.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        layout.addWidget(intro)
+
+        controls = QtWidgets.QHBoxLayout()
+        controls.addWidget(QtWidgets.QLabel("Keep"))
+        self.cand_n_spin = QtWidgets.QSpinBox()
+        self.cand_n_spin.setRange(1, 100)
+        self.cand_n_spin.setValue(24)
+        self.cand_n_spin.setAccessibleName("Maximum candidates to keep")
+        self.cand_n_spin.setToolTip(
+            "Maximum candidates to keep after scoring. The delivered sequence is "
+            "always retained; the cap is applied after scoring so it never drops it."
+        )
+        controls.addWidget(self.cand_n_spin)
+
+        controls.addWidget(QtWidgets.QLabel("Repeat variants"))
+        self.cand_repeat_spin = QtWidgets.QSpinBox()
+        self.cand_repeat_spin.setRange(0, 20)
+        self.cand_repeat_spin.setValue(4)
+        self.cand_repeat_spin.setAccessibleName("Repeat-refined variants to attempt")
+        self.cand_repeat_spin.setToolTip(
+            "Repeat-refined variants to attempt when the delivered exact-DP seed "
+            "violates a GLOBAL rule (max-repeat / uORF). 0 = frontier only."
+        )
+        controls.addWidget(self.cand_repeat_spin)
+
+        self.splice_cnn_check = QtWidgets.QCheckBox("run installed splice CNNs")
+        self.splice_cnn_check.setAccessibleName("Include installed splice CNN backends")
+        self.splice_cnn_check.setToolTip(
+            "Also run the wrapped SpliceAI / Pangolin CNNs in the splice audit "
+            "when they are installed (out-of-loop, may be slow). Off = the honest "
+            "PWM baseline only. Every backend is uncalibrated today, so the audit "
+            "stays advisory either way."
+        )
+        controls.addWidget(self.splice_cnn_check)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        buttons = QtWidgets.QHBoxLayout()
+        self.rank_btn = QtWidgets.QPushButton("Rank && audit")
+        self.rank_btn.setAccessibleName("Rank and audit candidates")
+        self.rank_btn.setToolTip(
+            "Assemble, expression-rank, and splice-audit the candidate set on a "
+            "background thread; the UI stays responsive."
+        )
+        self.rank_btn.clicked.connect(self._start_candidates)
+        self.cand_cancel_btn = QtWidgets.QPushButton("Cancel")
+        self.cand_cancel_btn.setAccessibleName("Cancel candidate ranking")
+        self.cand_cancel_btn.clicked.connect(self._cancel_candidates)
+        self.cand_cancel_btn.setEnabled(False)
+        buttons.addWidget(self.rank_btn)
+        buttons.addWidget(self.cand_cancel_btn)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.cand_banner = QtWidgets.QLabel()
+        self.cand_banner.setObjectName("certBadge")
+        self.cand_banner.setWordWrap(True)
+        self.cand_banner.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.cand_banner.setAccessibleName("Candidate-set summary")
+        self.cand_banner.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.cand_banner)
+
+        self.candidates_table = QtWidgets.QTableWidget(0, len(self._CANDIDATE_COLS))
+        self.candidates_table.setHorizontalHeaderLabels(list(self._CANDIDATE_COLS))
+        self.candidates_table.verticalHeader().setVisible(False)
+        self.candidates_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.candidates_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.candidates_table.horizontalHeader().setStretchLastSection(True)
+        self.candidates_table.setAccessibleName("Ranked candidate set")
+        layout.addWidget(self.candidates_table, stretch=1)
+
+        self.splice_banner = QtWidgets.QLabel()
+        self.splice_banner.setWordWrap(True)
+        self.splice_banner.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.splice_banner.setAccessibleName("Splice-audit summary")
+        self.splice_banner.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.splice_banner)
 
         return panel
 
@@ -853,6 +991,117 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.cancel_btn.setEnabled(False)
             self.statusBar().showMessage("Cancelling...")
 
+    # ---- candidates flow --------------------------------------------------
+
+    def _start_candidates(self) -> None:
+        """Validate inputs, then assemble + rank + splice-audit off-thread."""
+        if self._cand_thread is not None:
+            return  # a candidate run is already in flight
+        protein = self._prepare_protein()
+        if protein is None:
+            return
+        enzymes = self._prepare_enzymes()
+        if enzymes is None:
+            return
+        if not self._confirm_long_run(protein):
+            return
+        config, steps = self._build_config(enzymes)
+
+        self._cand_cancel_requested = False
+        self._set_candidates_running(True)
+        message = "Ranking candidates..."
+        if self._cpb_warning:
+            message = f"Ranking candidates... ({self._cpb_warning})"
+        self.statusBar().showMessage(message)
+
+        thread = QtCore.QThread(self)
+        worker = CandidatesWorker(
+            protein,
+            config,
+            steps=steps,
+            n=self.cand_n_spin.value(),
+            repeat_variants=self.cand_repeat_spin.value(),
+            include_cnns=self.splice_cnn_check.isChecked(),
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_cand_progress)
+        worker.finished.connect(self._on_cand_finished)
+        worker.failed.connect(self._on_cand_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_candidates_thread)
+        self._cand_thread = thread
+        self._cand_worker = worker
+        thread.start()
+
+    def _cancel_candidates(self) -> None:
+        """Request cancellation of the running candidate flow.
+
+        The candidate flow is not point-wise cancelable, so this only prevents
+        the *next* run and disables the button; the current call runs to
+        completion. It is here so the control mirrors the Optimize flow and never
+        leaves the user without a Cancel affordance.
+        """
+        self._cand_cancel_requested = True
+        self.cand_cancel_btn.setEnabled(False)
+        self.statusBar().showMessage("Finishing the current candidate run...")
+
+    def _clear_candidates_thread(self) -> None:
+        """Drop the finished thread/worker references once the thread has quit."""
+        self._cand_thread = None
+        self._cand_worker = None
+
+    def _set_candidates_running(self, running: bool) -> None:
+        """Toggle controls while a candidate run is in flight."""
+        self.rank_btn.setEnabled(not running)
+        self.rank_btn.setText("Ranking..." if running else "Rank && audit")
+        self.cand_cancel_btn.setEnabled(running)
+        # Avoid two engine runs competing at once.
+        self.optimize_btn.setEnabled(not running and self._thread is None)
+
+    @QtCore.Slot(int, str)
+    def _on_cand_progress(self, value: int, label: str) -> None:
+        """Show candidate-flow progress in the status bar."""
+        self.statusBar().showMessage(f"{label} ({value}%)")
+
+    @QtCore.Slot(object)
+    def _on_cand_finished(self, result: object) -> None:
+        """Render the delivered candidate set and its splice audit."""
+        self._set_candidates_running(False)
+        if not isinstance(result, CandidatesResult):
+            return
+        self._render_candidates(result.candidate_set)
+        self._render_splice_audit(result.audit, result.candidate_set)
+        delivered = result.candidate_set.delivered()
+        if delivered is None:
+            self.statusBar().showMessage("No candidates were assembled.")
+        else:
+            self.statusBar().showMessage(
+                f"{len(result.candidate_set.candidates)} candidate(s) ranked "
+                f"({result.candidate_set.order_basis})."
+            )
+
+    @QtCore.Slot(object)
+    def _on_cand_failed(self, error: object) -> None:
+        """Clear the candidate panel and show a plain-language message on error."""
+        self._set_candidates_running(False)
+        self._reset_candidates()
+        headline, detail = self._friendly_error(error)
+        self.statusBar().showMessage(headline)
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        box.setWindowTitle("Couldn't rank candidates")
+        box.setText(headline)
+        if detail:
+            box.setInformativeText(detail)
+        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        self._msgbox = box
+        box.show()
+
     def _warn(self, title: str, text: str, detail: str = "") -> None:
         """Show a non-blocking, plain-language warning and mirror it to the status bar."""
         self.statusBar().showMessage(text)
@@ -872,6 +1121,9 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.optimize_btn.setEnabled(not running)
         self.optimize_btn.setText("Optimizing..." if running else "Optimize")
         self.cancel_btn.setEnabled(running)
+        # Don't let a candidate run start while an optimize is in flight (and
+        # re-enable it only if no candidate run is itself active).
+        self.rank_btn.setEnabled(not running and self._cand_thread is None)
 
     # ---- slots ------------------------------------------------------------
 
@@ -1093,6 +1345,130 @@ class StudioWindow(QtWidgets.QMainWindow):
                 pen=pg.mkPen("#e0724a", width=2),
                 name="CpG density",
             )
+
+    # ---- candidates rendering ---------------------------------------------
+
+    def _reset_candidates(self) -> None:
+        """Clear the candidate panel to an honest empty state."""
+        self.candidates_table.setRowCount(0)
+        self.cand_banner.setText(
+            "No candidate set yet. Press <b>Rank &amp; audit</b> to assemble one."
+        )
+        self.cand_banner.setStyleSheet(theme.badge_qss(""))
+        self.splice_banner.clear()
+
+    def _render_candidates(self, cand_set: api.CandidateSet) -> None:
+        """Fill the candidate table and summary banner from ``cand_set``.
+
+        Every score is recomputed per candidate from its own DNA (invariant #2).
+        The banner states the calibration/order basis honestly: an uncalibrated
+        head only annotates (discovery order, solver-delivered pick), so the
+        table order is NOT a ranking and the UI says so.
+        """
+        candidates = cand_set.candidates
+        self.candidates_table.setRowCount(len(candidates))
+        for row, cand in enumerate(candidates):
+            result = cand.result
+            hard = result.metrics.hard_violations
+            expr = (
+                f"{cand.expression_score:.4g} {cand.expression_units}".strip()
+            )
+            marker = " ★" if row == cand_set.chosen else ""
+            values = (
+                f"{row}{marker}",
+                cand.source,
+                f"{float(result.audit['cai']):.4f}",
+                f"{result.metrics.gc * 100.0:.2f}",
+                expr,
+                "yes" if cand.expression_calibrated else "no",
+                str(hard),
+                "",  # filled by the splice audit if it runs
+            )
+            for col, text in enumerate(values):
+                self.candidates_table.setItem(
+                    row, col, QtWidgets.QTableWidgetItem(text)
+                )
+        self.candidates_table.resizeColumnsToContents()
+
+        if not candidates:
+            self.cand_banner.setText("No candidates were assembled.")
+            self.cand_banner.setStyleSheet(theme.badge_qss("relaxed"))
+            return
+
+        delivered = cand_set.delivered()
+        model = delivered.expression_model if delivered is not None else "?"
+        if cand_set.calibrated:
+            basis = (
+                f"Ranked by predicted expression ({model}); the ★ delivered "
+                "candidate is the top-scoring one."
+            )
+            style = "proven_optimal"
+        else:
+            basis = (
+                f"Expression head <b>{model}</b> is <b>uncalibrated</b>, so this is "
+                "<b>discovery order, not a ranking</b>; the ★ delivered "
+                "candidate is the solver's pick. Scores annotate only."
+            )
+            style = "heuristic"
+        counts = (
+            f"{cand_set.n_frontier} frontier + {cand_set.n_repeat_refined} "
+            f"repeat-refined assembled; {cand_set.n_dedup_dropped} duplicate(s) and "
+            f"{cand_set.n_dropped_cap} over-cap dropped."
+        )
+        self.cand_banner.setText(
+            f"{basis}<br>{counts}<br><i>{cand_set.repeat_note}</i>"
+        )
+        self.cand_banner.setStyleSheet(theme.badge_qss(style))
+
+    def _render_splice_audit(
+        self, audit: api.SpliceAuditReport | None, cand_set: api.CandidateSet
+    ) -> None:
+        """Fill the per-candidate splice-flag column and the audit banner.
+
+        The audit is advisory: every shipped backend is uncalibrated, so the
+        banner leads with that and the flag counts are labeled a heuristic
+        localization, never a calibrated risk claim.
+        """
+        if audit is None:
+            self.splice_banner.setText(
+                "<i>Splice audit skipped (no candidates).</i>"
+            )
+            return
+
+        # Per-candidate flag count = total localized sites across all backends.
+        for entry in audit.candidates:
+            if not 0 <= entry.index < self.candidates_table.rowCount():
+                continue
+            n_flags = sum(len(b.flags) for b in entry.by_backend)
+            self.candidates_table.setItem(
+                entry.index, 7, QtWidgets.QTableWidgetItem(str(n_flags))
+            )
+        header = self.candidates_table.horizontalHeaderItem(7)
+        if header is not None:
+            header.setText("Splice flags")
+        self.candidates_table.resizeColumnsToContents()
+
+        backends = ", ".join(audit.backends) if audit.backends else "none"
+        calib = "calibrated" if audit.all_calibrated else "UNCALIBRATED (advisory)"
+        agree = audit.agreement
+        parts = [
+            f"Splice audit &mdash; backends: <b>{backends}</b> &middot; {calib}."
+        ]
+        if len(audit.backends) >= 2:
+            pairs = "; ".join(
+                f"{a}-{b}: rho={rho:.2f}"
+                for (a, b), rho in agree.rank_correlations.items()
+            )
+            parts.append(
+                f"Cross-backend agreement: sign {agree.sign_agreement:.0%}"
+                + (f" &middot; {pairs}" if pairs else "")
+            )
+        parts.append(
+            "Flags localize residual cryptic sites (heuristic threshold "
+            f"{audit.threshold:g}); they do <b>not</b> assert a calibrated splice "
+            "risk and nothing was edited."
+        )
+        self.splice_banner.setText("<br>".join(parts))
 
     # ---- export -----------------------------------------------------------
 
