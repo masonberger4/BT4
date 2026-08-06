@@ -37,9 +37,10 @@ its first tagged release.
   advisory** audit that runs the available `SplicePredictor` backends over a step-3
   candidate set to **localize** residual cryptic splice sites (one flag per
   contiguous above-threshold run, at its peak — non-maximal suppression) and attach
-  the whole-panel **backend agreement** (pooled rank + sign, via the existing
-  `backend_agreement`) as the authoritative cross-backend confidence signal. **It
-  never edits** the sequences — a targeted synonymous auto-edit at flagged loci is a
+  the whole-panel **backend agreement** (pooled rank + sign) as the authoritative
+  cross-backend confidence signal — built from the Delta-splicing values the audit
+  already computed (a new shared `agreement_from_deltas` helper), so each backend
+  scores every sequence **once**, never twice (§7). **It never edits** the sequences — a targeted synonymous auto-edit at flagged loci is a
   deliberately deferred, calibrated-gated future step. Honesty (CLAUDE.md §6/§10.6):
   every shipped backend is `calibrated=False` today, so `all_calibrated` is `False`
   and every `SpliceFlag` carries its **emitting backend's** `calibrated` flag; the

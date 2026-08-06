@@ -62,6 +62,27 @@ def test_separated_donor_acceptor_kinds() -> None:
     assert [(f.position, f.kind) for f in flags] == [(1, "donor"), (2, "acceptor")]
 
 
+def test_combined_is_per_backend_not_per_candidate() -> None:
+    # A SEPARATED backend whose acceptor is all-zero on one candidate but non-zero on
+    # another must NOT be misread as combined: its kinds stay donor/acceptor.
+    seqs = {
+        "R": ((0.0, 0.0, 0.0), (0.0, 0.9, 0.0)),  # reference shows an acceptor site
+        "C1": ((0.0, 0.8, 0.0), (0.0, 0.0, 0.0)),  # this candidate has no acceptor site
+        "C2": ((0.0, 0.0, 0.0), (0.0, 0.7, 0.0)),
+    }
+    backend = _FakeSplice("sep", seqs)
+    rep = audit_splice([backend], ["C1", "C2"], "R", threshold=0.5)
+    # C1's donor flag is labelled "donor" (separated), NOT "splice", despite C1's
+    # acceptor track being all-zero.
+    c1 = rep.candidates[0].by_backend[0].flags
+    assert [(f.position, f.kind) for f in c1] == [(1, "donor")]
+
+    # A truly COMBINED backend (acceptor all-zero on every sequence) => kind "splice".
+    comb = {"R": ((0.0, 0.0, 0.0), (0.0,) * 3), "C1": ((0.0, 0.9, 0.0), (0.0,) * 3)}
+    rep2 = audit_splice([_FakeSplice("comb", comb)], ["C1"], "R", threshold=0.5)
+    assert [f.kind for f in rep2.candidates[0].by_backend[0].flags] == ["splice"]
+
+
 def test_added_risk_sign_is_positive_worse_and_intra_backend() -> None:
     # Candidate scores higher than reference at the flagged position => added risk > 0.
     seqs = {"R": ((0.0, 0.30, 0.0), (0.0,) * 3), "C": ((0.0, 0.90, 0.0), (0.0,) * 3)}
@@ -119,6 +140,34 @@ def test_audit_never_edits_and_attaches_agreement() -> None:
     assert [c.dna for c in rep.candidates] == ["C1", "C2"]  # unchanged, in order
     assert rep.agreement.backends == ("b",)
     assert rep.agreement.n_candidates == 2
+
+
+def test_no_double_scoring_and_agreement_matches_backend_agreement() -> None:
+    # The audit must score each sequence once per backend (reference + N candidates),
+    # NOT twice -- it must not re-run the backends inside backend_agreement.
+    from bt4.biomodels.splice import backend_agreement
+
+    calls: dict[str, int] = {}
+
+    @dataclass(frozen=True)
+    class _Counting(_FakeSplice):
+        def score_sequence(self, dna: str) -> SpliceResult:
+            calls[dna] = calls.get(dna, 0) + 1
+            return super().score_sequence(dna)
+
+    seqs = {
+        "R": ((0.0, 0.0), (0.0, 0.0)),
+        "C1": ((0.0, 0.9), (0.0, 0.0)),
+        "C2": ((0.0, 0.2), (0.0, 0.0)),
+    }
+    backend = _Counting("b", seqs)
+    rep = audit_splice([backend], ["C1", "C2"], "R", threshold=0.5)
+    # Each of R, C1, C2 scored exactly once (N+1 = 3 total), not doubled.
+    assert calls == {"R": 1, "C1": 1, "C2": 1}
+    # And the agreement equals what backend_agreement would compute directly.
+    expected = backend_agreement([_FakeSplice("b", seqs)], ["C1", "C2"], "R", top_k=3)
+    assert rep.agreement.delta_by_backend == expected.delta_by_backend
+    assert rep.agreement.sign_agreement == expected.sign_agreement
 
 
 def test_validation() -> None:

@@ -37,6 +37,7 @@ from bt4.biomodels.splice.base import DEFAULT_TOP_K, SplicePredictor, pooled_ris
 
 __all__ = [
     "AgreementReport",
+    "agreement_from_deltas",
     "backend_agreement",
     "pearson",
     "spearman",
@@ -78,6 +79,59 @@ def _sign(value: float, epsilon: float) -> int:
     if value < -epsilon:
         return -1
     return 0
+
+
+def agreement_from_deltas(
+    delta_by_backend: dict[str, tuple[float, ...]],
+    *,
+    sign_epsilon: float = 1e-9,
+) -> AgreementReport:
+    """Build an :class:`AgreementReport` from **precomputed** Delta-splicing vectors.
+
+    The rank/sign half of :func:`backend_agreement`, split out so a caller that has
+    already scored every candidate (e.g.
+    :func:`bt4.biomodels.splice.audit.audit_splice`) can reuse those Delta-splicing
+    values instead of re-running the backends over the whole panel a second time
+    (CLAUDE.md §7). Each vector must be aligned to the same candidate order and have
+    the same length.
+
+    Args:
+        delta_by_backend: ``{backend name: Delta-splicing per candidate}`` (larger =
+            better), in the desired backend order (dict insertion order is kept).
+        sign_epsilon: Dead-band around zero for sign agreement.
+
+    Returns:
+        An :class:`AgreementReport` over the given deltas.
+    """
+    names = tuple(delta_by_backend)
+    n_candidates = len(next(iter(delta_by_backend.values()))) if delta_by_backend else 0
+
+    rank_correlations: dict[tuple[str, str], float] = {}
+    if len(names) >= 2 and n_candidates >= 2:
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                rank_correlations[(names[i], names[j])] = spearman(
+                    delta_by_backend[names[i]], delta_by_backend[names[j]]
+                )
+
+    if len(names) <= 1 or n_candidates == 0:
+        sign_agreement = 1.0
+    else:
+        agree = sum(
+            1
+            for idx in range(n_candidates)
+            if len({_sign(delta_by_backend[name][idx], sign_epsilon) for name in names}) == 1
+        )
+        sign_agreement = agree / n_candidates
+
+    return AgreementReport(
+        backends=names,
+        delta_by_backend=dict(delta_by_backend),
+        rank_correlations=rank_correlations,
+        sign_agreement=sign_agreement,
+        sign_epsilon=sign_epsilon,
+        n_candidates=n_candidates,
+    )
 
 
 def backend_agreement(
@@ -138,31 +192,4 @@ def backend_agreement(
         ]
         delta_by_backend[predictor.name] = tuple(deltas)
 
-    rank_correlations: dict[tuple[str, str], float] = {}
-    if len(names) >= 2 and len(candidates) >= 2:
-        for i in range(len(names)):
-            for j in range(i + 1, len(names)):
-                rank_correlations[(names[i], names[j])] = spearman(
-                    delta_by_backend[names[i]], delta_by_backend[names[j]]
-                )
-
-    if len(names) == 1:
-        sign_agreement = 1.0
-    else:
-        agree = 0
-        for idx in range(len(candidates)):
-            signs = {
-                _sign(delta_by_backend[name][idx], sign_epsilon) for name in names
-            }
-            if len(signs) == 1:
-                agree += 1
-        sign_agreement = agree / len(candidates)
-
-    return AgreementReport(
-        backends=names,
-        delta_by_backend=delta_by_backend,
-        rank_correlations=rank_correlations,
-        sign_agreement=sign_agreement,
-        sign_epsilon=sign_epsilon,
-        n_candidates=len(candidates),
-    )
+    return agreement_from_deltas(delta_by_backend, sign_epsilon=sign_epsilon)

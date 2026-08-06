@@ -53,7 +53,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from bt4.biomodels.splice.agreement import AgreementReport, backend_agreement
+from bt4.biomodels.splice.agreement import AgreementReport, agreement_from_deltas
 from bt4.biomodels.splice.base import (
     DEFAULT_TOP_K,
     SplicePredictor,
@@ -222,20 +222,36 @@ def _reference_score(ref: SpliceResult, position: int, kind: str) -> float:
     return track[position] if 0 <= position < len(track) else 0.0
 
 
-def _raw_flags(result: SpliceResult, threshold: float) -> list[tuple[int, str, float]]:
+def _raw_flags(
+    result: SpliceResult, combined: bool, threshold: float
+) -> list[tuple[int, str, float]]:
     """Localize a SpliceResult's donor/acceptor tracks into raw ``(pos, kind, score)``.
 
-    A backend whose acceptor track is entirely zero is treated as *combined* (e.g.
-    Pangolin reports one ``P(splice)`` in ``donor`` with ``acceptor`` all-zero): its
-    donor-track flags are labelled ``"splice"``, never claimed as donor-specific.
+    ``combined`` is a fixed property of the *backend* (see
+    :func:`_backend_is_combined`), not inferred from this one sequence: a combined
+    backend (e.g. Pangolin, one ``P(splice)`` in ``donor`` with ``acceptor``
+    all-zero) has its donor-track flags labelled ``"splice"`` -- never claimed as
+    donor-specific -- and its (empty) acceptor track is not localized.
     """
-    combined = not any(result.acceptor)
     donor_kind = "splice" if combined else "donor"
     raw = _localize(result.donor, donor_kind, threshold)
     if not combined:
         raw += _localize(result.acceptor, "acceptor", threshold)
     raw.sort(key=lambda f: (f[0], f[1]))
     return raw
+
+
+def _backend_is_combined(results: Sequence[SpliceResult]) -> bool:
+    """Return whether a backend reports a *combined* track (acceptor always all-zero).
+
+    Combined-vs-separated is a property of the backend, so it is decided across
+    **all** of a backend's scored sequences (the reference and every candidate),
+    not per-sequence: a separated backend is treated as combined only if its
+    acceptor track is entirely zero on *every* sequence -- so it is never misread as
+    combined just because one short or degenerate sequence produced no acceptor
+    sites (whereas Pangolin's acceptor track is all-zero by construction, always).
+    """
+    return not any(any(res.acceptor) for res in results)
 
 
 def audit_splice(
@@ -291,13 +307,30 @@ def audit_splice(
     # and pooled delta -- never re-run per candidate, CLAUDE.md §7).
     ref_results = {p.name: p.score_sequence(reference) for p in predictors}
     ref_pooled = {name: pooled_risk(res, top_k) for name, res in ref_results.items()}
+    # Score every candidate once per backend, retaining the results so combined-vs-
+    # separated can be decided per backend across the whole panel (not per sequence).
+    cand_results: list[dict[str, SpliceResult]] = [
+        {p.name: p.score_sequence(cand) for p in predictors} for cand in candidates
+    ]
+    combined = {
+        name: _backend_is_combined([ref_results[name], *(cr[name] for cr in cand_results)])
+        for name in names
+    }
 
     audits: list[CandidateSpliceAudit] = []
-    for index, cand in enumerate(candidates):
+    # Accumulate each backend's Delta-splicing vector as we go, so the whole-panel
+    # agreement is built from these *already-computed* values rather than re-running
+    # every backend over the candidate set a second time (CLAUDE.md §7 -- doubling a
+    # ~10 kb-context CNN's forward passes would defeat the point of the out-of-loop
+    # audit).
+    delta_by_backend: dict[str, list[float]] = {name: [] for name in names}
+    for index in range(len(candidates)):
         # First pass: raw flags per backend (positions only), so cross-backend
         # co-occurrence can be computed before the frozen flags are built.
-        results = {p.name: p.score_sequence(cand) for p in predictors}
-        raw_by_backend = {name: _raw_flags(results[name], threshold) for name in names}
+        results = cand_results[index]
+        raw_by_backend = {
+            name: _raw_flags(results[name], combined[name], threshold) for name in names
+        }
 
         by_backend: list[BackendCandidateAudit] = []
         for predictor in predictors:
@@ -322,18 +355,25 @@ def audit_splice(
                         also_flagged_by=also,
                     )
                 )
+            cand_pooled = pooled_risk(results[name], top_k)
+            delta = ref_pooled[name] - cand_pooled
+            delta_by_backend[name].append(delta)
             by_backend.append(
                 BackendCandidateAudit(
                     backend=name,
                     calibrated=predictor.calibrated,
                     flags=tuple(flags),
-                    pooled_risk=pooled_risk(results[name], top_k),
-                    delta_splicing=ref_pooled[name] - pooled_risk(results[name], top_k),
+                    pooled_risk=cand_pooled,
+                    delta_splicing=delta,
                 )
             )
-        audits.append(CandidateSpliceAudit(index=index, dna=cand, by_backend=tuple(by_backend)))
+        audits.append(
+            CandidateSpliceAudit(index=index, dna=candidates[index], by_backend=tuple(by_backend))
+        )
 
-    agreement = backend_agreement(predictors, candidates, reference, top_k=top_k)
+    # Reuse the deltas already computed above (no second scoring pass); this equals
+    # backend_agreement(predictors, candidates, reference, top_k=top_k).
+    agreement = agreement_from_deltas({name: tuple(delta_by_backend[name]) for name in names})
     return SpliceAuditReport(
         backends=names,
         all_calibrated=all(p.calibrated for p in predictors),
