@@ -10,13 +10,14 @@ This layer never prints; it raises on error and returns immutable results.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import available_organisms
 from bt4.biomodels.codon.tai import available_tai_organisms
 from bt4.biomodels.expression import ExpressionPredictor, ExpressionResult
 from bt4.biomodels.expression import default as expression_model
+from bt4.biomodels.splice import SpliceAuditReport, SpliceFlag, SplicePredictor
 from bt4.constraints import (
     ForbiddenPreset,
     available_enzymes,
@@ -35,6 +36,8 @@ from bt4.pipeline import (
     TracksResult,
     ValidationReport,
     assemble_and_rank_candidates,
+    audit_candidate_set,
+    available_splice_backends,
     rerank_by_expression,
     run_frontier,
     run_library,
@@ -57,14 +60,18 @@ __all__ = [
     "OptimizeConfig",
     "Result",
     "Severity",
+    "SpliceAuditReport",
+    "SpliceFlag",
     "Track",
     "TracksResult",
     "ValidationReport",
     "Violation",
     "assemble_and_rank_candidates",
+    "audit_candidate_set",
     "available_enzymes",
     "available_forbidden_presets",
     "available_organisms",
+    "available_splice_backends",
     "available_tai_organisms",
     "build_table",
     "candidates",
@@ -78,6 +85,7 @@ __all__ = [
     "rerank_by_expression",
     "result_to_dict",
     "result_to_json",
+    "splice_audit",
     "summarize",
     "to_fasta",
     "tracks",
@@ -288,4 +296,49 @@ def candidates(
         n=n,
         repeat_variants=repeat_variants,
         predictor=predictor,
+    )
+
+
+def splice_audit(
+    candidate_set: CandidateSet,
+    *,
+    reference: str | None = None,
+    predictors: Sequence[SplicePredictor] | None = None,
+    threshold: float = 0.5,
+    match_window: int = 3,
+) -> SpliceAuditReport:
+    """Localize-and-flag cryptic splice sites across a candidate set (no editing).
+
+    Design-flow step 4 (``docs/DESIGN_expression_splice_flow.md`` Stage C): runs the
+    available splice backends over the step-3 candidate set to **localize** residual
+    cryptic sites and attach whole-panel **backend agreement** -- an advisory
+    annotation pass that never edits the sequences. Every shipped backend is
+    ``calibrated is False`` today, so ``report.all_calibrated`` is ``False`` and
+    every flag is advisory (a targeted auto-edit is a future, calibrated-gated step;
+    CLAUDE.md §6/§10.6).
+
+    Args:
+        candidate_set: A step-3 :class:`~bt4.pipeline.candidates.CandidateSet` (from
+            :func:`candidates`).
+        reference: Sequence each candidate's added risk is measured against;
+            defaults to the delivered (``chosen``) candidate.
+        predictors: Splice backends to run; defaults to the honest baseline. Pass
+            :func:`available_splice_backends` to include the wrapped SpliceAI /
+            Pangolin CNNs when installed.
+        threshold: Site-localization threshold (a heuristic display knob, not a
+            calibrated cutoff).
+        match_window: +/- nt window for the approximate cross-backend co-occurrence.
+
+    Returns:
+        A :class:`~bt4.biomodels.splice.audit.SpliceAuditReport`.
+
+    Raises:
+        ValueError: If the candidate set is empty (or per ``audit_candidate_set``).
+    """
+    return audit_candidate_set(
+        candidate_set,
+        reference=reference,
+        predictors=predictors,
+        threshold=threshold,
+        match_window=match_window,
     )

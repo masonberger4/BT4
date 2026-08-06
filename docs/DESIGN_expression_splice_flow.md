@@ -172,6 +172,15 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
    invariant to `n`; de-dup/cap counts and the predictor identity are reported.
 4. **Splice CNN audit (localize-and-flag)** — batched SpliceAI+Pangolin over the
    candidate set, returning per-site flags + backend agreement; no editing.
+   ✅ **Landed** — `bt4.api.splice_audit` / `biomodels.splice.audit_splice` →
+   `SpliceAuditReport`. Peak/NMS localization; per-flag `added_risk_vs_reference`
+   (positive=worse, intra-backend) kept distinct from panel `delta_splicing`
+   (larger=better); the pooled `backend_agreement` is the authoritative
+   cross-backend signal, with `also_flagged_by` a raw ±window positional
+   co-occurrence (not kind-agreement — Pangolin's combined track can't disagree on
+   kind). Advisory only — `all_calibrated=False`, per-flag `calibrated`, **no
+   editing**. Raw-sequence core in `biomodels/splice/audit.py`; `CandidateSet`
+   adapter + `available_splice_backends()` in `pipeline/splice_audit.py`.
 5. **BT4 Studio UI** — UTR fields, the two toggles, the annotated frontier +
    ranked table with uncalibrated badges, all on the background thread.
 6. **(Gated, future)** splice **auto-edit** and RiboNN **auto-select**, each

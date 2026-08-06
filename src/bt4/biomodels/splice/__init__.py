@@ -37,6 +37,15 @@ from bt4.biomodels.splice.attestation import (
     load_attestation,
     verified_predictor,
 )
+from bt4.biomodels.splice.audit import (
+    DEFAULT_MATCH_WINDOW,
+    DEFAULT_SITE_THRESHOLD,
+    BackendCandidateAudit,
+    CandidateSpliceAudit,
+    SpliceAuditReport,
+    SpliceFlag,
+    audit_splice,
+)
 from bt4.biomodels.splice.base import (
     DEFAULT_TOP_K,
     SplicePredictor,
@@ -61,11 +70,15 @@ from bt4.biomodels.splice.spliceai import (
 )
 
 __all__ = [
+    "DEFAULT_MATCH_WINDOW",
+    "DEFAULT_SITE_THRESHOLD",
     "DEFAULT_TISSUES",
     "DEFAULT_TOP_K",
     "MAX_ATTESTATION_TOLERANCE",
     "AgreementReport",
     "AttestationError",
+    "BackendCandidateAudit",
+    "CandidateSpliceAudit",
     "ConsensusPwmSplicePredictor",
     "FidelityAttestation",
     "FidelityCase",
@@ -74,9 +87,12 @@ __all__ = [
     "SpliceAiFidelityCase",
     "SpliceAiFidelityReport",
     "SpliceAiSplicePredictor",
+    "SpliceAuditReport",
+    "SpliceFlag",
     "SplicePredictor",
     "SpliceResult",
     "attest_backend",
+    "audit_splice",
     "backend_agreement",
     "default",
     "load_attestation",
