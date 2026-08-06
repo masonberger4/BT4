@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Allow a run to be started manually from the Actions tab (or the API). This is a
+  # safety valve: if a branch's PR check suite gets into a state where the
+  # pull_request event does not spawn a run (e.g. after the branch is deleted and
+  # recreated), CI can still be dispatched on demand rather than left with no run.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

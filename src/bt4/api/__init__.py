@@ -25,6 +25,8 @@ from bt4.constraints import (
 from bt4.domain import AMINO_ACIDS, Result, Severity, Violation, validate_protein
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
 from bt4.pipeline import (
+    Candidate,
+    CandidateSet,
     FrontierResult,
     InfeasibleError,
     LibraryResult,
@@ -32,6 +34,7 @@ from bt4.pipeline import (
     Track,
     TracksResult,
     ValidationReport,
+    assemble_and_rank_candidates,
     rerank_by_expression,
     run_frontier,
     run_library,
@@ -43,6 +46,8 @@ from bt4.pipeline import (
 
 __all__ = [
     "AMINO_ACIDS",
+    "Candidate",
+    "CandidateSet",
     "ExpressionPredictor",
     "ExpressionResult",
     "ForbiddenPreset",
@@ -56,11 +61,13 @@ __all__ = [
     "TracksResult",
     "ValidationReport",
     "Violation",
+    "assemble_and_rank_candidates",
     "available_enzymes",
     "available_forbidden_presets",
     "available_organisms",
     "available_tai_organisms",
     "build_table",
+    "candidates",
     "count_codons",
     "expression_model",
     "frontier",
@@ -228,3 +235,57 @@ def library(
             sequence.
     """
     return run_library(protein, config, n, seed=seed, temperature=temperature)
+
+
+def candidates(
+    protein: str,
+    config: OptimizeConfig | None = None,
+    *,
+    steps: int = 11,
+    n: int = 24,
+    repeat_variants: int = 4,
+    predictor: ExpressionPredictor | None = None,
+) -> CandidateSet:
+    """Assemble the frontier (+ repeat-refined variants) and rank it by expression.
+
+    Design-flow step 3 (``docs/DESIGN_expression_splice_flow.md``): builds the
+    finalist set an expression head ranks -- the Pareto frontier plus, when a
+    GLOBAL rule is active and the delivered exact-DP seed violates it, a small
+    deterministic library of repeat-refined variants -- de-duplicates it, scores
+    every member with ``predictor`` (in one batched call when the backend supports
+    it), and delivers under the **calibrated-gating** rule: an uncalibrated head
+    (the default placeholder, and the shipped RiboNN adapter) only *annotates* --
+    the set stays in discovery order and the solver-delivered sequence is
+    ``chosen`` -- while a calibrated head reorders by predicted expression and
+    re-picks the top. The delivered (``chosen``) sequence is invariant to ``n``
+    (the cap is applied after scoring and never drops it) (CLAUDE.md §10.5/§10.6).
+
+    Args:
+        protein: A stop-free single-letter amino-acid string.
+        config: Run configuration; defaults to :class:`OptimizeConfig`.
+        steps: Frontier scalarization grid resolution.
+        n: Maximum candidates to keep (``>= 1``); the delivered sequence is always
+            retained and the cap is applied after scoring.
+        repeat_variants: Repeat-refined variants to attempt when the delivered seed
+            violates a GLOBAL rule (``>= 0``).
+        predictor: Expression backend; defaults to the neutral placeholder, so
+            ranking is a pure reporting no-op.
+
+    Returns:
+        A :class:`CandidateSet`: the (possibly reranked) candidates, the delivered
+        index, the calibration/order-basis flags, honest de-dup/cap counts, and a
+        provenance manifest that folds in the predictor identity.
+
+    Raises:
+        ValueError: On an invalid protein, ``n < 1``, ``repeat_variants < 0``, or
+            ``steps < 1``.
+        bt4.optimize.InfeasibleError: If the constraints admit no feasible codon.
+    """
+    return assemble_and_rank_candidates(
+        protein,
+        config,
+        steps=steps,
+        n=n,
+        repeat_variants=repeat_variants,
+        predictor=predictor,
+    )

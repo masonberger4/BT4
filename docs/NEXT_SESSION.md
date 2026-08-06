@@ -127,13 +127,15 @@ The **expression/splice design flow is spec'd** in
 [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) and its build
 order is fixed. Start there:
 
-- **Batched RiboNN scoring** (design step 1) — ✅ **landed**. **Strong
-  splice-consensus motif constraint** (design step 2) — ✅ **landed**
-  (`bt4.constraints.SpliceSiteMotifConstraint` / `avoid_splice_sites`; LOCAL, IUPAC,
-  sense-strand-only, structural heuristic). The next design-flow step is **step 3:
-  candidate-set assembly + rerank over frontier + repeat-fix library**
-  (`rerank_by_expression` applied across the set, calibrated-gated selection). **The
-  recommended next PR.**
+- **Design steps 1–3 — ✅ landed.** Batched RiboNN scoring (step 1); the
+  splice-consensus motif constraint (step 2, `avoid_splice_sites`); and
+  candidate-set assembly + expression rerank (step 3, `bt4.api.candidates` /
+  `assemble_and_rank_candidates` → `CandidateSet`; frontier + repeat-refined
+  variants, batch-scored via the new `BatchExpressionPredictor` contract,
+  calibrated-gated). The next design-flow step is **step 4: the splice CNN
+  localize-and-flag audit** — batched SpliceAI+Pangolin over the candidate set,
+  returning per-site flags + backend agreement, no editing. **The recommended next
+  PR.**
 - **Finish the calibration tails** — record the splice fidelity gates and run the
   expression acceptance gate. Both need licensed weights / matched-regime data and
   are human-only; don't fabricate a panel.
@@ -223,8 +225,11 @@ already fixed in [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_f
    `GTRAGT` + acceptor `YYYYYYNYAGG`, sense-strand only, never bans bare `GT`/`AG`).
 3. **Candidate-set assembly + rerank** over frontier + repeat-fix library
    (`rerank_by_expression` applied across the set, calibrated-gated selection).
-   **← start here.**
+   ✅ **Landed** (`bt4.api.candidates` / `assemble_and_rank_candidates`;
+   `BatchExpressionPredictor` batch contract; solver-delivered pinned; discovery vs
+   expression-rank order-basis; honest de-dup/cap counts).
 4. **Splice CNN localize-and-flag** audit (batched SpliceAI+Pangolin over the set).
+   **← start here.**
 5. **BT4 Studio UI** — UTR fields, the two toggles, the annotated frontier + ranked
    table with uncalibrated badges, on the background thread.
 6. **(Gated, human-data)** splice **auto-edit** + RiboNN **auto-select**, each

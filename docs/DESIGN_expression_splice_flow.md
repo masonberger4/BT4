@@ -163,6 +163,13 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
 3. **Candidate-set assembly + `rerank` over frontier+library** — an API surface
    that assembles the frontier + deterministic repeat-fix library and batch-ranks
    it (`rerank_by_expression` applied across the set, calibrated-gated selection).
+   ✅ **Landed** — `bt4.api.candidates` / `assemble_and_rank_candidates` →
+   `CandidateSet`. Frontier + repeat-refined variants (gated on the seed actually
+   violating a GLOBAL rule), de-duplicated, batch-scored via the new
+   `BatchExpressionPredictor` contract when available, calibrated-gated delivery
+   (discovery order + solver-delivered `chosen` when uncalibrated; reorder + top
+   pick when calibrated). The solver-delivered sequence is pinned so it is
+   invariant to `n`; de-dup/cap counts and the predictor identity are reported.
 4. **Splice CNN audit (localize-and-flag)** — batched SpliceAI+Pangolin over the
    candidate set, returning per-site flags + backend agreement; no editing.
 5. **BT4 Studio UI** — UTR fields, the two toggles, the annotated frontier +
