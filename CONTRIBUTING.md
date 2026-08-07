@@ -10,20 +10,25 @@ design constitution for this repository: the architecture, the contracts, the
 honesty invariants, and the roadmap all live there, and contributions are
 expected to respect it.
 
-> A note on scope: BT4 today does exact-DP CAI optimization with GC-target
-> proximity, hard constraints (max-homopolymer and forbidden motifs including
-> reverse complements), a CAI/GC Pareto frontier, an optimality certificate, and
-> content-hashed provenance manifests. Richer objectives (tAI, codon-pair, 5′
-> ramp), ILP/relaxation backends, and validated splice/folding/expression models
-> are on the roadmap in `CLAUDE.md` — they are **not** shipped yet. Please don't
-> describe roadmap items as if they already work.
+> A note on scope: BT4 today does exact-DP multi-objective optimization (CAI,
+> tAI, GC-target proximity, 5′ ramp, CpG, %MinMax, codon-pair bias) with a Pareto
+> frontier, hard constraints (max-homopolymer, max GC-run, max-repeat-length,
+> forbidden motifs and presets, tandem/inverted repeats, restriction sites,
+> internal-ATG/Kozak, out-of-frame uORF), ILP/CP-SAT and Lagrangian GC-budget
+> backends, an optimality certificate, and content-hashed provenance manifests.
+> The wrapped splice CNNs (Pangolin, SpliceAI) and the RiboNN expression head have
+> landed as inference-only adapters but ship **`calibrated=False`** until they
+> pass their fidelity/acceptance gates — so please don't describe their output as
+> validated, and don't describe any remaining roadmap item in `CLAUDE.md` §9 as if
+> it already works.
 
 ## Development setup
 
-BT4 targets **Python 3.11+**. Install the package in editable mode with the dev
-extra:
+BT4 targets **Python 3.10+**. Work in a virtual environment, then install the
+package in editable mode with the dev extra:
 
 ```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e '.[dev]'          # pure-Python core + dev tooling
 ```
 
@@ -137,9 +142,14 @@ QT_QPA_PLATFORM=offscreen pytest tests/test_app_smoke.py
 The trellis hot loop has an optional Rust/PyO3 implementation in
 `rust/bt4_core`. It is **not required** — an identical pure-Python fallback is
 used when the extension isn't built — but you can build it to run the accelerated
-path:
+path. You need a **Rust toolchain** (install via [rustup](https://rustup.rs));
+the extension supports the same Python floor as BT4 (3.10+, built as an `abi3`
+wheel):
 
 ```bash
+# one-time: install Rust if you don't have it (https://rustup.rs)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
 pip install maturin
 maturin develop -m rust/bt4_core/Cargo.toml   # builds the `bt4_native` extension
 ```

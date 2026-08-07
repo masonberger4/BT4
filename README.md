@@ -158,6 +158,7 @@ BT4 is also a `bt4` CLI and a `bt4.api` Python library. It needs **Python 3.10+*
 ```bash
 git clone https://github.com/masonberger4/BT4
 cd BT4
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e '.[app]'     # core + PySide6 + pyqtgraph (drop [app] for just the CLI/API)
 bt4-studio                  # launch the desktop app  (or:  python -m bt4.app)
 bt4 --help                  # or use the command line
@@ -267,12 +268,34 @@ lint-imports              # enforce the layering contract
 pytest                    # property + integration + determinism tests
 ```
 
-Optional Rust accelerator (a pure-Python fallback is used when it isn't built):
+Optional Rust accelerator (a pure-Python fallback is used when it isn't built).
+Needs a **Rust toolchain** — install it once via [rustup](https://rustup.rs); the
+extension builds an `abi3` wheel on the same Python floor as BT4 (3.10+):
 
 ```bash
 pip install maturin
 maturin develop -m rust/bt4_core/Cargo.toml   # builds the `bt4_native` extension
 ```
+
+### Optional wrapped ML models
+
+The splice and expression models are **inference-only wrappers around published
+tools that BT4 does not bundle** (license-clean, hash-pinned, run out of the
+optimizer loop). They are entirely optional — the core CLI, app, and API need
+none of them. To use one, install its runtime extra *and* set up the upstream
+package/weights yourself:
+
+| Model | Extra | Upstream you install separately |
+|---|---|---|
+| **ViennaRNA** folding (`--refine`) | `bt4[fold]` | `pip install ViennaRNA` (or conda) |
+| **Pangolin** splice (GPL-3.0) | `bt4[splice-pangolin]` | clone [tkzeng/Pangolin](https://github.com/tkzeng/Pangolin) + its weights |
+| **SpliceAI** splice (PolyForm Strict code, CC BY-NC weights) | `bt4[splice-spliceai]` | `pip install spliceai` (ships weights) |
+| **RiboNN** expression (Sanofi non-commercial) | `bt4[expression-ribonn]` | clone [Sanofi-Public/RiboNN](https://github.com/Sanofi-Public/RiboNN) + Zenodo weights, point BT4 at them via `$BT4_RIBONN_DIR` |
+
+Each wrapped model **verifies its weights against a pinned SHA-256 before
+loading** and ships `calibrated=False` until its fidelity/acceptance gate is
+recorded — so BT4 uses them as honest cross-checks/rerankers, never as validated
+results. SpliceAI's and RiboNN's weights are noncommercial-licensed.
 
 New to the codebase? Read [`CLAUDE.md`](./CLAUDE.md) first (the design
 constitution), then [`CONTRIBUTING.md`](./CONTRIBUTING.md). Adding a constraint or
@@ -294,8 +317,10 @@ splice backends** (Pangolin + SpliceAI, inference-only, hash-pinned,
 `calibrated=False` until their fidelity gates) with a two-backend agreement
 harness, and the **`ExpressionPredictor` contract is scaffolded** for Phase 4 (a
 neutral, honestly-uncalibrated placeholder until a validated head passes its
-gate). Recording the splice fidelity gates, the validated expression model, and a
-Rust trellis port are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
+gate). The **full Rust trellis port** has also landed (`bt4_native.trellis_solve`,
+regime-gated with a byte-identical pure-Python fallback, amortized across the
+Pareto frontier). Recording the splice fidelity gates and the validated
+expression model are next. See [`CLAUDE.md`](./CLAUDE.md) §9.
 
 ## How BT4 compares
 
