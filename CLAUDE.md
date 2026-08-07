@@ -470,6 +470,12 @@ is a requirement, not a nice-to-have.
   running ruff, `mypy --strict`, import-linter (layering), pytest + coverage
   gate, determinism job, and per-extra jobs (`[ml]`/`[fold]`/`[ilp]`). Merge
   blocked on failure. `abi3` wheels for the Rust core across platforms.
+- **Agent CI check-in cadence (convention).** When an automated agent opens a PR
+  to this repo and watches its CI, it polls with a **linear backoff starting at
+  60 s and increasing by 60 s each round** (60 s, 120 s, 180 s, …) until every
+  check has completed, and then **merges the PR once all checks are green**. A
+  failing check keeps the drive-to-green posture (diagnose + push a fix, or reply
+  with the blocker); the merge happens only on all-green.
 - **Provenance & packaging:** every result emits a **run manifest** (config hash,
   table provenance with SHA-256, model SHAs, solver certificate, seed, git
   commit, tool version) — reproducible from the stamp alone. Single-sourced
