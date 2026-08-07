@@ -769,7 +769,23 @@ is a requirement, not a nice-to-have.
   top pick tops the top-n keep; cap applied after scoring), variants are labelled
   `repeat_refined` (process, not a guaranteed fix) with residual GLOBAL violations
   disclosed per member, and de-dup/cap counts plus the predictor identity (in the
-  manifest, invariant #9) are reported. The
+  manifest, invariant #9) are reported. **The design flow now has a first-class
+  desktop surface**: BT4 Studio's new **Candidates & splice audit** tab
+  (`app/worker.py::CandidatesWorker`, `app/studio.py`) runs `api.candidates` →
+  `api.splice_audit` on a background `QThread` and renders the ranked, honestly-
+  labeled candidate set (delivered pick starred, per-member source / CAI / GC /
+  expression+units / calibration / hard-violation / distinct-splice-site counts)
+  with two advisory banners — the same calibrated-gating honesty as the API: an
+  **uncalibrated head is shown as discovery order, NOT a ranking** with the
+  solver's pick starred and scores annotating only (a calibrated head switches to
+  ranked-by-expression + top pick), and the splice banner leads with **UNCALIBRATED
+  (advisory)** whenever `all_calibrated` is `False`, reports cross-backend rank/sign
+  agreement, and states the flags localize sites heuristically and edit nothing
+  (§10.5/§10.6/§6). The splice-flags column counts **distinct** sites (co-located
+  cross-backend flags merged within the audit's match window), every table metric
+  is recomputed per candidate from its own DNA (invariant #2), and an opt-in
+  toggle routes the installed SpliceAI/Pangolin CNNs into the audit (PWM baseline
+  only when off). The
   **model-agnostic acceptance gate** a head must pass to *earn* `calibrated=True`
   has now landed (`biomodels/expression/gate.py`): for a **log-TE regression**
   head it reports Spearman (primary) / Pearson / R² plus **split-conformal
