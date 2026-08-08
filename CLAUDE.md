@@ -471,11 +471,22 @@ is a requirement, not a nice-to-have.
   gate, determinism job, and per-extra jobs (`[ml]`/`[fold]`/`[ilp]`). Merge
   blocked on failure. `abi3` wheels for the Rust core across platforms.
 - **Agent CI check-in cadence (convention).** When an automated agent opens a PR
-  to this repo and watches its CI, it polls with a **linear backoff starting at
-  60 s and increasing by 60 s each round** (60 s, 120 s, 180 s, …) until every
-  check has completed, and then **merges the PR once all checks are green**. A
-  failing check keeps the drive-to-green posture (diagnose + push a fix, or reply
-  with the blocker); the merge happens only on all-green.
+  to this repo and watches its CI, it is **webhook-first**: the PR subscription
+  already wakes the session on CI failures and on merge, so those need no polling.
+  The one gap is CI *success* (not reliably pushed), so the agent arms **at most a
+  single self-check-in** (`send_later`) sized to when CI actually finishes — a few
+  minutes for this repo, not a 60 s round — and **performs the merge from that
+  firing**. This deliberately avoids the old linear-backoff loop, which armed a new
+  trigger every round and left pending triggers that had to be hand-deleted when
+  the PR resolved first. Rules that keep trigger churn at zero: (1) `send_later`
+  one-shots **self-disable after firing** — never call `delete_trigger` on a trigger
+  that has already fired; (2) do not stack a second check-in while one is pending —
+  re-arm only *after* the current one fires and the PR still isn't resolved; (3) a
+  pending fallback only needs deleting in the rare case the PR merges via webhook
+  before it fires, and even then letting it fire once and no-op (see the PR is
+  merged, do nothing) is acceptable. A failing check keeps the drive-to-green
+  posture (diagnose + push a fix, or reply with the blocker); the merge happens
+  only on all-green.
 - **Provenance & packaging:** every result emits a **run manifest** (config hash,
   table provenance with SHA-256, model SHAs, solver certificate, seed, git
   commit, tool version) — reproducible from the stamp alone. Single-sourced
