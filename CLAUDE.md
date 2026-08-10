@@ -496,22 +496,33 @@ is a requirement, not a nice-to-have.
   gate, determinism job, and per-extra jobs (`[ml]`/`[fold]`/`[ilp]`). Merge
   blocked on failure. `abi3` wheels for the Rust core across platforms.
 - **Agent CI check-in cadence (convention).** When an automated agent opens a PR
-  to this repo and watches its CI, it is **webhook-first**: the PR subscription
-  already wakes the session on CI failures and on merge, so those need no polling.
-  The one gap is CI *success* (not reliably pushed), so the agent arms **at most a
-  single self-check-in** (`send_later`) sized to when CI actually finishes — a few
-  minutes for this repo, not a 60 s round — and **performs the merge from that
-  firing**. This deliberately avoids the old linear-backoff loop, which armed a new
-  trigger every round and left pending triggers that had to be hand-deleted when
-  the PR resolved first. Rules that keep trigger churn at zero: (1) `send_later`
-  one-shots **self-disable after firing** — never call `delete_trigger` on a trigger
-  that has already fired; (2) do not stack a second check-in while one is pending —
-  re-arm only *after* the current one fires and the PR still isn't resolved; (3) a
-  pending fallback only needs deleting in the rare case the PR merges via webhook
-  before it fires, and even then letting it fire once and no-op (see the PR is
-  merged, do nothing) is acceptable. A failing check keeps the drive-to-green
-  posture (diagnose + push a fix, or reply with the blocker); the merge happens
-  only on all-green.
+  to this repo and watches its CI, the default is **auto-merge**: immediately after
+  opening the PR (ready for review), enable GitHub **auto-merge with the squash
+  method** (`enable_pr_auto_merge`) so GitHub itself merges the PR the moment its
+  required status checks pass — fully event-driven, no polling and no timed merge.
+  The rest stays **webhook-first**: the PR subscription wakes the session on CI
+  *failures* and review comments, and a failing check simply blocks the pending
+  auto-merge, so the drive-to-green posture is unchanged (diagnose + push a fix, or
+  reply with the blocker; each new push keeps auto-merge armed). The merge happens
+  only on all-green either way. *Why this is the default and not shell polling:* in
+  the agent's execution environment GitHub is reachable **only** through the MCP
+  tools (which require the agent to be invoked to call them) — there is no `gh` CLI
+  or shell-level API access a background watcher could poll with, and the PR
+  subscription does **not** reliably push CI *success* — so letting GitHub own the
+  merge trigger is strictly better than any timer the agent could set.
+  - **Fallback (only when auto-merge is unavailable).** If `enable_pr_auto_merge`
+    errors — the repo has no required-status-check branch protection, or auto-merge
+    is disabled at the repo level — fall back to the prior pattern: arm **at most a
+    single self-check-in** (`send_later`) sized to when CI actually finishes (a few
+    minutes for this repo, not a 60 s round) and **perform the merge from that
+    firing**. This deliberately avoids the old linear-backoff loop, which armed a
+    new trigger every round and left pending triggers to hand-delete. Rules that
+    keep trigger churn at zero: (1) `send_later` one-shots **self-disable after
+    firing** — never call `delete_trigger` on a trigger that has already fired; (2)
+    do not stack a second check-in while one is pending — re-arm only *after* the
+    current one fires and the PR still isn't resolved; (3) a pending fallback only
+    needs deleting in the rare case the PR merges first, and even then letting it
+    fire once and no-op (see the PR is merged, do nothing) is acceptable.
 - **Provenance & packaging:** every result emits a **run manifest** (config hash,
   table provenance with SHA-256, model SHAs, solver certificate, seed, git
   commit, tool version) — reproducible from the stamp alone. Single-sourced
