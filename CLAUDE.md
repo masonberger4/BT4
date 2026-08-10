@@ -43,9 +43,17 @@ before writing code, and keep it current as the architecture evolves.
 > licensed weights**, which validated the adapter and fixed two live-only
 > integration bugs (ensemble row-per-model aggregation; a required-non-empty-UTR
 > guard). BT4 now also supports **Python 3.10** (was 3.11+), so RiboNN installs into
-> the same environment as its `torch==1.13.1` stack. Still ahead: recording the
-> fidelity/acceptance gates to promote splice + expression to `calibrated=True`, and
-> packaged installers — see §9. This document was written
+> the same environment as its `torch==1.13.1` stack. The **opt-in, out-of-loop
+> ASSP splice cross-check** has now landed too (`AsspSplicePredictor` +
+> `run_splice_crosscheck` + `bt4 validate --splice-backend assp` / `bt4 optimize
+> --check-splice assp`): a *network* validator on the delivered sequence, opt-in
+> behind the `bt4[assp]` extra, never in the optimizer loop, cached by sequence
+> hash, rate-limited with backoff, never-blocking (an outage degrades gracefully,
+> never fails a run), and stamped `network_derived`/`calibrated=False` so its
+> numbers stay out of the reproducible-from-manifest guarantee — CI drives it from
+> committed synthetic offline fixtures, never a live call (§6, §10.15). Still ahead:
+> recording the fidelity/acceptance gates to promote splice + expression to
+> `calibrated=True`, and packaged installers — see §9. This document was written
 > after a full review of the BT3 codebase and *every* BT3 branch (`master`,
 > `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
@@ -370,23 +378,40 @@ aborting with "no feasible codon".
   on massively-parallel expression / ribosome-load data; used to rerank the
   frontier with reported calibration and uncertainty. Clearly labeled by
   training provenance.
-- **ASSP — optional online cross-check backend** (Alternative Splice Site
-  Predictor). This is a *kept, supported feature*, behind the same
-  `SplicePredictor` contract as every other backend, but with guardrails that
-  make it honest rather than the BT3 liability it was:
+- **ASSP — optional online cross-check backend (landed).** (Alternative Splice
+  Site Predictor.) A *kept, supported feature*, behind the same `SplicePredictor`
+  contract as every other backend, with guardrails that make it honest rather than
+  the BT3 liability it was. **Status: landed** — `AsspSplicePredictor`
+  (`biomodels/splice/assp.py`), the graceful `run_splice_crosscheck`
+  (`pipeline/splice_crosscheck.py`, exposed as `bt4.api.splice_crosscheck`), the
+  `bt4 validate --splice-backend assp` / `bt4 optimize --check-splice assp` CLI
+  wiring, and committed offline fixtures (`tests/fixtures/assp/`) all ship:
   - **Opt-in and out-of-the-inner-loop.** ASSP is a network service, so it is
-    never used to score per-move inside the optimizer. It runs as a **final
-    audit / validation pass** on a delivered sequence (`bt4 validate
-    --splice-backend assp`, or `--check-splice assp` on `optimize`) and as a
-    **ground-truth comparator** in the eval/benchmark harness.
+    never used to score per-move inside the optimizer, and is **never** returned by
+    `bt4.biomodels.splice.default` or `available_splice_backends` (it is requested
+    explicitly by name, never auto-discovered). It runs only as a **final audit /
+    validation pass** on a delivered sequence (`bt4 validate --splice-backend
+    assp`, or `--check-splice assp` on `optimize`).
   - **Never silent, never blocking.** Gated behind an explicit flag *and* the
-    `bt4[assp]` extra; polite rate-limiting + backoff; responses cached by
-    sequence hash; if the service is unreachable it degrades gracefully and says
-    so — it can never fail an optimization. CI uses stored offline fixtures, no
-    live calls.
-  - **Labeled non-reproducible.** Any ASSP-derived number is stamped
-    network-derived and excluded from the reproducible-from-manifest guarantee
-    (the local calibrated model remains the default, reproducible splice path).
+    `bt4[assp]` extra (httpx, lazily imported); polite rate-limiting + exponential
+    backoff (`_throttle` / `_with_retries`); responses cached by sequence hash
+    (`CachingAsspTransport`); if the service is unreachable or returns a garbled
+    body the *raw* predictor raises an `AsspError`, but `run_splice_crosscheck`
+    catches it and reports "unavailable" — it can never fail an optimization. CI
+    uses stored **offline fixtures** (`FixtureAsspTransport`, selected via
+    `$BT4_ASSP_FIXTURE_DIR`), no live calls. **Honest wire-format caveat:** the
+    live transport targets ASSP's documented tabular site report but is *unverified
+    against the live service* (unreachable during development), so the committed
+    fixtures are *synthetic ASSP-format reports* (not real captures) — the same
+    "no bundled panel ships" posture as the wrapped CNNs; the promotion path is a
+    maintainer confirming the live transport.
+  - **Labeled non-reproducible.** `AsspSplicePredictor.network_derived` is `True`
+    and `calibrated` is `False`; any ASSP-derived number is stamped network-derived
+    and **excluded from the reproducible-from-manifest guarantee** — the
+    cross-check is reported as a separate advisory section (the CLI prints it to
+    **stderr**, never into the stdout FASTA/JSON artifact or a `Result` manifest).
+    The local baseline (and, when installed, the wrapped CNNs) remain the default,
+    reproducible splice path.
 
 Keep BT3's excellent honesty machinery and **feed it real biology**: shared
 `encode_window` encoder (no train/serve skew), chromosome-grouped splits, PR-AUC
@@ -725,8 +750,12 @@ is a requirement, not a nice-to-have.
   baseline **fallback**. Because BT4 is open-source and **non-commercial**, both
   Pangolin (GPL) and SpliceAI (CC BY-NC) are eligible to certify. Still ahead:
   running an actual gate to emit a committed attestation (human-only — needs the
-  licensed weights + a captured panel) and the opt-in **ASSP** cross-check (§6)
-  with offline fixtures (block/segment moves and parallel tempering have now
+  licensed weights + a captured panel). The opt-in **ASSP** cross-check (§6) with
+  offline fixtures has now **landed** — `AsspSplicePredictor` +
+  `run_splice_crosscheck` + `bt4 validate --splice-backend assp` / `bt4 optimize
+  --check-splice assp`, opt-in / out-of-loop / cached / rate-limited-with-backoff /
+  network-derived-and-manifest-excluded / never-blocking, CI-driven from committed
+  synthetic offline fixtures (block/segment moves and parallel tempering also
   landed — see the refinement note above).
   The **per-site risk tracks** now ship as honest reporting profiles through
   `api.tracks()` and `bt4 tracks` (sliding-window GC / CpG density / %MinMax,
