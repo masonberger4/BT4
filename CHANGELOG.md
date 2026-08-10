@@ -64,6 +64,24 @@ its first tagged release.
   CPython ≤3.10 wheels.
 
 ### Added
+- **BT4 Studio "Candidates & splice audit" tab** — step 5 (final) of the
+  expression/splice design flow, surfacing `api.candidates` → `api.splice_audit`
+  in the desktop app. A background `CandidatesWorker` (mirroring the known-good
+  `OptimizeWorker` `QThread` lifecycle) runs both on a worker thread and hands the
+  window the candidate set + splice audit in one signal. The tab renders the
+  ranked, honestly-labeled candidate table (delivered pick starred; per-member
+  source / CAI / GC / expression+units / calibration / hard-violation / **distinct**
+  splice-site counts) with two advisory banners: an *uncalibrated* expression head
+  is shown as **discovery order, not a ranking** (solver's pick starred, scores
+  annotating only; a calibrated head switches to ranked-by-expression), and the
+  splice banner leads with **UNCALIBRATED (advisory)** whenever `all_calibrated` is
+  `False`, reporting cross-backend agreement and stating the flags localize sites
+  heuristically and edit nothing. Every metric is recomputed per candidate from its
+  own DNA (invariant #2); an opt-in toggle routes the installed SpliceAI/Pangolin
+  CNNs into the audit. The results area is now a `QTabWidget` (Design | Candidates &
+  splice audit); the Design tab is unchanged. No Cancel control on this tab (the
+  assemble→audit flow is not point-cancelable), and the cross-flow Optimize/Rank
+  gating clears the worker-thread reference so neither button can deadlock.
 - **Localize-and-flag splice audit** (`bt4.api.splice_audit` /
   `bt4.biomodels.splice.audit_splice`) — step 4 of the expression/splice design
   flow (`docs/DESIGN_expression_splice_flow.md` Stage C). An **out-of-loop,

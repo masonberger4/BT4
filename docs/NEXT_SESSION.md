@@ -1,244 +1,155 @@
-# BT4 — next-session build brief
+# BT4 — live status & next-task queue
 
-A ready-to-use brief for the next building session. Paste it (or point the session
-at this file) to resume work. **Read [`../CLAUDE.md`](../CLAUDE.md) first — it is
-the constitution and it overrides anything here that has drifted.**
+**This file is the single source of truth for *volatile* state**: where BT4 is
+right now, and what to build next. The durable rules — architecture, the three
+contracts, the honesty invariants, the anti-patterns — live in
+[`../CLAUDE.md`](../CLAUDE.md) (the constitution) and are **not** restated here;
+this file links into it by section. Shipped history lives in
+[`../CHANGELOG.md`](../CHANGELOG.md). Update this file **in the same PR** as the
+code it describes (§10.11): flip a status row, re-point the queue — a small
+bounded edit, not a prose rewrite.
+
+Every `DONE` below is stamped so a claim can be checked against the tree.
 
 ---
 
-## Where BT4 is right now
+## Status board
 
-Phases 0–2 complete; **Phase 3 groundwork landed**; **Phase 4 in progress**;
-**Phase 5 opened**. All merged and green on `main`.
+**Phases:** 0–2 complete · Phase 3 groundwork landed · Phase 4 not started
+(scaffold only) · Phase 5 opened. All merged and green on `main`.
 
-- **Honest exact-DP core** — codon trellis with true per-constraint context and a
-  real optimality certificate; beam as an explicit knob. The **full DP inner loop
-  is now ported to Rust** (`bt4_native.trellis_solve`, regime-gated with a
-  byte-identical pure-Python twin + equivalence test; the win is the amortized
-  Pareto frontier, ~2.7–5.5× faster, byte-identical output/certificates).
-- **Objectives:** CAI, tAI (8 organisms, real GtRNAdb data), GC-proximity, 5′
-  ramp, CpG, %MinMax, and **codon-pair bias** (built from a user reference CDS).
-  Returned as a multi-objective **Pareto frontier**.
-- **Constraints:** homopolymer, **max-GC-run**, **max-repeat-length** (dispersed,
-  RC-aware, GLOBAL/refinement-enforced), tandem/inverted repeats, forbidden motifs
-  + **named presets**, restriction sites (IUPAC, RC), strong-Kozak internal-ATG,
-  and **out-of-frame uORF** (GLOBAL/refinement-enforced, structural).
-- **Budget backends:** OR-Tools CP-SAT and an honest Lagrangian/exact-bucketed
-  budget DP — context-aware, so **CpG/UpA whole-sequence count budgets**
-  (`dinuc_budget`/`dinuc_min`/`dinuc_max`) ship as exact, proven-optimal
-  dinucleotide-count budgets (completed the last Phase 2 item).
-- **Refinement:** the incremental SA engine (`optimize/anneal_refine.py`) now has
-  **block/segment moves + parallel tempering** (opt-in `block_size`/`block_prob`
-  and `replicas`/`temps`/`swap_every`), so it can cross barriers a single-codon
-  chain cannot — **without weakening invariant #5** on the delivered result (every
-  replica gates against its own whole-sequence hard-violation count; all knobs
-  default off and reproduce the prior single-chain trajectory byte-for-byte). A
-  repeat pinned to synonymously-immovable bases is an honestly-disclosed
-  feasibility floor (`max_repeat_residual`, enforcement `"partial"`), not a defect.
-- **Splice (Phase 3):** `SplicePredictor` with a labeled PWM baseline **plus both
-  wrapped CNN backends** — `PangolinSplicePredictor` (GPL-3.0) and
-  `SpliceAiSplicePredictor` (PolyForm Strict code + CC BY-NC weights) — each lazily
-  imported from the user's own install, hash-pinned, reproducing upstream
-  bit-for-bit, `calibrated=False` until its fidelity gate, with a two-backend
-  agreement harness and a license-clean fidelity-attestation layer.
-- **Expression (Phase 4):** `ExpressionPredictor` contract + a neutral
-  `NullExpressionModel` placeholder + a frontier-rerank hook that never steers
-  delivery unless calibrated, **plus the wrapped `RiboNNExpressionModel`**
-  (`biomodels/expression/ribonn.py`, Sanofi non-commercial, driven from the user's
-  own checkout via `$BT4_RIBONN_DIR`, hash-pinned against a bundled 180-entry
-  manifest, CLR-residual TE units, `delta_logte` the CDS-attributable signal). Ships
-  `calibrated=False`; `default()` still returns the placeholder. The model-agnostic
-  acceptance gate (`biomodels/expression/gate.py`, `verify_expression_gate`) is the
-  promotion path. **`RiboNNExpressionModel` has now had its first real end-to-end
-  runs against the licensed weights** (a maintainer's machine — non-commercial
-  weights, never bundled or CI-run), which validated the adapter and fixed two
-  live-only integration bugs (see the archive marker below).
-- **Native primitives:** `bt4_native` ships `gc_count`, `max_homopolymer_run`,
-  `reverse_complement`, `max_gc_run`, `longest_repeat`, and `trellis_solve` — each
-  with a byte-identical Python fallback + equivalence test.
-- **Surfaces:** stable `bt4.api`; the `bt4` CLI; BT4 Studio (PySide6, tooltips on
-  every control, per-site risk tracks, and a sequence viewer with inline
-  HARD/SOFT violation annotations); an optional FastAPI service; content-hashed
-  provenance manifests; per-site reporting tracks (`api.tracks` / `bt4 tracks`).
-- **Packaging:** now supports **Python 3.10+** (was 3.11+), so the RiboNN backend
-  installs into the same environment as its pinned `torch==1.13.1` stack.
+**Status vocabulary:** `DONE` · `GROUNDWORK` (contract + baseline shipped,
+calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
+`BLOCKED-human` (needs licensed weights / a maintainer machine) · `NOT-STARTED`.
 
-## What's left (see CLAUDE.md §9 for the authoritative list)
+| Component | State | Calibrated? | Primary file(s) |
+|---|---|---|---|
+| Exact-DP codon trellis + certificate | DONE | n/a | `optimize/exact_dp.py` |
+| Rust trellis port (`trellis_solve`, regime-gated) | DONE | n/a | `rust/bt4_core`, `bt4_native` |
+| Objectives: CAI, tAI, GC, ramp, CpG, %MinMax, codon-pair | DONE | n/a | `objectives/` |
+| tAI (real GtRNAdb, 8 organisms) | DONE | n/a | `biomodels/codon/tai.py` |
+| Constraints: homopolymer, GC-run, max-repeat, tandem/inverted, forbidden+presets, restriction, Kozak-ATG, uORF, splice-motif | DONE | n/a | `constraints/` |
+| Budget backends: CP-SAT, Lagrangian, dinucleotide-count | DONE | n/a | `optimize/{cpsat,lagrangian}.py` |
+| SA refinement + block moves + parallel tempering | DONE | n/a | `optimize/anneal_refine.py` |
+| Folding (ViennaRNA + labeled baseline) | GROUNDWORK | ViennaRNA=yes, baseline=no | `biomodels/folding/` |
+| Splice PWM baseline | GROUNDWORK | no (baseline) | `biomodels/splice/` |
+| Splice CNNs: Pangolin (GPL) / SpliceAI (CC BY-NC) | GROUNDWORK | **no** (fidelity gate pending) | `biomodels/splice/{pangolin,spliceai}.py` |
+| Splice audit (localize-and-flag) + backend agreement | DONE | advisory (`all_calibrated=False`) | `biomodels/splice/audit.py` |
+| Splice fidelity-attestation layer | DONE (unused until a gate runs) | n/a | `biomodels/splice/attestation.py` |
+| **ASSP cross-check (opt-in, out-of-loop network validator)** | DONE | `network_derived`, not calibrated | `biomodels/splice/assp.py`, `pipeline/splice_crosscheck.py` |
+| Expression: `ExpressionPredictor` + `NullExpressionModel` + rerank hook | GROUNDWORK | placeholder=no | `biomodels/expression/`, `pipeline/rerank.py` |
+| Expression: wrapped RiboNN (Sanofi non-commercial) | GROUNDWORK | **no** (acceptance gate pending) | `biomodels/expression/ribonn.py` |
+| Candidate-set assembly + expression rerank | DONE | calibrated-gated | `pipeline/candidates.py`, `bt4.api.candidates` |
+| Library / degenerate-design (SAMPLED) mode | DONE | n/a (sampler, not optimizer) | `optimize/sample.py`, `pipeline/library.py` |
+| Surfaces: `bt4.api`, `bt4` CLI, FastAPI service, provenance | DONE | n/a | `api/`, `cli/`, `service/`, `provenance/` |
+| **BT4 Studio** incl. Candidates & splice-audit tab | DONE | n/a | `app/studio.py`, `app/worker.py` |
+| Packaged installers (PyInstaller/Briefcase) | NOT-STARTED | n/a | `packaging/` |
 
-The two big self-contained engine items from the last brief — the **Rust trellis
-port** and **block/tempering refinement** — have both **landed**. What remains is
-mostly data-gated or human-only.
+The **expression/splice design flow**
+([`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md)) is
+**complete through step 5** — batched RiboNN scoring, the splice-consensus motif
+constraint, candidate assembly + rerank, the localize-and-flag splice audit, and
+the BT4 Studio UI that surfaces them. Only step 6 (auto-edit / auto-select)
+remains, and it is calibration-gated (see the queue). The opt-in **ASSP**
+cross-check (the last named Phase-3 "still ahead" item) has also landed as a
+network validator.
 
-1. **Promote the splice CNNs to `calibrated=True`** (Phase 3 tail, human-only) —
-   capture reference panels and **record the fidelity gates**
-   (`verify_pangolin_fidelity` / `verify_spliceai_fidelity`, then a committed
-   `FidelityAttestation` via the attestation layer), so `default()` can prefer a
-   calibrated backend. Needs the licensed weights — a maintainer step, not
-   fabricated. Also the opt-in **ASSP** cross-check with offline fixtures.
-2. **Promote RiboNN to `calibrated=True`** (Phase 4 tail, data-gated, human-only) —
-   assemble a **license-clean, regime-matched CDS-variant TE panel** and run
+---
+
+## Next-task queue
+
+Ordered. Each item is tagged by precondition. **Pick the first `self-contained`
+item unless you have a reason not to.**
+
+1. **[START HERE · self-contained] Phase-5 organism breadth** — add more organisms
+   with authoritative provenance via `bt4 build-table` on public CDS sets
+   (content-hash the sources; never fabricate a table), and grow the
+   restriction-enzyme / REBASE catalog. Fully autonomous, always welcome. Tables
+   feed CAI (and tAI where GtRNAdb data exists); wire each new organism through
+   `available_organisms()` and add its provenance sidecar.
+2. **[self-contained] BT4 Studio polish** — light/dark theming, accessibility,
+   responsive layout (Phase 4 polish, §6.6); a library-mode control (`api.library`)
+   is a natural add.
+3. **[self-contained] External-validation report** — compare BT4 output
+   codon/GC/CpG distributions against real highly-expressed gene panels (§8), using
+   public data and BT4's own recompute functions.
+4. **[self-contained → then human] Packaged installers** — PyInstaller/Briefcase
+   for macOS/Windows/Linux. Advance up to the point where signing / tag-pushing /
+   release-cutting is needed; those steps are human-only (HTTP 403 in the sandbox).
+5. **[BLOCKED-human] Promote the splice CNNs to `calibrated=True`** — capture
+   reference panels and run `verify_pangolin_fidelity` / `verify_spliceai_fidelity`,
+   then commit a `FidelityAttestation`. Needs the licensed weights on a maintainer
+   machine. Never assign `calibrated=True` by hand — it is earned on data
+   (§10.5/§10.6).
+6. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — assemble a
+   license-clean, regime-matched **CDS-variant** TE panel and run
    `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
-   split). Reproducing RiboNN faithfully is *not* calibration for BT4's CDS-variant
-   regime (its own ablation puts only ~31% of per-nt signal in the CDS). Do **not**
-   relabel a hand-weighted composite as "calibrated" (§10.5/§10.6).
-   - **RiboNN perf/UX follow-up (self-contained, no data):** ✅ **Done** (design
-     step 1). `RiboNNExpressionModel.score_many` / `.delta_logte_many` now amortize
-     RiboNN's large fixed *per-invocation* overhead (weight hashing + model load +
-     DataLoader worker spawn) across a whole candidate set in one call;
-     `delta_logte_many` scores the shared reference once; `score_sequence` /
-     `delta_logte` delegate to them; `calibrated` stays `False`. The `num_workers=0`
-     path was investigated and left out (RiboNN's predict entry point exposes no
-     worker-count parameter; batching already amortizes the one-time worker spawn).
-3. **Packaged installers** (Phase 4) — PyInstaller/Briefcase for macOS/Windows/
-   Linux; polish Studio theming/accessibility; optional external-validation report.
-   Advance up to the point where signing / tag-pushing / release-cutting is needed
-   (human-only here — HTTP 403 in the sandbox).
-4. **Phase 5 (continued)** — library/degenerate-design mode has landed; remaining is
-   **more organisms with authoritative provenance**, restriction-enzyme catalog
-   growth, and tissue/condition-specific tables. A natural follow-up: a library-mode
-   control in BT4 Studio.
-
-## Working agreements (do not violate)
-
-- **Honesty is structural.** Never present an unenforced constraint, an unvalidated
-  number, or a heuristic result as if it were real. New model → `calibrated=False`
-  until it passes a held-out / fidelity gate. Never fabricate a data table — refuse
-  and say why (as tAI / codon-pair bias do).
-- **Adding a constraint/objective/model = a new file + a registry/export entry + its
-  honesty property test** (`ok_suffix⇔validate` / `delta==score` / calibration
-  gate). Never an engine edit. Keep the strict layering (import-linter enforces it).
-- **Keep CLAUDE.md current in the same change** (§10.11). Update README when a
-  user-facing surface changes.
-- **Single-trunk + CI.** Branch, open a PR, merge on green. The full local gate:
-  ```
-  python -m ruff check src tests scripts
-  python -m mypy                            # whole-package; CI's dep-free quality
-                                            # job is the source of truth
-  lint-imports
-  QT_QPA_PLATFORM=offscreen python -m pytest tests/ -p no:cacheprovider
-  ```
-- **Sandbox limits (must be done by a human):** deleting remote branches, pushing
-  git tags, cutting releases, and anything needing the licensed splice/expression
-  weights are blocked here. Leave those for the maintainer; don't work around them.
-
-## Suggested first move
-
-The **expression/splice design flow is spec'd** in
-[`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) and its build
-order is fixed. Start there:
-
-- **Design steps 1–4 — ✅ landed.** Batched RiboNN scoring (step 1); the
-  splice-consensus motif constraint (step 2, `avoid_splice_sites`); candidate-set
-  assembly + expression rerank (step 3, `bt4.api.candidates`); and the
-  **localize-and-flag splice audit** (step 4, `bt4.api.splice_audit` /
-  `biomodels.splice.audit_splice` → `SpliceAuditReport`; peak/NMS localization +
-  pooled backend agreement, advisory/`all_calibrated=False`, no editing). The next
-  design-flow step is **step 5: the BT4 Studio UI** — UTR fields, the two toggles,
-  the annotated frontier + ranked candidate table with uncalibrated badges, and the
-  splice flags rendered as inline annotations, all on the background thread. **The
-  recommended next PR.**
-- **Finish the calibration tails** — record the splice fidelity gates and run the
-  expression acceptance gate. Both need licensed weights / matched-regime data and
-  are human-only; don't fabricate a panel.
-- **Phase 5 breadth** — more organisms with authoritative provenance is
-  self-contained and always welcome (a good non-expression alternative).
-
-The learned-expression calibration (item 2) is the one item gated on real
-matched-regime data — never ship an uncalibrated composite as validated
-(§10.5/§10.6). Packaged installers (item 3) can be advanced up to signing/release
-(human-only here).
+   split). Reproducing RiboNN faithfully is **not** calibration for BT4's
+   CDS-variant regime (its ablation puts only ~31% of per-nt signal in the CDS). Do
+   not relabel a hand-weighted composite as "calibrated".
+7. **[BLOCKED until #5/#6] Design-flow step 6** — targeted synonymous splice
+   **auto-edit** and RiboNN **auto-select**, each unlocked only once its backend
+   passes its gate.
 
 ---
 
-## Session archive marker (for continuity)
+## Working agreements (operational; the durable rationale is in CLAUDE.md)
 
-**Prior building session delivered (all merged to `main`, green):** both wrapped
-splice adapters — `PangolinSplicePredictor` (PR #33) and `SpliceAiSplicePredictor`
-(PR #34) — plus the two-backend agreement harness, and design plans for the Rust
-trellis port and the block/tempering refinement moves. (Those two plans have since
-been implemented and merged — see the constitution.)
+- **Honesty is structural** (§1, §5, §10.6). Never present an unenforced
+  constraint, an unvalidated number, or a heuristic result as if it were real. A
+  new model ships `calibrated=False` until it passes its gate. Never fabricate a
+  data table — refuse and say why (as tAI / codon-pair bias do).
+- **Adding a constraint/objective/model = a new file + a registry/export entry +
+  its honesty property test** (`ok_suffix⇔validate` / `delta==score` / a
+  calibration gate), never an engine edit (§4). import-linter enforces the layering
+  (§3): `domain` imports nothing; `cli`/`service`/`app` import only `api`; heavy
+  deps stay lazy behind contracts + optional extras.
+- **Single-trunk + CI, auto-merge cadence (§7).** Branch off trunk (the harness
+  assigns your branch name — don't reuse a prior one), open a PR ready for review,
+  then **enable GitHub auto-merge (squash)** immediately (`enable_pr_auto_merge`) so
+  GitHub merges the moment required checks pass — event-driven, no polling, no timed
+  merge. Stay webhook-first: the subscription wakes you on CI *failures* and review
+  comments; a failing check just blocks the pending auto-merge, so keep the
+  drive-to-green posture (diagnose + push a fix, or reply with the blocker; each
+  push keeps auto-merge armed).
+- **Keep this file and CLAUDE.md current in the same change** (§10.11); update
+  `README.md`/`CHANGELOG.md` when a user-facing surface or shipped behavior changes.
+- **Sandbox limits (human-only, don't work around):** deleting remote branches,
+  pushing git tags, cutting releases, and anything needing the licensed
+  splice/expression weights.
 
-**This session delivered (all merged to `main`, green):**
-- **Python 3.10 support** (PR #42) — `requires-python >=3.10`, 3.10 classifier,
-  ruff/mypy target 3.10, CI quality matrix adds 3.10. Pure compatibility widening
-  (the core uses no 3.11-only features). It unblocks installing BT4 into the same
-  environment as the RiboNN backend, whose pinned `torch==1.13.1` ships only CPython
-  ≤3.10 wheels.
-- **RiboNN adapter fixes** (PR #43) — the **first real end-to-end runs against the
-  licensed RiboNN weights** (maintainer's Windows machine) surfaced two integration
-  bugs that only appear once the live forward pass runs, both fixed:
-  1. RiboNN returns its ensemble as **one row per cross-validation model**, so the
-     per-input realignment now **groups by `tx_id` and averages** (mean over cell
-     types *and* the ensemble) via the tested helper `_reduce_te_by_tx_id` — a plain
-     `set_index` left duplicate labels and `float(Series)` raised `TypeError`.
-  2. Scoring now **requires non-empty `utr5`/`utr3`** and refuses empty ones up front
-     (RiboNN's loader reads an all-empty UTR column as `NaN` and its `.str`
-     preprocessing crashes; the UTRs carry most of RiboNN's signal anyway).
-  Both are property-tested against a synthetic RiboNN output table; `calibrated`
-  stays `False`.
-- **Docs sync** (PR #44 — this brief + CLAUDE.md §7/§9 + README) — recorded the
-  Python-version change and the RiboNN validation.
-- **First real RiboNN score through BT4** — `RiboNNExpressionModel(species="human")`
-  scored a sequence end-to-end on the maintainer's machine (≈1.624 CLR-residual TE,
-  `calibrated=False`), validating the whole path against the licensed weights.
-- **Honest competitive positioning** (PR #45 — `docs/COMPARISON.md`, linked from the
-  README) — a sourced review of BT4 vs IDT/Twist/GeneArt/GenScript/ATUM/DNA Chisel
-  from a three-agent research sweep. Verdict: BT4 is near-unique on *rigor* (exact
-  multi-objective optimization + certificates, byte-reproducible provenance,
-  validated ML with honest calibration), but **not** yet differentiated on "expresses
-  better" — CAI barely predicts expression (Kudla 2009, Welch 2009) and the CDS is
-  only ~31% of the per-nt signal (RiboNN), and BT4's splice/expression models are
-  still `calibrated=False`.
-- **Expression/splice design of record** (PR #46 —
-  `docs/DESIGN_expression_splice_flow.md`) — the agreed A→D pipeline for wiring
-  cryptic-splice screening and RiboNN ranking into the design flow and BT4 Studio,
-  spec'd before any code. **Locked decisions:** the RiboNN-ranked library is sourced
-  from **frontier + repeat-fix variants**; the splice CNN **localize-and-flags now**
-  (`calibrated=False`) and gains an **auto-edit** path only once a backend passes its
-  fidelity gate. Heavy CNNs stay out-of-loop; the interacting constraints (repeats +
-  uORF + splice-motifs + forbidden) are resolved in one **jointly-gated** refinement
-  (invariant #5), not a linear chain.
+## Runbook
 
-**Environment notes for the RiboNN backend (learned on real hardware this session):**
-RiboNN's own stack needs `numpy<2` (torch 1.13.1 ABI), `setuptools<81` (its older
-`pytorch_lightning` calls `pkg_resources`), and the Zenodo `weights.zip` extracted to
-a directory literally named `models/` under `$BT4_RIBONN_DIR` (so RiboNN's hard-coded
-`models/<species>/<run_id>/state_dict.pth` path resolves without a Windows symlink).
+Local gate (matches CI; run before pushing):
 
-**Deliberately NOT done, and why:** no splice/expression model was promoted to
-`calibrated=True` — that needs the licensed weights + captured/matched-regime panels
-(human-only), and the constitution forbids shipping an uncalibrated model as
-validated. No engine code was written for the expression/splice flow — it was
-**spec'd first** (`DESIGN_expression_splice_flow.md`) by explicit choice, so the
-build has a fixed target.
+```bash
+python -m ruff check src tests scripts
+python -m mypy                      # whole-package; CI's dep-free quality job is authoritative
+lint-imports                        # layering contract
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -p no:cacheprovider
+```
 
-**To resume — the next build is the expression/splice flow, and its order is
-already fixed in [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md)
-§"Implementation phasing":**
-1. **Batched RiboNN scoring** — `score_many` / `delta_logte_many` on the RiboNN
-   adapter that run the whole candidate set in **one** RiboNN invocation (amortize
-   the large fixed per-call overhead). ✅ **Landed** (the `num_workers=0` path was
-   investigated and left out — RiboNN's predict entry point has no worker-count
-   parameter; batching already amortizes the one-time worker spawn).
-2. Strong splice-consensus donor/acceptor **motif constraint** (LOCAL; new file +
-   registry entry + `ok_suffix⇔validate` test; honestly a heuristic, not a CNN).
-   ✅ **Landed** (`SpliceSiteMotifConstraint` / `avoid_splice_sites`; IUPAC donor
-   `GTRAGT` + acceptor `YYYYYYNYAGG`, sense-strand only, never bans bare `GT`/`AG`).
-3. **Candidate-set assembly + rerank** over frontier + repeat-fix library
-   (`rerank_by_expression` applied across the set, calibrated-gated selection).
-   ✅ **Landed** (`bt4.api.candidates` / `assemble_and_rank_candidates`;
-   `BatchExpressionPredictor` batch contract; solver-delivered pinned; discovery vs
-   expression-rank order-basis; honest de-dup/cap counts).
-4. **Splice CNN localize-and-flag** audit (batched SpliceAI+Pangolin over the set).
-   ✅ **Landed** (`bt4.api.splice_audit` / `biomodels.splice.audit_splice`; peak/NMS
-   localization + pooled backend agreement; advisory, `all_calibrated=False`, no
-   editing; `available_splice_backends()` adds the CNNs when installed).
-5. **BT4 Studio UI** — UTR fields, the two toggles, the annotated frontier + ranked
-   table with uncalibrated badges, on the background thread. **← start here.**
-6. **(Gated, human-data)** splice **auto-edit** + RiboNN **auto-select**, each
-   unlocked only when its backend passes its fidelity/acceptance gate.
+- **BT4 Studio (headless self-test):** `QT_QPA_PLATFORM=offscreen python -m bt4.app --self-test`
+- **App deps not in the base env** — install `pip install -e '.[app]'` and the Qt
+  system libs `libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3`.
+- **CLI:** `bt4 optimize`, `frontier`, `validate`, `tracks`, `library`, `presets`,
+  `build-table` (+ `--check-splice` / `--splice-backend`, incl. `assp`).
+- **Optional extras:** `[ilp]` `[fold]` `[ml]` `[service]` `[app]` `[assp]`
+  `[splice-pangolin]` `[splice-spliceai]` `[expression-ribonn]` `[dev]`.
+- **Rust ext:** built by CI; a byte-identical pure-Python fallback runs when absent.
 
-Read [`../CLAUDE.md`](../CLAUDE.md) (§6, §9 Phases 3–4, §10.6, invariants #5/#7),
-then [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) and
-[`COMPARISON.md`](COMPARISON.md), then this brief. Phase 5 organism breadth remains
-a good self-contained alternative if you want a non-expression PR.
+## RiboNN environment gotchas (learned on real hardware)
+
+Point `$BT4_RIBONN_DIR` at the user's own RiboNN checkout. Its stack needs
+`numpy<2` (torch 1.13.1 ABI) and `setuptools<81` (its older `pytorch_lightning`
+calls `pkg_resources`), and the Zenodo `weights.zip` extracted to a directory
+literally named `models/` under `$BT4_RIBONN_DIR` (so the hard-coded
+`models/<species>/<run_id>/state_dict.pth` path resolves without a symlink).
+Scoring requires **non-empty** `utr5`/`utr3` (empty → refused; the UTRs carry most
+of RiboNN's signal). Weights are non-commercial — never bundled or CI-run.
+
+---
+
+*History (what each session shipped) lives in
+[`../CHANGELOG.md`](../CHANGELOG.md) — this file carries only current state and the
+forward queue.*
