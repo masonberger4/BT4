@@ -25,15 +25,23 @@ from bt4.pipeline.optimize import (
 )
 from bt4.pipeline.rerank import rerank_by_expression
 from bt4.pipeline.splice_audit import audit_candidate_set, available_splice_backends
+from bt4.pipeline.splice_crosscheck import (
+    CrossCheckSite,
+    SpliceCrossCheck,
+    resolve_splice_backend,
+    run_splice_crosscheck,
+)
 from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 
 __all__ = [
     "Candidate",
     "CandidateSet",
+    "CrossCheckSite",
     "FrontierResult",
     "InfeasibleError",
     "LibraryResult",
     "OptimizeConfig",
+    "SpliceCrossCheck",
     "Track",
     "TracksResult",
     "ValidationReport",
@@ -41,9 +49,11 @@ __all__ = [
     "audit_candidate_set",
     "available_splice_backends",
     "rerank_by_expression",
+    "resolve_splice_backend",
     "run_frontier",
     "run_library",
     "run_optimize",
+    "run_splice_crosscheck",
     "run_tracks",
     "run_validate",
     "summarize",

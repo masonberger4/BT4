@@ -26,6 +26,43 @@ from bt4.api import InfeasibleError
 
 __all__ = ["main"]
 
+_SPLICE_BACKENDS: tuple[str, ...] = ("assp", "pwm", "pangolin", "spliceai")
+"""Backends selectable by ``--check-splice`` / ``--splice-backend``.
+
+``assp`` is the opt-in **online** cross-check (needs the ``bt4[assp]`` extra);
+``pwm`` is the offline PWM baseline; ``pangolin`` / ``spliceai`` are the wrapped
+CNNs (used only when the user's own install and weights are present).
+"""
+
+
+def _print_splice_crosscheck(dna: str, backend: str) -> None:
+    """Run the opt-in splice cross-check on ``dna`` and print it to stderr.
+
+    Written to **stderr** (never stdout) so stdout stays a clean FASTA / JSON
+    artifact and the cross-check's numbers -- network-derived for ASSP -- are kept
+    out of any captured, reproducible-from-manifest output. The pass is advisory and
+    can never fail the run (an unavailable backend degrades gracefully).
+    """
+    cc = api.splice_crosscheck(dna, backend=backend)
+    tags = ["network-derived"] if cc.network_derived else ["local"]
+    tags.append("calibrated" if cc.calibrated else "UNCALIBRATED")
+    lines = [
+        f"--- splice cross-check [{cc.backend}] ---",
+        "  " + ", ".join(tags) + "; advisory only, NOT part of the run manifest",
+    ]
+    if not cc.available:
+        lines.append(f"  unavailable: {cc.reason}")
+        lines.append("  (an opt-in splice cross-check outage never fails the run)")
+    else:
+        lines.append(f"  pooled risk {cc.pooled_risk:.3f} (top-{cc.top_k} log-odds; uncalibrated)")
+        lines.append(f"  sites       {len(cc.sites)} predicted")
+        for site in cc.sites:
+            cls = f"  {site.site_class}" if site.site_class else ""
+            lines.append(
+                f"    {site.kind:8} pos {site.position:>5}  score {site.score:.3f}{cls}"
+            )
+    print("\n".join(lines), file=sys.stderr)
+
 
 def _resolve_dinuc_budget(
     args: argparse.Namespace,
@@ -191,6 +228,11 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 def _cmd_optimize(args: argparse.Namespace) -> int:
     config = _build_config(args)
     result = api.optimize(args.protein, config)
+    # Opt-in, out-of-loop splice cross-check on the DELIVERED sequence (never in the
+    # optimizer). Printed to stderr so it runs in every output mode without touching
+    # the stdout FASTA/JSON artifact (its ASSP numbers stay out of the manifest).
+    if args.check_splice:
+        _print_splice_crosscheck(result.dna, args.check_splice)
     if args.fasta:
         sys.stdout.write(api.to_fasta(result.dna, header=args.header))
         return 0
@@ -284,6 +326,8 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     print(f"feasible   {report.is_feasible}")
     for v in report.violations:
         print(f"  {v.severity.value:4} {v.constraint} [{v.start}:{v.end}] {v.detail}")
+    if args.splice_backend:
+        _print_splice_crosscheck(args.dna, args.splice_backend)
     return 0
 
 
@@ -378,6 +422,11 @@ def _parser() -> argparse.ArgumentParser:
                        help="min total UpA (TA) count over the CDS (exact budget DP)")
     p_opt.add_argument("--upa-max", type=int, default=None, dest="upa_max",
                        help="max total UpA (TA) count over the CDS")
+    p_opt.add_argument("--check-splice", choices=_SPLICE_BACKENDS, default=None,
+                       dest="check_splice",
+                       help="opt-in, out-of-loop splice cross-check of the delivered "
+                       "sequence (advisory, printed to stderr; 'assp' is an online "
+                       "service and needs the bt4[assp] extra)")
     _add_common(p_opt)
     p_opt.set_defaults(func=_cmd_optimize)
 
@@ -399,6 +448,11 @@ def _parser() -> argparse.ArgumentParser:
 
     p_val = sub.add_parser("validate", help="audit a coding sequence")
     p_val.add_argument("dna", help="ACGT coding sequence")
+    p_val.add_argument("--splice-backend", choices=_SPLICE_BACKENDS, default=None,
+                       dest="splice_backend",
+                       help="opt-in, out-of-loop splice cross-check of the sequence "
+                       "(advisory, printed to stderr; 'assp' is an online service and "
+                       "needs the bt4[assp] extra)")
     _add_common(p_val)
     p_val.set_defaults(func=_cmd_validate)
 

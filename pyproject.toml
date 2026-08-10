@@ -46,7 +46,11 @@ splice-spliceai = ["tensorflow>=2.6"]
 expression-ribonn = ["torch>=1.13", "pandas>=1.5"]
 app = ["PySide6>=6.7", "pyqtgraph>=0.13"]         # BT4 Studio native desktop app
 service = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]  # optional headless HTTP API (+ test client)
-assp = ["httpx>=0.27"]                            # opt-in online ASSP cross-check
+# Opt-in, out-of-loop ASSP splice cross-check (online service; --splice-backend
+# assp / --check-splice assp). Network-derived, cached, rate-limited, never in the
+# optimizer loop, excluded from the manifest; see bt4.biomodels.splice.assp. This
+# extra pins only the HTTP client BT4 lazily imports.
+assp = ["httpx>=0.27"]
 packaging = ["pyinstaller>=6.0"]                  # build standalone BT4 Studio bundles
 dev = [
   "pytest>=8.0",

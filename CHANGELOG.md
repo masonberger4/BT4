@@ -7,6 +7,39 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **Opt-in, out-of-loop ASSP splice cross-check** (`bt4.api.splice_crosscheck` /
+  `bt4.pipeline.run_splice_crosscheck`, `bt4.biomodels.splice.AsspSplicePredictor`)
+  — a **network** validator that runs the online ASSP service (Alternative Splice
+  Site Predictor, Wang & Marín 2006) over an already-delivered sequence behind the
+  existing `SplicePredictor` contract, closing the last non-human-gated gap in the
+  splice subsystem (CLAUDE.md §6, §10.15). BT3's fatal splice bug was scraping this
+  exact service **in the optimizer's inner loop as its only splice path**; BT4
+  inverts every property of that mistake, structurally:
+  - **Opt-in and out-of-the-inner-loop.** Requested explicitly by name and gated
+    behind the `bt4[assp]` extra (httpx, lazily imported); it runs only as a final
+    audit / validation pass on the delivered sequence, never per optimizer move, and
+    is **never** returned by `splice.default()` or `available_splice_backends()`.
+  - **Never blocking.** Rate-limited with exponential backoff and cached by
+    sequence hash; if the service is unreachable or returns a garbled body the raw
+    predictor raises an `AsspError`, but `run_splice_crosscheck` catches it and
+    reports "unavailable" — a cross-check outage can never fail an optimization. The
+    same graceful path covers a wrapped CNN's missing deps.
+  - **Network-derived and non-reproducible.** `network_derived` is `True` and
+    `calibrated` is `False`; ASSP numbers are excluded from the
+    reproducible-from-manifest guarantee and reported as a separate advisory section
+    (the CLI prints them to **stderr**, never into the stdout FASTA/JSON artifact or
+    a `Result` manifest).
+  - **Wired through the CLI** — `bt4 validate --splice-backend assp` and `bt4
+    optimize --check-splice assp` (both flags also accept `pwm` / `pangolin` /
+    `spliceai` for an offline or installed-CNN cross-check).
+  - **CI never makes a live call.** The adapter is driven from committed **offline
+    fixtures** (`tests/fixtures/assp/`, `FixtureAsspTransport`, selected via
+    `$BT4_ASSP_FIXTURE_DIR`). Honest caveat: the live wire format is *unverified
+    against the service* (unreachable during development), so the fixtures are
+    *synthetic ASSP-format reports*, not real captures — the same "no bundled panel
+    ships" posture as the wrapped CNNs.
+
 ### Fixed
 - **RiboNN adapter: correct ensemble aggregation and honest empty-UTR guard.** The
   first end-to-end runs against real RiboNN weights surfaced two integration bugs.

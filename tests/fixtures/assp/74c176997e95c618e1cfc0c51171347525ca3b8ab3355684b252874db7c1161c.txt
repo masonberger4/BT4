@@ -1,0 +1,10 @@
+ASSP - Alternative Splice Site Predictor (Wang & Marin, 2006)
+Submitted sequence length: 25 nt
+
+Predicted splice sites:
+position	site type	score	confidence	sequence
+5	constitutive donor	8.10	0.95	GGCGA
+12	cryptic acceptor	6.20	0.91	TCGAT
+19	alternative isoform donor	5.70	0.90	TCGTA
+
+End of ASSP report.

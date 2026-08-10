@@ -206,6 +206,8 @@ bt4 optimize MAALKHETQW --fasta                               # FASTA to stdout
 bt4 optimize MAALKHETQW --json                                # JSON + manifest
 bt4 library MAALKHETQW --n 20 --temperature 1.0               # sample a library (SAMPLED, not optimized)
 bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
+bt4 validate ATGGCC...TAA --splice-backend assp              # opt-in online ASSP cross-check (advisory, to stderr)
+bt4 optimize MAALKHETQW --check-splice assp                  # cross-check the delivered sequence with ASSP
 bt4 tracks ATGGCC...TAA --nt-window 50                        # per-site GC/CpG/%MinMax tracks
 bt4 organisms   # codon tables    bt4 enzymes   # enzymes    bt4 presets   # forbidden presets
 bt4 build-table my_cds.fasta --organism my_species --out .    # table from real CDS
@@ -291,6 +293,7 @@ package/weights yourself:
 | **Pangolin** splice (GPL-3.0) | `bt4[splice-pangolin]` | clone [tkzeng/Pangolin](https://github.com/tkzeng/Pangolin) + its weights |
 | **SpliceAI** splice (PolyForm Strict code, CC BY-NC weights) | `bt4[splice-spliceai]` | `pip install spliceai` (ships weights) |
 | **RiboNN** expression (Sanofi non-commercial) | `bt4[expression-ribonn]` | clone [Sanofi-Public/RiboNN](https://github.com/Sanofi-Public/RiboNN) + Zenodo weights, point BT4 at them via `$BT4_RIBONN_DIR` |
+| **ASSP** splice cross-check (online) | `bt4[assp]` | none — an opt-in call to the online ASSP service (`--splice-backend assp` / `--check-splice assp`); network-derived, out-of-loop, never-blocking, excluded from the manifest |
 
 Each wrapped model **verifies its weights against a pinned SHA-256 before
 loading** and ships `calibrated=False` until its fidelity/acceptance gate is

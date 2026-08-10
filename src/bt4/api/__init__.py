@@ -28,10 +28,12 @@ from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_f
 from bt4.pipeline import (
     Candidate,
     CandidateSet,
+    CrossCheckSite,
     FrontierResult,
     InfeasibleError,
     LibraryResult,
     OptimizeConfig,
+    SpliceCrossCheck,
     Track,
     TracksResult,
     ValidationReport,
@@ -39,9 +41,11 @@ from bt4.pipeline import (
     audit_candidate_set,
     available_splice_backends,
     rerank_by_expression,
+    resolve_splice_backend,
     run_frontier,
     run_library,
     run_optimize,
+    run_splice_crosscheck,
     run_tracks,
     run_validate,
     summarize,
@@ -51,6 +55,7 @@ __all__ = [
     "AMINO_ACIDS",
     "Candidate",
     "CandidateSet",
+    "CrossCheckSite",
     "ExpressionPredictor",
     "ExpressionResult",
     "ForbiddenPreset",
@@ -61,6 +66,7 @@ __all__ = [
     "Result",
     "Severity",
     "SpliceAuditReport",
+    "SpliceCrossCheck",
     "SpliceFlag",
     "Track",
     "TracksResult",
@@ -83,9 +89,11 @@ __all__ = [
     "parse_fasta",
     "read_fasta",
     "rerank_by_expression",
+    "resolve_splice_backend",
     "result_to_dict",
     "result_to_json",
     "splice_audit",
+    "splice_crosscheck",
     "summarize",
     "to_fasta",
     "tracks",
@@ -341,4 +349,47 @@ def splice_audit(
         predictors=predictors,
         threshold=threshold,
         match_window=match_window,
+    )
+
+
+def splice_crosscheck(
+    dna: str,
+    *,
+    backend: str = "assp",
+    predictor: SplicePredictor | None = None,
+    threshold: float = 0.5,
+    top_k: int = 3,
+) -> SpliceCrossCheck:
+    """Cross-check one delivered sequence with an opt-in, out-of-loop splice backend.
+
+    The *final audit / validation pass* of BT4's splice story (CLAUDE.md §6): runs
+    the named backend over ``dna`` and reports its predicted cryptic-splice sites and
+    pooled risk. It is what ``bt4 validate --splice-backend`` and ``bt4 optimize
+    --check-splice`` call. **Never blocking:** a backend failure -- an **ASSP** outage
+    or garbled response, or a wrapped CNN's missing deps / weights -- is caught and
+    reported as ``available is False`` with the reason, so a cross-check can never
+    fail a run; only a genuinely invalid sequence (non-ACGT) raises. For ASSP the
+    result is stamped ``network_derived is True`` and its numbers are **excluded from
+    the reproducible-from-manifest guarantee** (report them as a separate advisory
+    section, never in a :class:`Result` audit or manifest).
+
+    Args:
+        dna: The delivered coding sequence to audit.
+        backend: Backend to construct when ``predictor`` is not given -- ``"assp"``
+            (the opt-in online cross-check, requires the ``bt4[assp]`` extra),
+            ``"pwm"`` (the offline baseline), or ``"pangolin"`` / ``"spliceai"``
+            (the wrapped CNNs, when installed).
+        predictor: An explicit backend overriding ``backend`` (e.g. a
+            fixture-backed ASSP predictor).
+        threshold: Localization threshold for dense-track backends (heuristic).
+        top_k: Pooling depth for the reported pooled risk.
+
+    Returns:
+        A :class:`~bt4.pipeline.splice_crosscheck.SpliceCrossCheck`.
+
+    Raises:
+        ValueError: If ``dna`` is empty / non-ACGT, or ``backend`` is unknown.
+    """
+    return run_splice_crosscheck(
+        dna, backend=backend, predictor=predictor, threshold=threshold, top_k=top_k
     )

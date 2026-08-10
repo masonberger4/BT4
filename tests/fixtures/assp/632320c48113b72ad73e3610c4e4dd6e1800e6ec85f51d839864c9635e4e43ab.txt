@@ -1,0 +1,9 @@
+ASSP - Alternative Splice Site Predictor (Wang & Marin, 2006)
+Submitted sequence length: 18 nt
+
+Predicted splice sites:
+position	site type	score	confidence	sequence
+
+No splice sites predicted above the reporting thresholds.
+
+End of ASSP report.
