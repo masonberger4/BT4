@@ -4,63 +4,36 @@ Guidance for Claude Code (and humans) building **BT4**, the from-scratch
 successor to BT3. This file is the constitution of the new repository: read it
 before writing code, and keep it current as the architecture evolves.
 
-> Status: **Phases 0-2 complete; Phase 3 groundwork landed; Phase 5 opened.** The
-> pure
-> `domain` layer, provenance manifest, packaging, layering contract, and CI are
-> in place, and on top of them an **honest exact-DP core** now ships: a codon
-> trellis with true per-constraint context and a real optimality certificate,
-> the `CaiTerm`/`GcProximityTerm` objectives and `Homopolymer`/`ForbiddenMotif`
-> constraints (with their `delta==score` and `ok_suffix⇔validate` property
-> tests), a **CAI/GC Pareto frontier**, the stable `bt4.api`, a `bt4` CLI, and
-> the first cut of **BT4 Studio** (the PySide6 desktop app). Phase 2 has since
-> added codon-pair/ramp/CpG/%MinMax objectives, tandem/inverted-repeat plus
-> **max-GC-run** and dispersed **max-repeat-length** constraints, named
-> **forbidden-sequence presets**, and **two budget backends** — OR-Tools CP-SAT
-> and an honest **Lagrangian/exact-bucketed budget DP** that keeps local
-> constraints under a global budget; that budget DP is now **context-aware**, so
-> the final Phase 2 item — **CpG/UpA whole-sequence count budgets** — ships as an
-> exact, proven-optimal dinucleotide-count budget. **tAI has since landed on real
-> GtRNAdb tRNA data for eight organisms**, and Phase 3 groundwork is in: the
-> `FoldingModel` (ViennaRNA + labeled baseline) and `SplicePredictor` (labeled PWM
-> baseline) contracts, the incremental SA refinement engine (with a
-> global-constraint gate), and per-site risk tracks plotted in BT4 Studio.
-> **Phase 5 has opened** with an honest **library / degenerate-design mode** (a
-> deterministic codon-distribution sampler with a `SAMPLED` certificate, not an
-> optimizer). Two more native `bt4_native` primitives (`max_gc_run`,
-> `longest_repeat`) also landed. **Both wrapped published splice backends** have
-> now landed too: `PangolinSplicePredictor` (Pangolin, GPL-3.0, PyTorch) and
-> `SpliceAiSplicePredictor` (SpliceAI, PolyForm Strict code + CC BY-NC weights,
-> TensorFlow), each driving the user's own installed package (*not* bundled;
-> lazily imported like ViennaRNA), hash-pinned and reproducing upstream scores
-> bit-for-bit, shipped `calibrated=False` pending their integration-fidelity
-> gates, with a two-backend agreement harness that makes agreement between two
-> real CNNs an uncertainty signal. The **full Rust trellis port** has also landed
-> (`bt4_native.trellis_solve`, regime-gated with a byte-identical pure-Python
-> fallback, amortized across the Pareto frontier). The **wrapped RiboNN expression
-> head** has landed too (`RiboNNExpressionModel`, Sanofi non-commercial, driven
-> from the user's own checkout, hash-pinned, `calibrated=False` until its
-> CDS-variant gate) and has now had its **first real end-to-end runs against the
-> licensed weights**, which validated the adapter and fixed two live-only
-> integration bugs (ensemble row-per-model aggregation; a required-non-empty-UTR
-> guard). BT4 now also supports **Python 3.10** (was 3.11+), so RiboNN installs into
-> the same environment as its `torch==1.13.1` stack. The **opt-in, out-of-loop
-> ASSP splice cross-check** has now landed too (`AsspSplicePredictor` +
-> `run_splice_crosscheck` + `bt4 validate --splice-backend assp` / `bt4 optimize
-> --check-splice assp`): a *network* validator on the delivered sequence, opt-in
-> behind the `bt4[assp]` extra, never in the optimizer loop, cached by sequence
-> hash, rate-limited with backoff, never-blocking (an outage degrades gracefully,
-> never fails a run), and stamped `network_derived`/`calibrated=False` so its
-> numbers stay out of the reproducible-from-manifest guarantee — CI drives it from
-> committed synthetic offline fixtures, never a live call (§6, §10.15). Still ahead:
-> recording the fidelity/acceptance gates to promote splice + expression to
-> `calibrated=True`, and packaged installers — see §9. This document was written
-> after a full review of the BT3 codebase and *every* BT3 branch (`master`,
-> `almost-there`, `gemini`, `streamlit`, and the merged
+> **This file is the durable constitution** — the thesis (§1), architecture (§3),
+> the three contracts (§4), the honesty invariants (§5), scientific scope (§6),
+> engineering rules (§7), and the BT3 anti-patterns (§10). It changes rarely and
+> deliberately, and it is **not** where per-PR status is tracked.
+>
+> **Live status and the next-task queue live in
+> [`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md)** — a machine-scannable component
+> board + an ordered, precondition-tagged queue with a single "start here". Shipped
+> history lives in [`CHANGELOG.md`](CHANGELOG.md). Read NEXT_SESSION.md to learn
+> *where we are and what to build next*; read this file to learn *the rules*. §9
+> below is the durable **phase intent**, not the running status. No status fact
+> should be written in both places.
+>
+> **Current phase (one line):** Phases 0–2 complete · Phase 3 groundwork landed ·
+> Phase 4 not started (contract scaffold only) · Phase 5 opened. The honest
+> exact-DP + Pareto core, the Rust trellis port, the wrapped-but-**uncalibrated**
+> RiboNN/SpliceAI/Pangolin models, the opt-in out-of-loop **ASSP** cross-check, and
+> the full expression/splice design flow (now surfaced in BT4 Studio’s *Candidates
+> & splice audit* tab) are all on `main`; what remains is data/human-gated
+> calibration plus autonomous polish/breadth — see NEXT_SESSION.md.
+>
+> This document was written after a full review of the BT3 codebase and *every*
+> BT3 branch (`master`, `almost-there`, `gemini`, `streamlit`, and the merged
 > `claude/ultracode-app-redesign` line); the lessons are folded in below.
 >
-> **Keep this current.** CLAUDE.md is the constitution: when a phase lands, a
-> contract changes, or the architecture evolves, update this file *in the same
-> change* — a stale constitution is a BT3 anti-pattern (§10.11).
+> **Keep the split clean.** When a phase lands, a contract changes, or the
+> architecture evolves, update the durable rule *here in the same change* (§10.11)
+> — but put the *status* in NEXT_SESSION.md, not in a running paragraph here. A
+> stale constitution, and a fact duplicated across two docs that then drift, are
+> both BT3 anti-patterns (§10.11, §2).
 
 ---
 
@@ -553,6 +526,12 @@ is a requirement, not a nice-to-have.
 ---
 
 ## 9. Phased roadmap
+
+> This section is the durable **phase intent** and a narrative record of what each
+> phase established. For **live status and the next task**, read
+> [`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md) (the single source of truth for
+> volatile state) — do not treat the ✅/🔶 markers below as the authoritative
+> current board.
 
 - **Phase 0 — Foundations & honesty scaffolding.** ✅ **Done.** Repo, strict
   layering + import-linter, CI (lint/type/test/determinism), pure `domain` with

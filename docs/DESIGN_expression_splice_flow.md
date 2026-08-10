@@ -1,13 +1,15 @@
 # Design: expression-aware, splice-screened design flow
 
-> **Status: PROPOSED DESIGN — not yet implemented.** This document records an
-> agreed pipeline for wiring cryptic-splice screening and RiboNN expression
-> ranking into BT4's design flow (and BT4 Studio). Nothing here ships yet; it is
-> the spec the implementation PRs will build to. Where it names existing pieces
-> (the exact-DP frontier, `anneal_refine`, the wrapped SpliceAI/Pangolin/RiboNN
-> backends, `api.library`, `rerank_by_expression`) those already exist; the
-> *stages that compose them* below do not. [`../CLAUDE.md`](../CLAUDE.md) is
-> authoritative — keep this in sync (§10.11).
+> **Status: IMPLEMENTED through step 5 (only step 6 remains, calibration-gated).**
+> This document is the design-of-record for wiring cryptic-splice screening and
+> RiboNN expression ranking into BT4's design flow (and BT4 Studio). The
+> "Implementation phasing" section below tracks which steps have shipped: steps
+> 1–5 (batched RiboNN scoring, the splice-consensus motif constraint, candidate
+> assembly + rerank, the localize-and-flag splice audit, and the BT4 Studio UI)
+> are **landed**; step 6 (auto-edit / auto-select) is deferred until a backend is
+> `calibrated=True`. For live status read
+> [`NEXT_SESSION.md`](NEXT_SESSION.md); [`../CLAUDE.md`](../CLAUDE.md) is the
+> authoritative constitution — keep this in sync (§10.11).
 
 ## Purpose
 
@@ -182,7 +184,18 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
    editing**. Raw-sequence core in `biomodels/splice/audit.py`; `CandidateSet`
    adapter + `available_splice_backends()` in `pipeline/splice_audit.py`.
 5. **BT4 Studio UI** — UTR fields, the two toggles, the annotated frontier +
-   ranked table with uncalibrated badges, all on the background thread.
+   ranked table with uncalibrated badges, all on the background thread. ✅
+   **Landed** — the **Candidates & splice audit** tab
+   (`app/worker.py::CandidatesWorker`, `app/studio.py`) runs `api.candidates` →
+   `api.splice_audit` on a background `QThread` and renders the ranked,
+   honestly-labeled candidate set (delivered pick starred; per-member source /
+   CAI / GC / expression+units / calibration / hard-violation / **distinct**
+   splice-site counts) with two advisory banners. Same calibrated-gating honesty
+   as the API: an uncalibrated head is shown as **discovery order, not a ranking**
+   with the solver's pick starred and scores annotating only; the splice banner
+   leads with **UNCALIBRATED (advisory)** when `all_calibrated` is `False`. Every
+   table metric is recomputed per candidate from its own DNA (invariant #2); an
+   opt-in toggle routes the installed SpliceAI/Pangolin CNNs into the audit.
 6. **(Gated, future)** splice **auto-edit** and RiboNN **auto-select**, each
    unlocked only when its backend passes its fidelity/acceptance gate.
 
