@@ -93,6 +93,29 @@ def test_crosscheck_cnn_degrades_without_weights() -> None:
     assert cc.network_derived is False
 
 
+class _WeightMismatchPredictor:
+    """A fake CNN backend that raises ValueError like a failed SHA-256 weight pin."""
+
+    name = "fake-cnn"
+    calibrated = False
+
+    def score_sequence(self, dna: str) -> object:
+        raise ValueError("weight file failed its SHA-256 pin; refusing to load")
+
+    def delta_splicing(self, designed: str, reference: str) -> float:
+        return 0.0
+
+
+def test_crosscheck_degrades_on_weight_integrity_valueerror() -> None:
+    # A wrapped CNN's hash-pin refusal raises ValueError; the cross-check must
+    # DEGRADE (never fail the run), not propagate -- the guarantee that a corrupted
+    # weight file can never turn a successful optimize into a failure (§10.15).
+    cc = run_splice_crosscheck(SEQ_WITH_SITES, predictor=_WeightMismatchPredictor())  # type: ignore[arg-type]
+    assert cc.available is False
+    assert cc.reason is not None
+    assert "SHA-256" in cc.reason
+
+
 def test_resolve_splice_backend_names() -> None:
     assert isinstance(resolve_splice_backend("assp"), AsspSplicePredictor)
     assert isinstance(resolve_splice_backend("pwm"), ConsensusPwmSplicePredictor)
@@ -112,6 +135,13 @@ def test_crosscheck_invalid_dna_raises() -> None:
     # A bad sequence is a CALLER error, not a service outage -> it raises.
     with pytest.raises(ValueError):
         run_splice_crosscheck("ATGZ", backend="pwm")
+
+
+def test_crosscheck_bad_top_k_raises_not_degrades() -> None:
+    # top_k is a CALLER error and must surface up front -- NOT be swallowed by the
+    # degrade path (which also catches ValueError, for a CNN weight-hash refusal).
+    with pytest.raises(ValueError):
+        run_splice_crosscheck(SEQ_WITH_SITES, backend="pwm", top_k=0)
 
 
 def test_api_splice_crosscheck_delegates() -> None:
@@ -136,6 +166,11 @@ def test_cli_validate_assp_available(
     assert "splice cross-check [assp]" in captured.err
     assert "network-derived" in captured.err
     assert "cryptic" in captured.err
+    # An AVAILABLE network-derived backend's numbers must NOT leak into stdout
+    # (they are excluded from the reproducible artifact / manifest).
+    assert "network-derived" not in captured.out
+    assert "cryptic" not in captured.out
+    assert "pooled risk" not in captured.out
 
 
 def test_cli_validate_assp_degrades_rc0(

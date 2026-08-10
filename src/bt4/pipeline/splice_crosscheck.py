@@ -52,8 +52,12 @@ __all__ = [
 
 # Backend failures the cross-check turns into a graceful "unavailable" report
 # instead of raising: an ASSP outage / garbled response (AsspError), or a wrapped
-# CNN's missing deps / weights. A ValueError (invalid sequence) is a CALLER error
-# and is deliberately absent -- it is raised up front by validate_dna.
+# CNN's missing deps / weights (ModuleNotFoundError / FileNotFoundError / KeyError /
+# OSError / RuntimeError -- and ValueError, which a CNN's SHA-256 weight-pin
+# mismatch raises). ValueError is safe to catch HERE because the ONE ValueError a
+# caller error would cause -- an invalid sequence -- is raised up front by
+# validate_dna, before the try; any ValueError inside the scored path is therefore
+# a backend-integrity failure and must degrade, never fail the run (§10.15).
 _DEGRADE_ERRORS: tuple[type[BaseException], ...] = (
     AsspError,
     ModuleNotFoundError,
@@ -61,6 +65,7 @@ _DEGRADE_ERRORS: tuple[type[BaseException], ...] = (
     FileNotFoundError,
     KeyError,
     OSError,
+    ValueError,
 )
 
 DEFAULT_CROSSCHECK_THRESHOLD: float = 0.5
@@ -214,7 +219,13 @@ def _sites_from_predictor(
             )
             for s in sites_method(dna)
         )
-    combined = not any(result.acceptor)
+    # "Combined" (one P(splice) track, acceptor all-zero) is a property of the
+    # BACKEND, not of one sequence's scores -- so decide it by backend identity
+    # (Pangolin is the only combined cross-check backend), never by the data. A
+    # data heuristic (`not any(result.acceptor)`) would mislabel a separated
+    # backend's donor sites as "splice" on any sequence that happens to yield no
+    # acceptor signal (e.g. a short one).
+    combined = isinstance(predictor, PangolinSplicePredictor)
     out: list[CrossCheckSite] = []
     out += _localize_track(result.donor, "splice" if combined else "donor", threshold)
     if not combined:
@@ -252,9 +263,16 @@ def run_splice_crosscheck(
         A :class:`SpliceCrossCheck`.
 
     Raises:
-        ValueError: If ``dna`` is empty / non-ACGT, or ``backend`` is unknown.
+        ValueError: If ``dna`` is empty / non-ACGT, ``backend`` is unknown, or
+            ``top_k`` is not positive.
     """
     seq = validate_dna(dna)
+    # Validate the caller's top_k up front, BEFORE the try: pooled_risk would raise
+    # ValueError for a non-positive top_k, and ValueError is in _DEGRADE_ERRORS (a
+    # CNN's weight-hash refusal raises it) -- so a genuine top_k caller error must
+    # be surfaced here rather than silently degraded inside the scored path.
+    if top_k <= 0:
+        raise ValueError(f"top_k must be a positive integer, got {top_k}")
     pred = predictor if predictor is not None else resolve_splice_backend(backend)
     network_derived = bool(getattr(pred, "network_derived", False))
     try:

@@ -200,10 +200,15 @@ def _split_columns(line: str) -> list[str]:
 
     ASSP's tabular report is tab-delimited; a space-padded fixed-width variant is
     also tolerated (runs of two or more spaces separate columns) so a single-spaced
-    ``site type`` label is not split mid-token.
+    ``site type`` label is not split mid-token. On the tab path, **empty cells are
+    preserved** (only stripped): the parser maps columns by header index, so
+    dropping an empty field would shift every later column left and misalign the
+    row against the header. The space-padded path cannot represent an empty middle
+    column (a run of spaces is a single delimiter), so its stray leading/trailing
+    empties are dropped.
     """
     if "\t" in line:
-        return [cell.strip() for cell in line.split("\t") if cell.strip() != ""]
+        return [cell.strip() for cell in line.split("\t")]
     return [cell.strip() for cell in re.split(r"\s{2,}", line.strip()) if cell.strip() != ""]
 
 

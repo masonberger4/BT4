@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
 
+from bt4.biomodels.splice import assp as assp_mod
 from bt4.biomodels.splice import default
 from bt4.biomodels.splice.assp import (
     FIXTURE_DIR_ENV_VAR,
@@ -157,6 +159,19 @@ def test_parse_position_out_of_range_raises() -> None:
         parse_assp_report(report, seq_len=25)
 
 
+def test_parse_tab_row_with_empty_interior_field_stays_aligned() -> None:
+    # An empty INTERIOR tab field must not shift columns left: the parser maps by
+    # header index, so dropping it would misalign score/confidence/site-type.
+    report = (
+        "position\tflag\tsite type\tscore\tconfidence\n"
+        "5\t\tdonor\t8.0\t0.95\n"  # empty 'flag' column
+    )
+    (site,) = parse_assp_report(report, seq_len=25)
+    assert (site.position, site.kind) == (4, "donor")
+    assert site.score == pytest.approx(8.0)
+    assert site.confidence == pytest.approx(0.95)
+
+
 def test_parse_skips_prose_rows() -> None:
     # A footer line with the right column count but a non-integer position column
     # is prose, silently skipped -- not a malformed site row.
@@ -215,6 +230,90 @@ def test_caching_transport_caches_by_hash() -> None:
     cache.fetch(s1.lower())  # same sequence, different casing -> same key -> hit
     cache.fetch(s2)  # different sequence -> miss
     assert inner.calls == [s1, s2]
+
+
+class _FlakyTransport:
+    """A fake transport that fails its first fetch, then succeeds (per sequence)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch(self, dna: str) -> str:
+        self.calls += 1
+        if self.calls == 1:
+            raise AsspUnavailableError("transient outage")
+        return "position\tsite type\tscore\tconfidence\n1\tdonor\t8.0\t0.9\n"
+
+    def available(self) -> bool:
+        return True
+
+
+def test_caching_does_not_memoize_failure() -> None:
+    # A failed fetch must NOT be cached, or a transient outage would become a
+    # permanent "unavailable" for that sequence (defeating retry recovery).
+    inner = _FlakyTransport()
+    cache = CachingAsspTransport(inner)
+    with pytest.raises(AsspUnavailableError):
+        cache.fetch("ATGAAATTT")  # call 1 raises, nothing cached
+    body = cache.fetch("ATGAAATTT")  # call 2 re-invokes inner and succeeds
+    assert "donor" in body
+    cache.fetch("ATGAAATTT")  # call 3 is a cache hit -- inner not called again
+    assert inner.calls == 2
+
+
+def _fake_httpx(script: list[str]) -> tuple[object, dict[str, int]]:
+    """A minimal stand-in for the ``httpx`` module for the live-transport tests.
+
+    ``script`` is a list of outcomes consumed one per ``post`` call: the sentinel
+    ``"RAISE"`` raises the fake ``HTTPError`` (a retryable transient), any other
+    string is returned as the response body.
+    """
+    calls = {"n": 0}
+
+    class HTTPError(Exception):
+        pass
+
+    def post(url: str, data: object = None, timeout: object = None) -> object:
+        i = calls["n"]
+        calls["n"] += 1
+        outcome = script[min(i, len(script) - 1)]
+        if outcome == "RAISE":
+            raise HTTPError("transient")
+        return types.SimpleNamespace(text=outcome, raise_for_status=lambda: None)
+
+    fake = types.SimpleNamespace(post=post, HTTPError=HTTPError)
+    return fake, calls
+
+
+def test_http_transport_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake, calls = _fake_httpx(["position\tsite type\tscore\tconfidence\n1\tdonor\t8\t0.9\n"])
+    monkeypatch.setattr(assp_mod, "_import_httpx", lambda: fake)
+    t = HttpAsspTransport(min_interval_s=0.0, _sleep=lambda _s: None)
+    assert t.available() is True
+    body = t.fetch("ATGAAATTT")
+    assert "donor" in body
+    assert calls["n"] == 1
+
+
+def test_http_transport_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake, calls = _fake_httpx(["RAISE", "RAISE", "recovered body"])
+    monkeypatch.setattr(assp_mod, "_import_httpx", lambda: fake)
+    slept: list[float] = []
+    t = HttpAsspTransport(
+        min_interval_s=0.0, max_attempts=4, backoff_base_s=2.0, _sleep=slept.append
+    )
+    body = t.fetch("ATGAAATTT")
+    assert body == "recovered body"
+    assert calls["n"] == 3  # two transient failures, third try succeeds
+    assert slept == [2.0, 4.0]  # exponential backoff between the retries
+
+
+def test_http_transport_exhausts_and_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake, _calls = _fake_httpx(["RAISE"])
+    monkeypatch.setattr(assp_mod, "_import_httpx", lambda: fake)
+    t = HttpAsspTransport(min_interval_s=0.0, max_attempts=2, _sleep=lambda _s: None)
+    with pytest.raises(AsspUnavailableError):
+        t.fetch("ATGAAATTT")
 
 
 def test_default_transport_selects_fixture_when_env_set(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -367,6 +466,15 @@ def test_score_sequence_empty_result_is_all_zero() -> None:
 
 def test_delta_splicing_is_zero_for_identical() -> None:
     assert _fixture_predictor().delta_splicing(SEQ_WITH_SITES, SEQ_WITH_SITES) == 0.0
+
+
+def test_delta_splicing_orientation_is_larger_is_better() -> None:
+    # The load-bearing orientation: pooled_risk(reference) - pooled_risk(designed).
+    model = _fixture_predictor()
+    # designed = NO_SITES (less risk) vs reference = WITH_SITES -> POSITIVE (better).
+    assert model.delta_splicing(SEQ_NO_SITES, SEQ_WITH_SITES) > 0.0
+    # designed = WITH_SITES (more risk) vs reference = NO_SITES -> NEGATIVE (worse).
+    assert model.delta_splicing(SEQ_WITH_SITES, SEQ_NO_SITES) < 0.0
 
 
 def test_raw_predictor_raises_when_unavailable() -> None:
