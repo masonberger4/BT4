@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from html import escape
 from itertools import pairwise
 
 import pyqtgraph as pg
@@ -58,6 +59,9 @@ _METRIC_ROWS = (
 # Above this residue count, warn before starting: the exact frontier sweep can
 # take a noticeable amount of time (the run is cancelable either way).
 _LONG_PROTEIN_WARN = 500
+
+# How long a close waits for each still-running worker thread (see closeEvent).
+_CLOSE_WAIT_MS = 5000
 
 _LIBRARY_COLS = ("#", "CAI", "GC %", "Hard viol.", "Soft viol.", "Certificate")
 
@@ -1143,28 +1147,34 @@ class StudioWindow(QtWidgets.QMainWindow):
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("&File")
-        self._add_action(
+        self.act_export_fasta = self._add_action(
             file_menu, "Export &FASTA...", self._export_fasta, "Ctrl+E"
         )
-        self._add_action(file_menu, "Export &JSON...", self._export_json, "Ctrl+J")
-        self._add_action(
+        self.act_export_json = self._add_action(
+            file_menu, "Export &JSON...", self._export_json, "Ctrl+J"
+        )
+        self.act_export_library = self._add_action(
             file_menu, "Export &library FASTA...", self._export_library, "Ctrl+Shift+E"
         )
         file_menu.addSeparator()
         self._add_action(file_menu, "&Quit", self.close, "Ctrl+Q")
 
         run_menu = menubar.addMenu("&Run")
-        self._add_action(run_menu, "&Optimize", self._start_optimize, "Ctrl+R")
-        self._add_action(run_menu, "&Cancel", self._cancel_optimize, "Esc")
+        self.act_optimize = self._add_action(
+            run_menu, "&Optimize", self._start_optimize, "Ctrl+R"
+        )
+        self.act_cancel = self._add_action(
+            run_menu, "&Cancel", self._cancel_optimize, "Esc"
+        )
         run_menu.addSeparator()
-        self._add_action(
+        self.act_rank = self._add_action(
             run_menu, "Rank && &audit candidates", self._start_candidates, "Ctrl+K"
         )
-        self._add_action(
+        self.act_library = self._add_action(
             run_menu, "&Sample library", self._start_library, "Ctrl+L"
         )
         run_menu.addSeparator()
-        self._add_action(
+        self.act_assp = self._add_action(
             run_menu, "&Validate with ASSP (online)", self._start_crosscheck
         )
 
@@ -1470,6 +1480,34 @@ class StudioWindow(QtWidgets.QMainWindow):
             return 0.0, ()
         return 1.0, cds
 
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """Shut running workers down before the window (and its threads) die.
+
+        Qt aborts the process if a ``QThread`` is destroyed while still running,
+        and closing the window destroys the threads parented to it. So on close
+        we cancel what is cancelable (the frontier sweep polls a flag between
+        points) and give each live thread a bounded chance to finish.
+
+        The wait is bounded on purpose: a solve that is deep inside a single
+        long step cannot be interrupted, and hanging the close forever would be
+        worse than the abort it avoids. If the budget runs out we accept the
+        close anyway -- the same behaviour as before -- so this strictly reduces
+        the window in which a close can abort, rather than pretending to
+        eliminate it.
+        """
+        if self._worker is not None:
+            self._worker.cancel()
+        for thread in (
+            self._thread,
+            self._cand_thread,
+            self._cc_thread,
+            self._lib_thread,
+        ):
+            if thread is not None and thread.isRunning():
+                thread.quit()
+                thread.wait(_CLOSE_WAIT_MS)
+        super().closeEvent(event)
+
     def _wire_thread(
         self,
         worker: QtCore.QObject,
@@ -1501,8 +1539,8 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     def _start_optimize(self) -> None:
         """Validate the inputs, then launch a frontier optimization off-thread."""
-        if self._thread is not None:
-            return  # an optimize is already in flight
+        if self._busy():
+            return  # another engine flow is already in flight
         protein = self._prepare_protein()
         if protein is None:
             return
@@ -1548,8 +1586,8 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     def _start_candidates(self) -> None:
         """Validate inputs, then assemble + rank + splice-audit off-thread."""
-        if self._cand_thread is not None:
-            return  # a candidate run is already in flight
+        if self._busy():
+            return  # another engine flow is already in flight
         protein = self._prepare_protein()
         if protein is None:
             return
@@ -1609,8 +1647,8 @@ class StudioWindow(QtWidgets.QMainWindow):
         and can never fail a run: an outage returns ``available is False`` with a
         reason (CLAUDE.md §10.15).
         """
-        if self._cc_thread is not None:
-            return  # a cross-check is already in flight
+        if self._busy():
+            return  # another engine flow is already in flight
         delivered = self._delivered()
         if delivered is None:
             return
@@ -1652,9 +1690,29 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(object)
     def _on_crosscheck_finished(self, report: object) -> None:
-        """Render a finished cross-check (available or gracefully unavailable)."""
+        """Render a finished cross-check, unless it is about a different sequence.
+
+        A cross-check report describes exactly one sequence, and it carries that
+        sequence (:attr:`SpliceCrossCheck.dna`). If the delivered design changed
+        while the report was in flight, showing it would attribute one sequence's
+        predicted splice sites to another -- so it is discarded and said so,
+        rather than rendered. Comparing the report's own DNA to the live delivered
+        DNA needs no extra bookkeeping and cannot drift out of sync.
+        """
         self._set_crosscheck_running(False)
         if not isinstance(report, api.SpliceCrossCheck):
+            return
+        delivered = self._delivered()
+        if delivered is None or report.dna.upper() != delivered.dna.upper():
+            self._reset_crosscheck()
+            self.assp_banner.setText(
+                "Cross-check <b>discarded</b>: the delivered sequence changed "
+                "while it was running, and a report describes one sequence only. "
+                "Run it again on the current design."
+            )
+            self.statusBar().showMessage(
+                "ASSP cross-check discarded (the delivered sequence changed)."
+            )
             return
         self._render_crosscheck(report)
 
@@ -1672,7 +1730,8 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.assp_table.setRowCount(0)
         self.assp_banner.setText(
             "<b>ASSP cross-check unavailable</b> &mdash; "
-            f"{error}<br><i>Advisory only; the delivered result is unaffected.</i>"
+            f"{escape(str(error))}<br>"
+            "<i>Advisory only; the delivered result is unaffected.</i>"
         )
         self.statusBar().showMessage("ASSP cross-check unavailable.")
 
@@ -1680,8 +1739,8 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     def _start_library(self) -> None:
         """Validate inputs, then sample a library off-thread."""
-        if self._lib_thread is not None:
-            return  # a library draw is already in flight
+        if self._busy():
+            return  # another engine flow is already in flight
         protein = self._prepare_protein()
         if protein is None:
             return
@@ -1808,23 +1867,58 @@ class StudioWindow(QtWidgets.QMainWindow):
     def _update_run_buttons(self) -> None:
         """Enable each run control from the live flags (one source of truth).
 
-        Only one engine flow may run at a time, so every start button is gated on
+        Only one engine flow may run at a time, so every start control is gated on
         "nothing is running". Enablement is derived from the ``_*_running`` flags
         rather than from thread references, so a missed reference clear can never
         strand a control (the optimize-then-rank regression). ASSP additionally
         needs a delivered sequence to cross-check.
+
+        The **menu actions are gated here too**, not just the buttons: they carry
+        keyboard shortcuts, so gating only the buttons would leave Ctrl+R a live
+        back door into starting a second engine flow mid-run.
         """
-        busy = (
+        busy = self._busy()
+        can_crosscheck = not busy and self._delivered() is not None
+        for widget in (self.optimize_btn, self.act_optimize):
+            widget.setEnabled(not busy)
+        for widget in (self.cancel_btn, self.act_cancel):
+            widget.setEnabled(self._optimize_running)
+        for widget in (self.rank_btn, self.act_rank):
+            widget.setEnabled(not busy)
+        for widget in (self.library_btn, self.act_library):
+            widget.setEnabled(not busy)
+        for widget in (self.assp_btn, self.act_assp):
+            widget.setEnabled(can_crosscheck)
+
+    def _busy(self) -> bool:
+        """Whether any engine flow is currently running.
+
+        The single source of truth for "only one flow at a time". Both the UI
+        gate (:meth:`_update_run_buttons`) and each flow's own entry guard read
+        it, so the invariant is enforced in the code path itself and not only by
+        greying out a control.
+        """
+        return (
             self._optimize_running
             or self._cand_running
             or self._cc_running
             or self._lib_running
         )
-        self.optimize_btn.setEnabled(not busy)
-        self.cancel_btn.setEnabled(self._optimize_running)
-        self.rank_btn.setEnabled(not busy)
-        self.library_btn.setEnabled(not busy)
-        self.assp_btn.setEnabled(not busy and self._delivered() is not None)
+
+    def _set_export_enabled(self, enabled: bool) -> None:
+        """Enable/disable the delivered-result exports (button and menu together)."""
+        for widget in (
+            self.export_fasta_btn,
+            self.export_json_btn,
+            self.act_export_fasta,
+            self.act_export_json,
+        ):
+            widget.setEnabled(enabled)
+
+    def _set_library_export_enabled(self, enabled: bool) -> None:
+        """Enable/disable the library export (button and menu together)."""
+        for widget in (self.export_library_btn, self.act_export_library):
+            widget.setEnabled(enabled)
 
     # ---- slots ------------------------------------------------------------
 
@@ -1896,8 +1990,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.violations_legend.clear()
         self.plot.clear()
         self.tracks_plot.clear()
-        self.export_fasta_btn.setEnabled(False)
-        self.export_json_btn.setEnabled(False)
+        self._set_export_enabled(False)
         self._reset_crosscheck()
         self._update_run_buttons()
 
@@ -1934,8 +2027,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         # A cross-check describes one specific sequence; this is a new one.
         self._reset_crosscheck()
 
-        self.export_fasta_btn.setEnabled(True)
-        self.export_json_btn.setEnabled(True)
+        self._set_export_enabled(True)
         self._update_run_buttons()
 
         cai = float(delivered.audit["cai"])
@@ -2079,12 +2171,16 @@ class StudioWindow(QtWidgets.QMainWindow):
         """
         tags = ["network-derived" if report.network_derived else "local"]
         tags.append("calibrated" if report.calibrated else "UNCALIBRATED")
+        # This banner is RichText, and `reason` can carry a remote service's own
+        # error text. Escape everything that came from outside before it is
+        # interpolated: untrusted markup must never be able to rewrite (or hide)
+        # the very labels that mark these numbers advisory and uncalibrated.
         parts = [
-            f"<b>{report.backend}</b> &mdash; {', '.join(tags)}; advisory only, "
-            "<b>not</b> part of the run manifest and never exported."
+            f"<b>{escape(report.backend)}</b> &mdash; {', '.join(tags)}; advisory "
+            "only, <b>not</b> part of the run manifest and never exported."
         ]
         if not report.available:
-            parts.append(f"<b>Unavailable:</b> {report.reason}")
+            parts.append(f"<b>Unavailable:</b> {escape(report.reason or '')}")
             parts.append(
                 "<i>An opt-in cross-check outage never fails a run &mdash; the "
                 "delivered result and its local audit are unaffected.</i>"
@@ -2130,7 +2226,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             "No library yet. Press <b>Sample library</b> to draw one."
         )
         self.lib_banner.setStyleSheet(theme.badge_qss(""))
-        self.export_library_btn.setEnabled(False)
+        self._set_library_export_enabled(False)
 
     def _render_library(self, result: api.LibraryResult) -> None:
         """Fill the library table and banner from a finished draw.
@@ -2172,9 +2268,16 @@ class StudioWindow(QtWidgets.QMainWindow):
         # never drift from the claim the engine actually made.
         status = members[0].certificate.status.value if members else ""
         self.lib_banner.setStyleSheet(theme.badge_qss(status))
-        self.export_library_btn.setEnabled(bool(members))
+        self._set_library_export_enabled(bool(members))
+        self.library_table.clearSelection()
         if members:
             self.library_table.selectRow(0)
+        # Repaint the viewer explicitly rather than relying on selectRow to emit
+        # itemSelectionChanged: repopulating the table in place leaves the old
+        # selection intact, so re-selecting row 0 after a second draw emits
+        # nothing and would strand the PREVIOUS draw's sequence on screen --
+        # attributing one library's member to another.
+        self._show_library_member()
 
     def _show_library_member(self) -> None:
         """Show the selected library member's DNA with its violation highlights."""

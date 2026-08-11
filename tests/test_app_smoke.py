@@ -390,7 +390,7 @@ def test_crosscheck_worker_renders_an_available_report(
     assert report.calibrated is False
 
     window = StudioWindow()
-    window._on_crosscheck_finished(report)
+    window._render_crosscheck(report)
 
     banner = window.assp_banner.text()
     assert "network-derived" in banner
@@ -434,13 +434,106 @@ def test_crosscheck_is_cleared_when_the_delivered_sequence_changes(
     """
     monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
     window = StudioWindow()
-    window._on_crosscheck_finished(CrossCheckWorker(ASSP_SEQ).compute())
+    window._render_crosscheck(CrossCheckWorker(ASSP_SEQ).compute())
     assert window.assp_table.rowCount() > 0
 
     frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
     window._on_finished(frontier)
     assert window.assp_table.rowCount() == 0
     assert "Not run" in window.assp_banner.text()
+
+
+def test_crosscheck_for_another_sequence_is_discarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A report that finishes after the design changed is discarded, not shown.
+
+    A cross-check describes exactly one sequence. Rendering a late report beside
+    a different delivered design would attribute one sequence's predicted splice
+    sites to another -- the misattribution the panel-clearing rule exists to
+    prevent, arriving by the other ordering.
+    """
+    monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    delivered = frontier.delivered()
+    assert delivered is not None
+
+    stale = CrossCheckWorker(ASSP_SEQ).compute()
+    assert stale.available is True
+    assert stale.dna.upper() != delivered.dna.upper()
+
+    window._on_crosscheck_finished(stale)
+    assert window.assp_table.rowCount() == 0
+    assert "discarded" in window.assp_banner.text().lower()
+    assert "discarded" in window.statusBar().currentMessage().lower()
+    # The design itself is untouched and still exportable.
+    assert window._delivered() is not None
+    assert window.export_fasta_btn.isEnabled()
+
+
+def test_menu_actions_obey_the_same_run_gate() -> None:
+    """Shortcuts must not be a back door around the "one flow at a time" gate.
+
+    The Run-menu actions carry keyboard shortcuts, so gating only the buttons
+    would let Ctrl+R start an optimization during an in-flight cross-check.
+    """
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    assert window.act_optimize.isEnabled()
+    assert window.act_assp.isEnabled()
+
+    for setter in (
+        window._set_running,
+        window._set_candidates_running,
+        window._set_library_running,
+        window._set_crosscheck_running,
+    ):
+        setter(True)
+        assert not window.act_optimize.isEnabled()
+        assert not window.act_rank.isEnabled()
+        assert not window.act_library.isEnabled()
+        assert not window.act_assp.isEnabled()
+        setter(False)
+        assert window.act_optimize.isEnabled()
+
+    # Exports follow their buttons through the menu too.
+    assert window.act_export_fasta.isEnabled()
+    window._on_failed(ValueError("boom"))
+    assert not window.act_export_fasta.isEnabled()
+    assert not window.act_export_json.isEnabled()
+
+
+def test_crosscheck_escapes_service_supplied_text() -> None:
+    """A remote service's text cannot inject markup into the honesty banner.
+
+    The banner is RichText and ``reason`` carries whatever the service said, so
+    unescaped markup could rewrite -- or hide -- the very labels that mark these
+    numbers network-derived, uncalibrated, and advisory.
+    """
+    window = StudioWindow()
+    hostile = "<b>calibrated</b><span style='display:none'>"
+    report = api.SpliceCrossCheck(
+        dna="ATGTAA",
+        backend="assp",
+        available=False,
+        reason=hostile,
+        calibrated=False,
+        network_derived=True,
+        threshold=0.5,
+        top_k=3,
+        pooled_risk=0.0,
+        sites=(),
+    )
+    window._render_crosscheck(report)
+
+    banner = window.assp_banner.text()
+    assert hostile not in banner            # the raw markup did not survive
+    assert "&lt;b&gt;calibrated&lt;/b&gt;" in banner  # it is shown as text
+    assert "UNCALIBRATED" in banner         # ...and our own labels are intact
+    assert "network-derived" in banner
 
 
 def test_crosscheck_button_needs_a_delivered_sequence() -> None:
@@ -459,27 +552,82 @@ def test_crosscheck_button_needs_a_delivered_sequence() -> None:
 def test_export_json_never_carries_crosscheck_numbers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An export is byte-identical whether or not a cross-check was run.
+    """A written export is byte-identical whether or not a cross-check was run.
 
     ASSP numbers are network-derived and excluded from the
     reproducible-from-manifest guarantee (CLAUDE.md §6, §10.15), so they must
-    never reach an exported artifact.
+    never reach an exported artifact. This drives the window's real export
+    action -- not just the serializer -- on both sides of a rendered report.
     """
     monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
     window = StudioWindow()
     frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
     window._on_finished(frontier)
 
-    delivered = window._delivered()
-    assert delivered is not None
-    before = api.result_to_json(delivered)
+    written: list[Path] = []
+
+    def export_to(path: Path) -> str:
+        monkeypatch.setattr(
+            QtWidgets.QFileDialog,
+            "getSaveFileName",
+            staticmethod(lambda *a, **k: (str(path), "")),
+        )
+        window._export_json()
+        written.append(path)
+        return path.read_text(encoding="utf-8")
+
+    before = export_to(tmp_path / "before.json")
 
     # Render a real (fixture-backed) ASSP report into the window, then re-export.
-    window._on_crosscheck_finished(CrossCheckWorker(ASSP_SEQ).compute())
-    after = api.result_to_json(delivered)
+    report = CrossCheckWorker(ASSP_SEQ).compute()
+    window._render_crosscheck(report)
+    assert window.assp_table.rowCount() > 0  # the report really is on screen
+    assert report.pooled_risk != 0.0  # ...and carries numbers that could leak
+    after = export_to(tmp_path / "after.json")
 
+    assert len(written) == 2
     assert before == after
     assert "assp" not in after.lower()
+    assert f"{report.pooled_risk:.3f}" not in after
+
+
+def test_starting_a_second_flow_is_refused_not_just_greyed_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one-flow-at-a-time rule is enforced in the code path, not only the UI.
+
+    Greying out a button is a hint; the guard is what makes it an invariant. Each
+    ``_start_*`` must refuse outright while any other flow is running.
+    """
+    monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    window.protein_edit.setPlainText("MAALKHETQW")
+    # Always consent, so a refusal cannot be mistaken for a declined dialog.
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes),
+    )
+
+    # Pretend a cross-check is in flight, then try to start every other flow.
+    window._set_crosscheck_running(True)
+    for start in (
+        window._start_optimize,
+        window._start_candidates,
+        window._start_library,
+        window._start_crosscheck,
+    ):
+        start()
+    assert window._thread is None
+    assert window._cand_thread is None
+    assert window._lib_thread is None
+    assert window._cc_thread is None
+    assert not window._optimize_running
+    assert not window._cand_running
+    assert not window._lib_running
+    window._set_crosscheck_running(False)
 
 
 # --------------------------------------------------------------------------- #
@@ -515,6 +663,35 @@ def test_library_worker_samples_and_renders() -> None:
     # Selecting the first row shows that member's own sequence.
     assert window.library_view.toPlainText() == result.results[0].dna
     assert window.library_btn.isEnabled()
+
+
+def test_second_library_draw_replaces_the_shown_member() -> None:
+    """A second draw must not strand the first draw's sequence in the viewer.
+
+    Repopulating the table in place leaves the old selection intact, so
+    re-selecting row 0 emits no selection change -- the viewer has to be
+    repainted explicitly or it would show one library's member beside another
+    library's table.
+    """
+    window = StudioWindow()
+
+    def draw(seed: int) -> api.LibraryResult:
+        return LibraryWorker(
+            "MAALKHETQW",
+            api.OptimizeConfig(max_homopolymer=5),
+            n=4,
+            temperature=1.6,
+            seed=seed,
+        ).compute()
+
+    first = draw(1)
+    window._on_library_finished(first)
+    assert window.library_view.toPlainText() == first.results[0].dna
+
+    second = draw(999)
+    assert second.results[0].dna != first.results[0].dna  # the draws differ
+    window._on_library_finished(second)
+    assert window.library_view.toPlainText() == second.results[0].dna
 
 
 def test_library_is_deterministic_from_its_seed() -> None:
@@ -672,6 +849,23 @@ def test_menu_actions_are_wired_to_the_real_flows() -> None:
     assert window._dark is True
     assert _action(window, "Dark").isChecked()
     assert not _action(window, "System").isChecked()
+
+
+def test_closing_mid_run_shuts_workers_down() -> None:
+    """Closing the window while a flow runs must not destroy a running QThread.
+
+    Qt aborts the process when a running thread is destroyed, and the threads are
+    parented to the window -- so the close has to stop them first.
+    """
+    window = StudioWindow()
+    window.protein_edit.setPlainText("MAALKHETQWCDEFGHIKLMNPQRSTVWY" * 2)
+    window.lib_n_spin.setValue(24)
+    window._start_library()
+    assert window._lib_thread is not None
+
+    thread = window._lib_thread
+    window.close()
+    assert not thread.isRunning()
 
 
 def test_theme_switch_repaints_without_losing_results() -> None:

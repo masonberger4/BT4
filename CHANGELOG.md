@@ -52,6 +52,29 @@ its first tagged release.
   - New shared `_EngineWorker` base in `bt4.app.worker` (signal trio + the
     never-raise contract) with `CrossCheckWorker` and `LibraryWorker` alongside
     the existing two.
+
+  Found by an adversarial review of the above and fixed in the same change (each
+  with a regression test that fails without its fix):
+  - **A late cross-check could be attributed to the wrong sequence.** A report
+    describes exactly one sequence and carries it, so `_on_crosscheck_finished`
+    now compares `report.dna` to the live delivered DNA and *discards* a report
+    whose design changed while it ran, instead of rendering it. The panel-clearing
+    rule covered only the other ordering.
+  - **Menu shortcuts bypassed the single-flow gate.** `Ctrl+R` during an in-flight
+    cross-check started a second engine flow, because only the buttons were gated.
+    The Run actions are now gated alongside them, and each `_start_*` refuses via a
+    shared `_busy()` check — so the invariant lives in the code path, not only in a
+    greyed-out control.
+  - **A second library draw stranded the first draw's sequence on screen.**
+    Repopulating the table in place leaves the selection intact, so re-selecting
+    row 0 emitted nothing; the member viewer is now repainted explicitly.
+  - **Untrusted service text could rewrite the honesty banner.** ASSP's own error
+    text was interpolated unescaped into a RichText label — markup that could hide
+    the very "network-derived / UNCALIBRATED / advisory" labels marking it. All
+    externally-derived text is now HTML-escaped.
+  - **Closing mid-run destroyed a running `QThread`** (pre-existing, but this change
+    triples the number of flows that can be in flight). `closeEvent` now cancels
+    what is cancelable and gives each live thread a bounded chance to finish.
 - **Public expression-backend registry** (`bt4.biomodels.expression.available_backends`
   / `resolve_backend`, re-exported as `bt4.api.available_expression_backends` /
   `resolve_expression_backend`) — the mirror of the splice resolver, so a frontend
