@@ -483,6 +483,14 @@ is a requirement, not a nice-to-have.
   or shell-level API access a background watcher could poll with, and the PR
   subscription does **not** reliably push CI *success* — so letting GitHub own the
   merge trigger is strictly better than any timer the agent could set.
+  - **Repo prerequisites (one-time, owner-set).** Auto-merge needs two GitHub
+    settings enabled: *Settings → General → Pull Requests → Allow auto-merge*, and
+    branch protection on `main` with the CI checks marked **required**. The second
+    is what makes auto-merge *wait for green* rather than merge a mergeable PR
+    instantly — without a required check, a PR with no other block is immediately
+    mergeable, so `enable_pr_auto_merge` returns a clean-status error and the agent
+    uses the fallback below. With both on, `enable_pr_auto_merge` arms the PR and
+    GitHub merges it the moment the required checks pass.
   - **Fallback (only when auto-merge is unavailable).** If `enable_pr_auto_merge`
     errors — the repo has no required-status-check branch protection, or auto-merge
     is disabled at the repo level — fall back to the prior pattern: arm **at most a
