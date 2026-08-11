@@ -491,6 +491,16 @@ is a requirement, not a nice-to-have.
     mergeable, so `enable_pr_auto_merge` returns a clean-status error and the agent
     uses the fallback below. With both on, `enable_pr_auto_merge` arms the PR and
     GitHub merges it the moment the required checks pass.
+  - **Stale branch (`mergeable_state: "behind"`).** If branch protection also has
+    *Require branches to be up to date before merging* on, an armed PR whose CI is
+    already green can still sit unmerged at `mergeable_state: "behind"` once `main`
+    advances under it — GitHub holds the merge rather than merging stale. Clear it
+    with a **single `update_pull_request_branch`** call (the "Update branch" action:
+    it merges the current base into the PR head, re-triggering CI). This is **not**
+    a manual merge and does not defeat auto-merge — it satisfies the up-to-date gate
+    so auto-merge can fire once CI is green again. Do not call `merge_pull_request`;
+    let GitHub own the merge. (Same posture as a merge-conflict notice — drive the
+    PR to mergeable, then let auto-merge complete it.)
   - **Fallback (only when auto-merge is unavailable).** If `enable_pr_auto_merge`
     errors — the repo has no required-status-check branch protection, or auto-merge
     is disabled at the repo level — fall back to the prior pattern: arm **at most a
