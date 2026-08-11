@@ -17,9 +17,18 @@ venv/
 htmlcov/
 
 # Models & scraped data belong in the hash-verified registry / release artifacts,
-# never in the tree.
+# never in the tree. Cover every wrapped-model weight format as belt-and-suspenders
+# against an accidental `git add` of licensed weights (RiboNN .pth, SpliceAI .h5,
+# Pangolin state dicts) — these are lazily imported from the user's own install.
 *.pt
 *.pkl
+*.pth
+*.h5
+*.hdf5
+*.ckpt
+*.onnx
+*.pb
+*.safetensors
 ~/.bt4/
 external/
 
