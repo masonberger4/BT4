@@ -18,12 +18,15 @@ before writing code, and keep it current as the architecture evolves.
 > should be written in both places.
 >
 > **Current phase (one line):** Phases 0–2 complete · Phase 3 groundwork landed ·
-> Phase 4 not started (contract scaffold only) · Phase 5 opened. The honest
-> exact-DP + Pareto core, the Rust trellis port, the wrapped-but-**uncalibrated**
-> RiboNN/SpliceAI/Pangolin models, the opt-in out-of-loop **ASSP** cross-check, and
-> the full expression/splice design flow (now surfaced in BT4 Studio’s *Candidates
-> & splice audit* tab) are all on `main`; what remains is data/human-gated
-> calibration plus autonomous polish/breadth — see NEXT_SESSION.md.
+> Phase 4 **app polish landed**, learned head still calibration-blocked · Phase 5
+> opened. The honest exact-DP + Pareto core, the Rust trellis port, the
+> wrapped-but-**uncalibrated** RiboNN/SpliceAI/Pangolin models, the opt-in
+> out-of-loop **ASSP** cross-check, and the full expression/splice design flow are
+> all on `main` — and all of them now have a first-class BT4 Studio surface
+> (*Design* with the consented ASSP cross-check, *Candidates & splice audit* with
+> the opt-in RiboNN head, *Library (sampled)*, plus menus, shortcuts and runtime
+> theming); what remains is data/human-gated calibration, packaged installers, and
+> autonomous polish/breadth — see NEXT_SESSION.md.
 >
 > This document was written after a full review of the BT3 codebase and *every*
 > BT3 branch (`master`, `almost-there`, `gemini`, `streamlit`, and the merged
@@ -431,13 +434,37 @@ What the app does (design targets):
   along the sequence (splice / 5′-folding / GC / CpG heatmaps); a metrics table;
   a sequence viewer with constraint annotations.
 - **Cross-check:** a one-click **"validate with ASSP"** button (§6, opt-in,
-  clearly labeled network-derived) on the delivered sequence.
+  clearly labeled network-derived) on the delivered sequence. **Landed.** It is
+  the *only* control that leaves the machine, so it is explicit in every
+  direction: consent is asked before anything is sent (naming the service), the
+  call runs on a background worker, and the report is led by its tags —
+  network-derived, UNCALIBRATED, advisory, **not** part of the run manifest and
+  never exported. An outage degrades to a labeled "unavailable" banner and can
+  never fail a run (§10.15). The panel is cleared whenever the delivered sequence
+  changes, so one sequence's sites can never be shown beside another's.
+- **Expression head:** the wrapped **RiboNN** head is opt-in from the Candidates
+  tab (toggle + species + the fixed 5′/3′ UTR context it requires), enabled only
+  when `available_expression_backends()` reports the user's own checkout and
+  weights actually resolve — never a dead control, and it says what is missing
+  otherwise. It is `calibrated=False`, so the set stays **discovery order, not a
+  ranking** and the solver's pick stays delivered (§10.6).
+- **Library mode:** `api.library` has its own tab — members / temperature / seed,
+  a per-member table, and a multi-record FASTA export — banner-led with
+  **sampled, not optimized**, its badge coloured directly from the `SAMPLED`
+  certificate so the label cannot drift from the engine's claim.
 - **Export:** FASTA / GenBank / JSON **plus the run manifest**, so anything the
   app shows is reproducible from its stamp (except explicitly network-derived
-  ASSP numbers).
+  ASSP numbers, which never reach an export — regression-tested).
 
 Accessibility, light/dark theming, and responsive layout are in scope — "nice"
-is a requirement, not a nice-to-have.
+is a requirement, not a nice-to-have. **Landed:** a File/Run/View/Help menu bar
+with standard shortcuts makes every action keyboard-reachable, **View → System /
+Light / Dark** switches theme at runtime (restyling stylesheet, plots, badges,
+and the sequence viewers' violation bands from the still-live results), and every
+control carries an accessible name, a buddy label, and an explanatory tooltip.
+Only one engine flow runs at a time, gated from a single set of running-flags
+rather than from thread references — so a missed reference clear cannot strand a
+control.
 
 ---
 
@@ -906,11 +933,24 @@ is a requirement, not a nice-to-have.
   re-counted, content-hashed, and stamped citation-gated academic use, not
   CC/public-domain); organisms without bundled tRNA data raise -- no fabricated
   tables.
-- **Phase 4 — Learned expression & polished app.** Expression predictor head,
-  frontier reranking with calibration/uncertainty. Polish BT4 Studio (theming,
-  accessibility) and ship **packaged installers** (PyInstaller/Briefcase) for
-  macOS/Windows/Linux; optionally expose the `service/` HTTP API. External-
-  validation report vs real gene distributions and published tools.
+- **Phase 4 — Learned expression & polished app.** 🔶 **App polish landed; the
+  learned head stays calibration-blocked.** The BT4 Studio polish pass has
+  shipped (§6.6): the two engine-ready backends that had no UI are surfaced — the
+  wrapped **RiboNN** head opt-in on the Candidates tab (reached through the new
+  public expression-backend registry, `available_backends` / `resolve_backend`,
+  re-exported as `api.available_expression_backends` /
+  `api.resolve_expression_backend`, so the app selects a head by name without
+  importing `biomodels` across a layer, §3/§10.9) and the opt-in **ASSP**
+  cross-check on the Design tab; **library mode** has its own tab; and the
+  keyboard/menu/theming/accessibility work is done. Every one of these is
+  calibrated-gating-preserving plumbing over the stable `bt4.api` — no engine
+  change and no new claim: RiboNN and every splice backend remain
+  `calibrated=False`, so they annotate and advise but never steer delivery.
+  Remaining: the expression predictor head **earning** calibration (frontier
+  reranking with calibration/uncertainty — blocked on a regime-matched
+  CDS-variant panel), **packaged installers** (PyInstaller/Briefcase) for
+  macOS/Windows/Linux, and the external-validation report vs real gene
+  distributions and published tools.
 - **Phase 5 — Scale & ecosystem.** 🔶 **Opened.** **Library / degenerate-design
   mode has landed** (`optimize/sample.py` + `pipeline/library.py`, exposed as
   `api.library` and `bt4 library PROTEIN --n N`): instead of a single MFC

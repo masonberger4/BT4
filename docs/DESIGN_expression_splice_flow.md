@@ -195,7 +195,16 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
    with the solver's pick starred and scores annotating only; the splice banner
    leads with **UNCALIBRATED (advisory)** when `all_calibrated` is `False`. Every
    table metric is recomputed per candidate from its own DNA (invariant #2); an
-   opt-in toggle routes the installed SpliceAI/Pangolin CNNs into the audit.
+   opt-in toggle routes the installed SpliceAI/Pangolin CNNs into the audit. The
+   **UTR fields and the RiboNN toggle have since landed too**: an *Expression
+   head* group (toggle + species + the fixed 5′/3′ UTR context RiboNN requires)
+   routes a `RiboNNExpressionModel` into `api.candidates` through the public
+   expression-backend registry (`api.available_expression_backends` /
+   `api.resolve_expression_backend`), enabled only when the user's own checkout
+   and weights actually resolve, with missing/non-DNA UTRs refused before the run
+   starts. RiboNN stays `calibrated=False`, so the discovery-order banner is
+   unchanged — selecting the head changes what is *shown*, never what is
+   *delivered*.
 6. **(Gated, future)** splice **auto-edit** and RiboNN **auto-select**, each
    unlocked only when its backend passes its fidelity/acceptance gate.
 

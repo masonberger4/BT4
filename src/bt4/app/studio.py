@@ -1,21 +1,33 @@
 """BT4 Studio main window and application entry point.
 
 ``StudioWindow`` is the whole desktop UI: a left control panel (protein, target
-organism, and per-run design knobs) and a right results panel (an honest
-optimality-certificate badge, a recomputed-metrics table, an interactive
-CAI/GC frontier scatter, and a monospaced sequence viewer, plus FASTA/JSON
-export). Optimizations run on a background :class:`~bt4.app.worker.OptimizeWorker`
-moved onto a ``QThread`` so the window never blocks, and any engine error is
-surfaced as a non-fatal message rather than a crash.
+organism, and per-run design knobs) and a right results area of three tabs --
+
+* **Design** -- the delivered frontier result: an honest optimality-certificate
+  badge, a recomputed-metrics table, an interactive CAI/GC frontier scatter, a
+  monospaced sequence viewer with inline violation annotations, per-site
+  composition tracks, FASTA/JSON export, and the opt-in **ASSP cross-check**;
+* **Candidates & splice audit** -- design-flow steps 3-4, the expression-annotated
+  finalist set with its advisory cryptic-splice audit;
+* **Library (sampled)** -- Phase-5 degenerate-design mode, a stochastic sampler
+  that is honestly labeled as such.
+
+Every engine call runs on a background worker (:mod:`bt4.app.worker`) moved onto
+a ``QThread`` so the window never blocks, and any engine error is surfaced as a
+non-fatal message rather than a crash.
 
 This module talks to the engine exclusively through :mod:`bt4.api`; it never
 imports the optimizer, pipeline, or biomodels directly. Everything is computed
-locally and nothing leaves the machine.
+locally and **nothing leaves the machine** unless the user explicitly presses
+"Validate with ASSP", whose network-derived numbers are labeled advisory and are
+never folded into an export or a run manifest (CLAUDE.md §6, §6.6, §10.15).
 """
 
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from html import escape
 from itertools import pairwise
 
 import pyqtgraph as pg
@@ -23,7 +35,13 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from bt4 import api
 from bt4.app import theme
-from bt4.app.worker import CandidatesResult, CandidatesWorker, OptimizeWorker
+from bt4.app.worker import (
+    CandidatesResult,
+    CandidatesWorker,
+    CrossCheckWorker,
+    LibraryWorker,
+    OptimizeWorker,
+)
 
 __all__ = ["StudioWindow", "main"]
 
@@ -41,6 +59,25 @@ _METRIC_ROWS = (
 # Above this residue count, warn before starting: the exact frontier sweep can
 # take a noticeable amount of time (the run is cancelable either way).
 _LONG_PROTEIN_WARN = 500
+
+# How long a close waits for each still-running worker thread (see closeEvent).
+_CLOSE_WAIT_MS = 5000
+
+_LIBRARY_COLS = ("#", "CAI", "GC %", "Hard viol.", "Soft viol.", "Certificate")
+
+_CROSSCHECK_COLS = ("Kind", "Position", "Score", "Class")
+
+# Shown before the one control in BT4 Studio that leaves the machine. The app is
+# offline-first, so sending a designed sequence to a third-party web service is an
+# explicit, informed choice -- never a side effect of pressing Optimize.
+_ASSP_CONSENT = (
+    "This sends the delivered coding sequence to the public ASSP web service "
+    "(Alternative Splice Site Predictor) over the network.\n\n"
+    "Everything else in BT4 Studio is computed locally. ASSP's numbers are "
+    "network-derived and uncalibrated: they are advisory only, are NOT part of the "
+    "run manifest, and are never written into an export.\n\n"
+    "Send the sequence?"
+)
 
 
 def _distinct_site_count(positions: list[int], match_window: int) -> int:
@@ -98,6 +135,17 @@ class SequenceViewer(QtWidgets.QPlainTextEdit):
         self._violations: tuple[api.Violation, ...] = ()
         self.setReadOnly(True)
         self.setMouseTracking(True)
+
+    def set_dark(self, dark: bool) -> None:
+        """Switch the highlight palette and repaint the current annotations.
+
+        The DNA and its violation spans are already held, so a theme change
+        re-derives the bands rather than needing the caller to re-render.
+        """
+        if dark == self._dark:
+            return
+        self._dark = dark
+        self.set_sequence(self.toPlainText(), self._violations)
 
     def set_sequence(
         self, dna: str, violations: tuple[api.Violation, ...] = ()
@@ -170,13 +218,27 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.resize(1180, 760)
 
         self._dark = _is_dark()
+        self._theme_choice = "system"
         self._last: api.FrontierResult | None = None
-        self._thread: QtCore.QThread | None = None
-        self._worker: OptimizeWorker | None = None
         self._msgbox: QtWidgets.QMessageBox | None = None
         self._cancel_requested = False
+        # Live thread/worker references, kept only so neither is garbage-collected
+        # mid-run. Button enablement is driven by the _*_running flags below, never
+        # by these, so a missed clear can never strand a control (regression: the
+        # optimize-then-rank stuck-Optimize bug).
+        self._thread: QtCore.QThread | None = None
+        self._worker: OptimizeWorker | None = None
         self._cand_thread: QtCore.QThread | None = None
         self._cand_worker: CandidatesWorker | None = None
+        self._cc_thread: QtCore.QThread | None = None
+        self._cc_worker: CrossCheckWorker | None = None
+        self._lib_thread: QtCore.QThread | None = None
+        self._lib_worker: LibraryWorker | None = None
+        self._optimize_running = False
+        self._cand_running = False
+        self._cc_running = False
+        self._lib_running = False
+        self._library: api.LibraryResult | None = None
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls_scroll = QtWidgets.QScrollArea()
@@ -185,19 +247,26 @@ class StudioWindow(QtWidgets.QMainWindow):
         controls_scroll.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
+        controls_scroll.setMinimumWidth(300)
         splitter.addWidget(controls_scroll)
         splitter.addWidget(self._build_results())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+        # Let the results side absorb every resize: the control column is a fixed
+        # form, so a narrow window shrinks the plots/tables rather than clipping
+        # the knobs (which stay reachable through their scroll area).
+        splitter.setCollapsible(0, False)
         splitter.setSizes([380, 800])
         self.setCentralWidget(splitter)
 
+        self._build_menus()
         self.setStatusBar(QtWidgets.QStatusBar())
         self.statusBar().showMessage("Ready. Enter a protein and click Optimize.")
 
         self._set_tab_order()
         self._reset_results()
         self._reset_candidates()
+        self._reset_library()
 
     # ---- construction -----------------------------------------------------
 
@@ -513,18 +582,22 @@ class StudioWindow(QtWidgets.QMainWindow):
         form.addRow(label, widget)
 
     def _build_results(self) -> QtWidgets.QWidget:
-        """Build the right results area: a Design tab and a Candidates tab.
+        """Build the right results area: Design, Candidates, and Library tabs.
 
         The Design tab shows the delivered frontier result (badge, metrics,
-        frontier scatter, sequence, tracks). The Candidates tab runs the
-        expression/splice design flow (:func:`bt4.api.candidates` +
-        :func:`bt4.api.splice_audit`) and shows the ranked, honestly-labeled
-        candidate set with its advisory splice audit.
+        frontier scatter, sequence, tracks) plus the opt-in ASSP cross-check. The
+        Candidates tab runs the expression/splice design flow
+        (:func:`bt4.api.candidates` + :func:`bt4.api.splice_audit`) and shows the
+        ranked, honestly-labeled candidate set with its advisory splice audit. The
+        Library tab draws a sampled (not optimized) library via
+        :func:`bt4.api.library`.
         """
         tabs = QtWidgets.QTabWidget()
         tabs.setAccessibleName("Results")
         tabs.addTab(self._build_design_tab(), "Design")
         tabs.addTab(self._build_candidates_tab(), "Candidates && splice audit")
+        tabs.addTab(self._build_library_tab(), "Library (sampled)")
+        self.tabs = tabs
         return tabs
 
     def _build_design_tab(self) -> QtWidgets.QWidget:
@@ -589,6 +662,8 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._style_tracks_plot()
         layout.addWidget(self.tracks_plot)
 
+        layout.addWidget(self._build_crosscheck_group())
+
         exports = QtWidgets.QHBoxLayout()
         self.export_fasta_btn = QtWidgets.QPushButton("Export FASTA")
         self.export_fasta_btn.setAccessibleName("Export FASTA")
@@ -602,6 +677,60 @@ class StudioWindow(QtWidgets.QMainWindow):
         layout.addLayout(exports)
 
         return panel
+
+    def _build_crosscheck_group(self) -> QtWidgets.QWidget:
+        """Build the opt-in ASSP cross-check control and its advisory readout.
+
+        This is the single control in BT4 Studio that touches the network
+        (CLAUDE.md §6.6), so it is explicit in every direction: the user presses
+        it, consents to the sequence being sent, and gets a result banner that
+        leads with **network-derived / uncalibrated / not in the manifest**. The
+        report is never folded into the delivered :class:`~bt4.api.Result`, the
+        metrics table, or an export -- exactly as the CLI prints it to stderr
+        rather than into the stdout artifact (§10.15).
+        """
+        box = QtWidgets.QGroupBox("Cross-check (optional, network)")
+        layout = QtWidgets.QVBoxLayout(box)
+
+        row = QtWidgets.QHBoxLayout()
+        self.assp_btn = QtWidgets.QPushButton("Validate with ASSP")
+        self.assp_btn.setAccessibleName("Validate the delivered sequence with ASSP")
+        self.assp_btn.setToolTip(
+            "Send the delivered sequence to the online ASSP service (Alternative "
+            "Splice Site Predictor) for an independent cryptic-splice opinion. "
+            "Opt-in and out-of-loop: it never steers the optimizer. Its numbers are "
+            "network-derived and uncalibrated -- advisory only, excluded from the "
+            "run manifest, and never written into an export. Needs the bt4[assp] "
+            "extra; an outage degrades gracefully and never fails a run."
+        )
+        self.assp_btn.clicked.connect(self._start_crosscheck)
+        self.assp_btn.setEnabled(False)
+        row.addWidget(self.assp_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self.assp_banner = QtWidgets.QLabel()
+        self.assp_banner.setWordWrap(True)
+        self.assp_banner.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.assp_banner.setAccessibleName("ASSP cross-check summary")
+        self.assp_banner.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.assp_banner)
+
+        self.assp_table = QtWidgets.QTableWidget(0, len(_CROSSCHECK_COLS))
+        self.assp_table.setHorizontalHeaderLabels(list(_CROSSCHECK_COLS))
+        self.assp_table.verticalHeader().setVisible(False)
+        self.assp_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.assp_table.horizontalHeader().setStretchLastSection(True)
+        self.assp_table.setAccessibleName("ASSP predicted splice sites")
+        self.assp_table.setMaximumHeight(150)
+        self.assp_table.hide()
+        layout.addWidget(self.assp_table)
+
+        return box
 
     _CANDIDATE_COLS = (
         "#",
@@ -671,6 +800,8 @@ class StudioWindow(QtWidgets.QMainWindow):
         controls.addStretch(1)
         layout.addLayout(controls)
 
+        layout.addWidget(self._build_expression_group())
+
         buttons = QtWidgets.QHBoxLayout()
         self.rank_btn = QtWidgets.QPushButton("Rank && audit")
         self.rank_btn.setAccessibleName("Rank and audit candidates")
@@ -721,6 +852,259 @@ class StudioWindow(QtWidgets.QMainWindow):
 
         return panel
 
+    def _build_expression_group(self) -> QtWidgets.QWidget:
+        """Build the opt-in expression-head controls for the candidate flow.
+
+        BT4 ships one wrapped head -- RiboNN (Sanofi non-commercial), driven from
+        the user's own checkout via ``$BT4_RIBONN_DIR``. The toggle is enabled
+        only when :func:`bt4.api.available_expression_backends` reports it can
+        actually run here, so the control is never a dead end, and the fixed
+        5'/3' UTR context it needs is entered beside it: RiboNN refuses an empty
+        UTR (its loader reads an all-empty column as NaN) and the UTRs carry most
+        of its signal, so holding the real ones fixed while the CDS varies is the
+        intended use.
+
+        Selecting RiboNN changes **nothing** about delivery. It is
+        ``calibrated=False`` -- reproducing it faithfully is not calibration for
+        BT4's CDS-variant regime -- so :func:`bt4.api.candidates` keeps the set in
+        discovery order and leaves the solver's pick delivered; the head only
+        annotates (CLAUDE.md §6, §10.6).
+        """
+        box = QtWidgets.QGroupBox("Expression head (optional)")
+        form = QtWidgets.QFormLayout(box)
+        form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+
+        available = api.available_expression_backends()
+        self._ribonn_available = "ribonn" in available
+
+        self.ribonn_check = QtWidgets.QCheckBox("score candidates with RiboNN")
+        self.ribonn_check.setAccessibleName("Use the wrapped RiboNN expression head")
+        self.ribonn_check.setEnabled(self._ribonn_available)
+        self.ribonn_check.toggled.connect(self._update_ribonn_enabled)
+        if self._ribonn_available:
+            ribonn_tip = (
+                "Annotate every candidate with the wrapped RiboNN translation-"
+                "efficiency model (your own checkout and weights, hash-verified "
+                "before loading). Runs once over the whole set, off the GUI thread. "
+                "RiboNN is UNCALIBRATED for BT4's CDS-variant regime, so it only "
+                "annotates: the table stays in discovery order and the solver's "
+                "pick stays delivered. Requires the 5'/3' UTR context below."
+            )
+        else:
+            ribonn_tip = (
+                "No usable RiboNN install found. Clone the RiboNN repository "
+                "(Sanofi non-commercial), download its Zenodo weights into "
+                "<repo>/models, install torch + pandas, and point $BT4_RIBONN_DIR "
+                "at the checkout. Nothing is bundled: BT4 drives your own copy."
+            )
+        self._add_row(form, "RiboNN", self.ribonn_check, ribonn_tip)
+
+        self.ribonn_species_combo = QtWidgets.QComboBox()
+        self.ribonn_species_combo.addItems(["human", "mouse"])
+        self.ribonn_species_combo.setAccessibleName("RiboNN species weight set")
+        self._add_row(
+            form, "Species", self.ribonn_species_combo,
+            "Which RiboNN weight set to ensemble -- the human or mouse "
+            "cross-validation runs. Match it to your target organism.",
+        )
+
+        self.utr5_edit = QtWidgets.QLineEdit()
+        self.utr5_edit.setPlaceholderText("5' UTR (required for RiboNN)")
+        self.utr5_edit.setAccessibleName("Fixed 5-prime UTR context")
+        self._add_row(
+            form, "5' UTR", self.utr5_edit,
+            "The transcript's 5' UTR, held FIXED while the CDS varies. RiboNN "
+            "scores a whole transcript and cannot accept an empty UTR; the 5' UTR "
+            "and initiation region carry most of its signal, so an empty-UTR score "
+            "would not be meaningful. Not part of the designed sequence -- it is "
+            "context for the model only and is never exported.",
+        )
+
+        self.utr3_edit = QtWidgets.QLineEdit()
+        self.utr3_edit.setPlaceholderText("3' UTR (required for RiboNN)")
+        self.utr3_edit.setAccessibleName("Fixed 3-prime UTR context")
+        self._add_row(
+            form, "3' UTR", self.utr3_edit,
+            "The transcript's 3' UTR, held FIXED while the CDS varies (as the 5' "
+            "UTR). Context for the model only; never part of the exported CDS.",
+        )
+
+        self._update_ribonn_enabled(self.ribonn_check.isChecked())
+        return box
+
+    def _update_ribonn_enabled(self, checked: bool) -> None:
+        """Enable the RiboNN sub-controls only while the head is selected."""
+        for widget in (
+            self.ribonn_species_combo,
+            self.utr5_edit,
+            self.utr3_edit,
+        ):
+            widget.setEnabled(checked and self._ribonn_available)
+
+    def _prepare_predictor(self) -> tuple[bool, api.ExpressionPredictor | None]:
+        """Build the expression head for a candidate run, or explain the problem.
+
+        Returns:
+            ``(ok, predictor)``. ``predictor`` is what to pass to
+            :func:`bt4.api.candidates` -- ``None`` meaning the default neutral
+            placeholder. ``ok`` is ``False`` when the user asked for RiboNN but
+            has not supplied the UTR context it requires; a warning has already
+            been shown and the run must not start. Refusing here, rather than
+            letting the engine raise mid-run, keeps the failure legible.
+        """
+        if not (self.ribonn_check.isChecked() and self._ribonn_available):
+            return True, None
+        utr5 = "".join(self.utr5_edit.text().split()).upper()
+        utr3 = "".join(self.utr3_edit.text().split()).upper()
+        missing = [
+            name for name, value in (("5'", utr5), ("3'", utr3)) if not value
+        ]
+        if missing:
+            self._warn(
+                "RiboNN needs UTR context",
+                f"Enter the transcript's {' and '.join(missing)} UTR, or untick "
+                "RiboNN to use the neutral placeholder.",
+                "RiboNN scores a whole transcript: an empty UTR column breaks its "
+                "preprocessing, and the UTRs carry most of its signal. They are "
+                "held fixed while the CDS varies and are never exported.",
+            )
+            (self.utr5_edit if not utr5 else self.utr3_edit).setFocus()
+            return False, None
+        bad = sorted({ch for ch in utr5 + utr3 if ch not in "ACGT"})
+        if bad:
+            shown = ", ".join(repr(ch) for ch in bad)
+            self._warn(
+                "That isn't a UTR sequence",
+                f"These characters aren't DNA bases: {shown}. Use A, C, G, and T.",
+            )
+            self.utr5_edit.setFocus()
+            return False, None
+        predictor = api.resolve_expression_backend(
+            "ribonn",
+            species=self.ribonn_species_combo.currentText(),
+            utr5=utr5,
+            utr3=utr3,
+        )
+        return True, predictor
+
+    def _build_library_tab(self) -> QtWidgets.QWidget:
+        """Build the Phase-5 library / degenerate-design tab.
+
+        Library mode is a **sampler, not an optimizer** (CLAUDE.md §9, Phase 5):
+        it draws each residue's synonymous codon from the organism's usage
+        distribution (tempered), keeping only codons that pass every LOCAL
+        constraint. Every member carries the ``SAMPLED`` certificate and makes no
+        optimality or expression claim, GLOBAL rules are validated but not
+        enforced during the draw, and the banner says all of that plainly rather
+        than letting a table of sequences imply a ranking.
+        """
+        panel = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(panel)
+
+        intro = QtWidgets.QLabel(
+            "Draw a diverse library instead of one optimum: each residue's "
+            "synonymous codon is <b>sampled</b> from the organism's usage "
+            "distribution, keeping only codons that satisfy the LOCAL constraints "
+            "on the left. Useful for screening panels and degenerate designs."
+        )
+        intro.setWordWrap(True)
+        intro.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        layout.addWidget(intro)
+
+        controls = QtWidgets.QHBoxLayout()
+        controls.addWidget(QtWidgets.QLabel("Members"))
+        self.lib_n_spin = QtWidgets.QSpinBox()
+        self.lib_n_spin.setRange(1, 200)
+        self.lib_n_spin.setValue(12)
+        self.lib_n_spin.setAccessibleName("Library members to sample")
+        self.lib_n_spin.setToolTip("How many sequences to draw.")
+        controls.addWidget(self.lib_n_spin)
+
+        controls.addWidget(QtWidgets.QLabel("Temperature"))
+        self.lib_temp_spin = QtWidgets.QDoubleSpinBox()
+        self.lib_temp_spin.setRange(0.05, 10.0)
+        self.lib_temp_spin.setSingleStep(0.1)
+        self.lib_temp_spin.setValue(1.0)
+        self.lib_temp_spin.setAccessibleName("Sampling temperature")
+        self.lib_temp_spin.setToolTip(
+            "Sampling temperature. Toward 0 the draw approaches the most-favored "
+            "codon at every position (low diversity); 1.0 is the organism's "
+            "natural usage distribution; larger values approach uniform (high "
+            "diversity, lower CAI)."
+        )
+        controls.addWidget(self.lib_temp_spin)
+
+        controls.addWidget(QtWidgets.QLabel("Seed"))
+        self.lib_seed_spin = QtWidgets.QSpinBox()
+        self.lib_seed_spin.setRange(0, 2_000_000_000)
+        self.lib_seed_spin.setValue(0)
+        self.lib_seed_spin.setAccessibleName("Sampling seed")
+        self.lib_seed_spin.setToolTip(
+            "Master seed for the draw. The same seed reproduces the same library "
+            "byte-for-byte, and the effective seed enters the run manifest."
+        )
+        controls.addWidget(self.lib_seed_spin)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        buttons = QtWidgets.QHBoxLayout()
+        self.library_btn = QtWidgets.QPushButton("Sample library")
+        self.library_btn.setAccessibleName("Sample a sequence library")
+        self.library_btn.setToolTip(
+            "Draw the library on a background thread; the UI stays responsive."
+        )
+        self.library_btn.clicked.connect(self._start_library)
+        buttons.addWidget(self.library_btn)
+        self.export_library_btn = QtWidgets.QPushButton("Export library FASTA")
+        self.export_library_btn.setAccessibleName("Export the library as FASTA")
+        self.export_library_btn.setToolTip(
+            "Write every sampled member to one multi-record FASTA file."
+        )
+        self.export_library_btn.clicked.connect(self._export_library)
+        buttons.addWidget(self.export_library_btn)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.lib_banner = QtWidgets.QLabel()
+        self.lib_banner.setObjectName("certBadge")
+        self.lib_banner.setWordWrap(True)
+        self.lib_banner.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.lib_banner.setAccessibleName("Library summary")
+        self.lib_banner.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.lib_banner)
+
+        self.library_table = QtWidgets.QTableWidget(0, len(_LIBRARY_COLS))
+        self.library_table.setHorizontalHeaderLabels(list(_LIBRARY_COLS))
+        self.library_table.verticalHeader().setVisible(False)
+        self.library_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.library_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.library_table.horizontalHeader().setStretchLastSection(True)
+        self.library_table.setAccessibleName("Sampled library members")
+        self.library_table.itemSelectionChanged.connect(self._show_library_member)
+        layout.addWidget(self.library_table, stretch=1)
+
+        member_label = QtWidgets.QLabel("Selected member")
+        layout.addWidget(member_label)
+        self.library_view = SequenceViewer(self._dark)
+        self.library_view.setLineWrapMode(
+            QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth
+        )
+        self.library_view.setFont(
+            QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        )
+        self.library_view.setAccessibleName("Selected library member sequence")
+        self.library_view.setMaximumHeight(110)
+        member_label.setBuddy(self.library_view)
+        layout.addWidget(self.library_view)
+
+        return panel
+
     def _style_plot(self) -> None:
         """Apply theme-aware colours and axis labels to the frontier plot."""
         bg = "#242832" if self._dark else "#ffffff"
@@ -752,6 +1136,128 @@ class StudioWindow(QtWidgets.QMainWindow):
             axis.setTextPen(fg)
             axis.enableAutoSIPrefix(False)
 
+    def _build_menus(self) -> None:
+        """Build the menu bar: File, Run, View, and Help.
+
+        The menu is the keyboard-first route to everything the buttons do (each
+        action carries a standard shortcut), and it is where the theme choice
+        lives -- so the app is usable without a mouse and legible in either
+        theme (CLAUDE.md §6.6: accessibility is a requirement, not a nice-to-have).
+        """
+        menubar = self.menuBar()
+
+        file_menu = menubar.addMenu("&File")
+        self.act_export_fasta = self._add_action(
+            file_menu, "Export &FASTA...", self._export_fasta, "Ctrl+E"
+        )
+        self.act_export_json = self._add_action(
+            file_menu, "Export &JSON...", self._export_json, "Ctrl+J"
+        )
+        self.act_export_library = self._add_action(
+            file_menu, "Export &library FASTA...", self._export_library, "Ctrl+Shift+E"
+        )
+        file_menu.addSeparator()
+        self._add_action(file_menu, "&Quit", self.close, "Ctrl+Q")
+
+        run_menu = menubar.addMenu("&Run")
+        self.act_optimize = self._add_action(
+            run_menu, "&Optimize", self._start_optimize, "Ctrl+R"
+        )
+        self.act_cancel = self._add_action(
+            run_menu, "&Cancel", self._cancel_optimize, "Esc"
+        )
+        run_menu.addSeparator()
+        self.act_rank = self._add_action(
+            run_menu, "Rank && &audit candidates", self._start_candidates, "Ctrl+K"
+        )
+        self.act_library = self._add_action(
+            run_menu, "&Sample library", self._start_library, "Ctrl+L"
+        )
+        run_menu.addSeparator()
+        self.act_assp = self._add_action(
+            run_menu, "&Validate with ASSP (online)", self._start_crosscheck
+        )
+
+        view_menu = menubar.addMenu("&View")
+        self.theme_group = QtGui.QActionGroup(self)
+        self.theme_group.setExclusive(True)
+        for label, key in (("&System", "system"), ("&Light", "light"), ("&Dark", "dark")):
+            action = self._add_action(
+                view_menu, label, lambda _=False, k=key: self._apply_theme(k)
+            )
+            action.setCheckable(True)
+            action.setChecked(key == self._theme_choice)
+            self.theme_group.addAction(action)
+
+        help_menu = menubar.addMenu("&Help")
+        self._add_action(help_menu, "&About BT4 Studio", self._show_about)
+
+    def _add_action(
+        self,
+        menu: QtWidgets.QMenu,
+        text: str,
+        slot: Callable[..., object],
+        shortcut: str = "",
+    ) -> QtGui.QAction:
+        """Add one menu action (optionally with a shortcut) and return it."""
+        action = QtGui.QAction(text, self)
+        if shortcut:
+            action.setShortcut(QtGui.QKeySequence(shortcut))
+        action.triggered.connect(slot)
+        menu.addAction(action)
+        return action
+
+    def _show_about(self) -> None:
+        """Show what BT4 Studio is -- and what it does and does not claim."""
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        box.setWindowTitle("About BT4 Studio")
+        box.setText(
+            "BT4 Studio designs a coding sequence by constrained, "
+            "multi-objective optimization over a codon trellis."
+        )
+        box.setInformativeText(
+            "Everything is computed locally and stays on this machine, except the "
+            "opt-in ASSP cross-check, which you trigger explicitly. Results carry "
+            "an optimality certificate and a content-addressed run manifest, so "
+            "any exported design is reproducible from its stamp. The splice and "
+            "expression models shipped today are UNCALIBRATED: they annotate and "
+            "advise, and they never steer what is delivered."
+        )
+        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        # show() (not exec()) so the app never blocks -- important headless too.
+        self._msgbox = box
+        box.show()
+
+    def _apply_theme(self, choice: str) -> None:
+        """Switch the app between the system, light, and dark palettes at runtime.
+
+        Restyles everything that caches a colour: the application stylesheet, the
+        two pyqtgraph plots, the certificate/summary badges, and the sequence
+        viewers' violation highlights (which are re-applied from the still-live
+        results, so nothing has to be recomputed).
+        """
+        self._theme_choice = choice
+        self._dark = _is_dark() if choice == "system" else (choice == "dark")
+
+        app = QtWidgets.QApplication.instance()
+        if isinstance(app, QtWidgets.QApplication):
+            app.setStyleSheet(theme.stylesheet(self._dark))
+
+        self._style_plot()
+        self._style_tracks_plot()
+        for viewer in (self.sequence_view, self.library_view):
+            viewer.set_dark(self._dark)
+
+        # Badges carry their own inline QSS, so re-assert it against the new theme.
+        delivered = self._delivered()
+        self.badge.setStyleSheet(
+            theme.badge_qss(delivered.certificate.status.value if delivered else "")
+        )
+        if self._last is not None and delivered is not None:
+            self._render_frontier(self._last)
+            self._render_tracks(delivered)
+
     def _set_tab_order(self) -> None:
         """Wire a sensible keyboard tab order through the controls."""
         order = (
@@ -782,6 +1288,20 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.cancel_btn,
             self.export_fasta_btn,
             self.export_json_btn,
+            self.assp_btn,
+            self.cand_n_spin,
+            self.cand_repeat_spin,
+            self.splice_cnn_check,
+            self.ribonn_check,
+            self.ribonn_species_combo,
+            self.utr5_edit,
+            self.utr3_edit,
+            self.rank_btn,
+            self.lib_n_spin,
+            self.lib_temp_spin,
+            self.lib_seed_spin,
+            self.library_btn,
+            self.export_library_btn,
         )
         for first, second in pairwise(order):
             self.setTabOrder(first, second)
@@ -960,8 +1480,67 @@ class StudioWindow(QtWidgets.QMainWindow):
             return 0.0, ()
         return 1.0, cds
 
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """Shut running workers down before the window (and its threads) die.
+
+        Qt aborts the process if a ``QThread`` is destroyed while still running,
+        and closing the window destroys the threads parented to it. So on close
+        we cancel what is cancelable (the frontier sweep polls a flag between
+        points) and give each live thread a bounded chance to finish.
+
+        The wait is bounded on purpose: a solve that is deep inside a single
+        long step cannot be interrupted, and hanging the close forever would be
+        worse than the abort it avoids. If the budget runs out we accept the
+        close anyway -- the same behaviour as before -- so this strictly reduces
+        the window in which a close can abort, rather than pretending to
+        eliminate it.
+        """
+        if self._worker is not None:
+            self._worker.cancel()
+        for thread in (
+            self._thread,
+            self._cand_thread,
+            self._cc_thread,
+            self._lib_thread,
+        ):
+            if thread is not None and thread.isRunning():
+                thread.quit()
+                thread.wait(_CLOSE_WAIT_MS)
+        super().closeEvent(event)
+
+    def _wire_thread(
+        self,
+        worker: QtCore.QObject,
+        on_finished: Callable[[object], None],
+        on_failed: Callable[[object], None],
+        on_cleared: Callable[[], None],
+    ) -> QtCore.QThread:
+        """Move ``worker`` onto a fresh thread and wire the standard signal set.
+
+        Every background flow needs the same eight connections (start, progress,
+        finished/failed to the window and to ``quit``, deletion, and a cleared
+        callback), so they live in one place rather than being re-typed per flow.
+        The thread is returned **unstarted**: the caller stores its references
+        first, so neither object can be garbage-collected mid-run.
+        """
+        thread = QtCore.QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_progress)
+        worker.finished.connect(on_finished)
+        worker.failed.connect(on_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(on_cleared)
+        return thread
+
     def _start_optimize(self) -> None:
         """Validate the inputs, then launch a frontier optimization off-thread."""
+        if self._busy():
+            return  # another engine flow is already in flight
         protein = self._prepare_protein()
         if protein is None:
             return
@@ -981,32 +1560,17 @@ class StudioWindow(QtWidgets.QMainWindow):
             message = f"Optimizing... ({self._cpb_warning})"
         self.statusBar().showMessage(message)
 
-        thread = QtCore.QThread(self)
         worker = OptimizeWorker(protein, config, steps)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progress.connect(self._on_progress)
-        worker.finished.connect(self._on_finished)
-        worker.failed.connect(self._on_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._clear_optimize_thread)
+        thread = self._wire_thread(
+            worker, self._on_finished, self._on_failed, self._clear_optimize_thread
+        )
         # Keep references so neither is garbage-collected mid-run.
         self._thread = thread
         self._worker = worker
         thread.start()
 
     def _clear_optimize_thread(self) -> None:
-        """Drop the finished optimize thread/worker refs once the thread has quit.
-
-        Symmetric to :meth:`_clear_candidates_thread`. Without this, ``self._thread``
-        would stay non-``None`` forever after the first optimize, and the
-        candidate flow's ``self._thread is None`` liveness gate would then leave the
-        Optimize button permanently disabled after an optimize-then-rank sequence.
-        """
+        """Drop the finished optimize thread/worker refs once the thread has quit."""
         self._thread = None
         self._worker = None
 
@@ -1022,13 +1586,16 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     def _start_candidates(self) -> None:
         """Validate inputs, then assemble + rank + splice-audit off-thread."""
-        if self._cand_thread is not None:
-            return  # a candidate run is already in flight
+        if self._busy():
+            return  # another engine flow is already in flight
         protein = self._prepare_protein()
         if protein is None:
             return
         enzymes = self._prepare_enzymes()
         if enzymes is None:
+            return
+        ok, predictor = self._prepare_predictor()
+        if not ok:
             return
         if not self._confirm_long_run(protein):
             return
@@ -1040,7 +1607,6 @@ class StudioWindow(QtWidgets.QMainWindow):
             message = f"Ranking candidates... ({self._cpb_warning})"
         self.statusBar().showMessage(message)
 
-        thread = QtCore.QThread(self)
         worker = CandidatesWorker(
             protein,
             config,
@@ -1048,18 +1614,14 @@ class StudioWindow(QtWidgets.QMainWindow):
             n=self.cand_n_spin.value(),
             repeat_variants=self.cand_repeat_spin.value(),
             include_cnns=self.splice_cnn_check.isChecked(),
+            predictor=predictor,
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progress.connect(self._on_cand_progress)
-        worker.finished.connect(self._on_cand_finished)
-        worker.failed.connect(self._on_cand_failed)
-        worker.finished.connect(thread.quit)
-        worker.failed.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._clear_candidates_thread)
+        thread = self._wire_thread(
+            worker,
+            self._on_cand_finished,
+            self._on_cand_failed,
+            self._clear_candidates_thread,
+        )
         self._cand_thread = thread
         self._cand_worker = worker
         thread.start()
@@ -1071,15 +1633,182 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     def _set_candidates_running(self, running: bool) -> None:
         """Toggle controls while a candidate run is in flight."""
-        self.rank_btn.setEnabled(not running)
+        self._cand_running = running
         self.rank_btn.setText("Ranking..." if running else "Rank && audit")
-        # Avoid two engine runs competing at once.
-        self.optimize_btn.setEnabled(not running and self._thread is None)
+        self._update_run_buttons()
 
-    @QtCore.Slot(int, str)
-    def _on_cand_progress(self, value: int, label: str) -> None:
-        """Show candidate-flow progress in the status bar."""
-        self.statusBar().showMessage(f"{label} ({value}%)")
+    # ---- cross-check flow -------------------------------------------------
+
+    def _start_crosscheck(self) -> None:
+        """Ask for consent, then cross-check the delivered sequence off-thread.
+
+        The only outbound network call BT4 Studio makes. It runs on the delivered
+        sequence only (never mid-optimization), is confirmed by the user first,
+        and can never fail a run: an outage returns ``available is False`` with a
+        reason (CLAUDE.md §10.15).
+        """
+        if self._busy():
+            return  # another engine flow is already in flight
+        delivered = self._delivered()
+        if delivered is None:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Send sequence to ASSP?",
+            _ASSP_CONSENT,
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+
+        self._set_crosscheck_running(True)
+        self.statusBar().showMessage("Cross-checking with ASSP...")
+
+        worker = CrossCheckWorker(delivered.dna, backend="assp")
+        thread = self._wire_thread(
+            worker,
+            self._on_crosscheck_finished,
+            self._on_crosscheck_failed,
+            self._clear_crosscheck_thread,
+        )
+        self._cc_thread = thread
+        self._cc_worker = worker
+        thread.start()
+
+    def _clear_crosscheck_thread(self) -> None:
+        """Drop the finished cross-check thread/worker references."""
+        self._cc_thread = None
+        self._cc_worker = None
+
+    def _set_crosscheck_running(self, running: bool) -> None:
+        """Toggle controls while a cross-check is in flight."""
+        self._cc_running = running
+        self.assp_btn.setText("Cross-checking..." if running else "Validate with ASSP")
+        self._update_run_buttons()
+
+    @QtCore.Slot(object)
+    def _on_crosscheck_finished(self, report: object) -> None:
+        """Render a finished cross-check, unless it is about a different sequence.
+
+        A cross-check report describes exactly one sequence, and it carries that
+        sequence (:attr:`SpliceCrossCheck.dna`). If the delivered design changed
+        while the report was in flight, showing it would attribute one sequence's
+        predicted splice sites to another -- so it is discarded and said so,
+        rather than rendered. Comparing the report's own DNA to the live delivered
+        DNA needs no extra bookkeeping and cannot drift out of sync.
+        """
+        self._set_crosscheck_running(False)
+        if not isinstance(report, api.SpliceCrossCheck):
+            return
+        delivered = self._delivered()
+        if delivered is None or report.dna.upper() != delivered.dna.upper():
+            self._reset_crosscheck()
+            self.assp_banner.setText(
+                "Cross-check <b>discarded</b>: the delivered sequence changed "
+                "while it was running, and a report describes one sequence only. "
+                "Run it again on the current design."
+            )
+            self.statusBar().showMessage(
+                "ASSP cross-check discarded (the delivered sequence changed)."
+            )
+            return
+        self._render_crosscheck(report)
+
+    @QtCore.Slot(object)
+    def _on_crosscheck_failed(self, error: object) -> None:
+        """Report a cross-check that could not even be attempted.
+
+        ``run_splice_crosscheck`` degrades a backend failure into an unavailable
+        *report*, so reaching here means something more basic went wrong. Either
+        way this is advisory: the delivered result is left untouched and still
+        exportable -- an optional cross-check never invalidates a run.
+        """
+        self._set_crosscheck_running(False)
+        self.assp_table.hide()
+        self.assp_table.setRowCount(0)
+        self.assp_banner.setText(
+            "<b>ASSP cross-check unavailable</b> &mdash; "
+            f"{escape(str(error))}<br>"
+            "<i>Advisory only; the delivered result is unaffected.</i>"
+        )
+        self.statusBar().showMessage("ASSP cross-check unavailable.")
+
+    # ---- library flow -----------------------------------------------------
+
+    def _start_library(self) -> None:
+        """Validate inputs, then sample a library off-thread."""
+        if self._busy():
+            return  # another engine flow is already in flight
+        protein = self._prepare_protein()
+        if protein is None:
+            return
+        enzymes = self._prepare_enzymes()
+        if enzymes is None:
+            return
+        config, _steps = self._build_config(enzymes)
+
+        self._set_library_running(True)
+        self.statusBar().showMessage("Sampling library...")
+
+        worker = LibraryWorker(
+            protein,
+            config,
+            n=self.lib_n_spin.value(),
+            temperature=self.lib_temp_spin.value(),
+            seed=self.lib_seed_spin.value(),
+        )
+        thread = self._wire_thread(
+            worker,
+            self._on_library_finished,
+            self._on_library_failed,
+            self._clear_library_thread,
+        )
+        self._lib_thread = thread
+        self._lib_worker = worker
+        thread.start()
+
+    def _clear_library_thread(self) -> None:
+        """Drop the finished library thread/worker references."""
+        self._lib_thread = None
+        self._lib_worker = None
+
+    def _set_library_running(self, running: bool) -> None:
+        """Toggle controls while a library draw is in flight."""
+        self._lib_running = running
+        self.library_btn.setText("Sampling..." if running else "Sample library")
+        self._update_run_buttons()
+
+    @QtCore.Slot(object)
+    def _on_library_finished(self, result: object) -> None:
+        """Render a finished library draw."""
+        self._set_library_running(False)
+        if not isinstance(result, api.LibraryResult):
+            return
+        self._library = result
+        self._render_library(result)
+        self.statusBar().showMessage(
+            f"Sampled {len(result.results)} sequence(s); "
+            f"{result.distinct} distinct."
+        )
+
+    @QtCore.Slot(object)
+    def _on_library_failed(self, error: object) -> None:
+        """Clear the library panel and explain the failure in plain language."""
+        self._set_library_running(False)
+        self._reset_library()
+        headline, detail = self._friendly_error(error)
+        self.statusBar().showMessage(headline)
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        box.setWindowTitle("Couldn't sample a library")
+        box.setText(headline)
+        if detail:
+            box.setInformativeText(detail)
+        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        self._msgbox = box
+        box.show()
 
     @QtCore.Slot(object)
     def _on_cand_finished(self, result: object) -> None:
@@ -1130,13 +1859,66 @@ class StudioWindow(QtWidgets.QMainWindow):
         box.show()
 
     def _set_running(self, running: bool) -> None:
-        """Toggle controls while a run is in flight so the UI stays consistent."""
-        self.optimize_btn.setEnabled(not running)
+        """Toggle controls while an optimization is in flight."""
+        self._optimize_running = running
         self.optimize_btn.setText("Optimizing..." if running else "Optimize")
-        self.cancel_btn.setEnabled(running)
-        # Don't let a candidate run start while an optimize is in flight (and
-        # re-enable it only if no candidate run is itself active).
-        self.rank_btn.setEnabled(not running and self._cand_thread is None)
+        self._update_run_buttons()
+
+    def _update_run_buttons(self) -> None:
+        """Enable each run control from the live flags (one source of truth).
+
+        Only one engine flow may run at a time, so every start control is gated on
+        "nothing is running". Enablement is derived from the ``_*_running`` flags
+        rather than from thread references, so a missed reference clear can never
+        strand a control (the optimize-then-rank regression). ASSP additionally
+        needs a delivered sequence to cross-check.
+
+        The **menu actions are gated here too**, not just the buttons: they carry
+        keyboard shortcuts, so gating only the buttons would leave Ctrl+R a live
+        back door into starting a second engine flow mid-run.
+        """
+        busy = self._busy()
+        can_crosscheck = not busy and self._delivered() is not None
+        for widget in (self.optimize_btn, self.act_optimize):
+            widget.setEnabled(not busy)
+        for widget in (self.cancel_btn, self.act_cancel):
+            widget.setEnabled(self._optimize_running)
+        for widget in (self.rank_btn, self.act_rank):
+            widget.setEnabled(not busy)
+        for widget in (self.library_btn, self.act_library):
+            widget.setEnabled(not busy)
+        for widget in (self.assp_btn, self.act_assp):
+            widget.setEnabled(can_crosscheck)
+
+    def _busy(self) -> bool:
+        """Whether any engine flow is currently running.
+
+        The single source of truth for "only one flow at a time". Both the UI
+        gate (:meth:`_update_run_buttons`) and each flow's own entry guard read
+        it, so the invariant is enforced in the code path itself and not only by
+        greying out a control.
+        """
+        return (
+            self._optimize_running
+            or self._cand_running
+            or self._cc_running
+            or self._lib_running
+        )
+
+    def _set_export_enabled(self, enabled: bool) -> None:
+        """Enable/disable the delivered-result exports (button and menu together)."""
+        for widget in (
+            self.export_fasta_btn,
+            self.export_json_btn,
+            self.act_export_fasta,
+            self.act_export_json,
+        ):
+            widget.setEnabled(enabled)
+
+    def _set_library_export_enabled(self, enabled: bool) -> None:
+        """Enable/disable the library export (button and menu together)."""
+        for widget in (self.export_library_btn, self.act_export_library):
+            widget.setEnabled(enabled)
 
     # ---- slots ------------------------------------------------------------
 
@@ -1208,8 +1990,24 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.violations_legend.clear()
         self.plot.clear()
         self.tracks_plot.clear()
-        self.export_fasta_btn.setEnabled(False)
-        self.export_json_btn.setEnabled(False)
+        self._set_export_enabled(False)
+        self._reset_crosscheck()
+        self._update_run_buttons()
+
+    def _reset_crosscheck(self) -> None:
+        """Clear the ASSP panel to its empty state.
+
+        Called whenever the delivered sequence changes or is dropped: a
+        cross-check report is *about one sequence*, so leaving the previous
+        report on screen beside a new design would attribute someone else's
+        splice sites to it.
+        """
+        self.assp_table.setRowCount(0)
+        self.assp_table.hide()
+        self.assp_banner.setText(
+            "Not run. ASSP is an <b>optional online</b> second opinion on the "
+            "delivered sequence &mdash; nothing is sent until you press the button."
+        )
 
     def _populate(self, result: api.FrontierResult) -> None:
         """Render badge, metrics, sequence, and frontier for a delivered result."""
@@ -1226,9 +2024,11 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._render_sequence(delivered)
         self._render_frontier(result)
         self._render_tracks(delivered)
+        # A cross-check describes one specific sequence; this is a new one.
+        self._reset_crosscheck()
 
-        self.export_fasta_btn.setEnabled(True)
-        self.export_json_btn.setEnabled(True)
+        self._set_export_enabled(True)
+        self._update_run_buttons()
 
         cai = float(delivered.audit["cai"])
         gc_pct = delivered.metrics.gc * 100.0
@@ -1358,6 +2158,138 @@ class StudioWindow(QtWidgets.QMainWindow):
                 pen=pg.mkPen("#e0724a", width=2),
                 name="CpG density",
             )
+
+    def _render_crosscheck(self, report: api.SpliceCrossCheck) -> None:
+        """Render an ASSP cross-check, leading with what it is and is not.
+
+        Mirrors the CLI's stderr block (``_print_splice_crosscheck``): the tags
+        come first -- network-derived, uncalibrated, advisory, not in the manifest
+        -- then either the graceful "unavailable" reason or the pooled risk and
+        the localized sites. Nothing here touches the delivered
+        :class:`~bt4.api.Result`, so an export stays byte-identical whether or not
+        a cross-check was ever run (CLAUDE.md §6, §10.15).
+        """
+        tags = ["network-derived" if report.network_derived else "local"]
+        tags.append("calibrated" if report.calibrated else "UNCALIBRATED")
+        # This banner is RichText, and `reason` can carry a remote service's own
+        # error text. Escape everything that came from outside before it is
+        # interpolated: untrusted markup must never be able to rewrite (or hide)
+        # the very labels that mark these numbers advisory and uncalibrated.
+        parts = [
+            f"<b>{escape(report.backend)}</b> &mdash; {', '.join(tags)}; advisory "
+            "only, <b>not</b> part of the run manifest and never exported."
+        ]
+        if not report.available:
+            parts.append(f"<b>Unavailable:</b> {escape(report.reason or '')}")
+            parts.append(
+                "<i>An opt-in cross-check outage never fails a run &mdash; the "
+                "delivered result and its local audit are unaffected.</i>"
+            )
+            self.assp_table.setRowCount(0)
+            self.assp_table.hide()
+            self.assp_banner.setText("<br>".join(parts))
+            self.statusBar().showMessage("ASSP unavailable (the run is unaffected).")
+            return
+
+        parts.append(
+            f"Pooled risk <b>{report.pooled_risk:.3f}</b> "
+            f"(top-{report.top_k} log-odds, uncalibrated) &middot; "
+            f"{len(report.sites)} predicted site(s)."
+        )
+        self.assp_banner.setText("<br>".join(parts))
+
+        self.assp_table.setRowCount(len(report.sites))
+        for row, site in enumerate(report.sites):
+            values = (
+                site.kind,
+                str(site.position),
+                f"{site.score:.3f}",
+                site.site_class or "-",
+            )
+            for col, text in enumerate(values):
+                self.assp_table.setItem(row, col, QtWidgets.QTableWidgetItem(text))
+        self.assp_table.resizeColumnsToContents()
+        self.assp_table.setVisible(bool(report.sites))
+        self.statusBar().showMessage(
+            f"ASSP cross-check: {len(report.sites)} site(s) "
+            "(network-derived, advisory)."
+        )
+
+    # ---- library rendering ------------------------------------------------
+
+    def _reset_library(self) -> None:
+        """Clear the library panel to an honest empty state."""
+        self._library = None
+        self.library_table.setRowCount(0)
+        self.library_view.set_sequence("")
+        self.lib_banner.setText(
+            "No library yet. Press <b>Sample library</b> to draw one."
+        )
+        self.lib_banner.setStyleSheet(theme.badge_qss(""))
+        self._set_library_export_enabled(False)
+
+    def _render_library(self, result: api.LibraryResult) -> None:
+        """Fill the library table and banner from a finished draw.
+
+        The banner leads with the honest framing: these sequences are **sampled,
+        not optimized**, so their ``SAMPLED`` certificate asserts no optimality
+        and the table order is a draw order, not a ranking. Diversity is reported
+        as measured (distinct count and mean pairwise Hamming), and any residual
+        GLOBAL violation -- not enforced during sampling -- is visible per member
+        in the hard/soft columns and highlighted in the sequence viewer.
+        """
+        members = result.results
+        self.library_table.setRowCount(len(members))
+        for row, member in enumerate(members):
+            values = (
+                str(row),
+                f"{float(member.audit['cai']):.4f}",
+                f"{member.metrics.gc * 100.0:.2f}",
+                str(member.metrics.hard_violations),
+                str(member.metrics.soft_violations),
+                member.certificate.status.value,
+            )
+            for col, text in enumerate(values):
+                self.library_table.setItem(row, col, QtWidgets.QTableWidgetItem(text))
+        self.library_table.resizeColumnsToContents()
+
+        self.lib_banner.setText(
+            "<b>Sampled, not optimized.</b> Every member carries the SAMPLED "
+            "certificate: no optimality claim, no expression claim, and the row "
+            "order is the draw order, not a ranking.<br>"
+            f"{len(members)} member(s) &middot; {result.distinct} distinct "
+            f"&middot; mean pairwise difference "
+            f"{result.mean_pairwise_hamming:.1%}.<br>"
+            "<i>Non-local rules (max-repeat, uORF) are not enforced during "
+            "sampling; any residual violation is counted per member and "
+            "highlighted in the sequence below.</i>"
+        )
+        # Colour the banner from the members' own certificate, so the badge can
+        # never drift from the claim the engine actually made.
+        status = members[0].certificate.status.value if members else ""
+        self.lib_banner.setStyleSheet(theme.badge_qss(status))
+        self._set_library_export_enabled(bool(members))
+        self.library_table.clearSelection()
+        if members:
+            self.library_table.selectRow(0)
+        # Repaint the viewer explicitly rather than relying on selectRow to emit
+        # itemSelectionChanged: repopulating the table in place leaves the old
+        # selection intact, so re-selecting row 0 after a second draw emits
+        # nothing and would strand the PREVIOUS draw's sequence on screen --
+        # attributing one library's member to another.
+        self._show_library_member()
+
+    def _show_library_member(self) -> None:
+        """Show the selected library member's DNA with its violation highlights."""
+        if self._library is None:
+            return
+        row = self.library_table.currentRow()
+        members = self._library.results
+        if not 0 <= row < len(members):
+            self.library_view.set_sequence("")
+            return
+        member = members[row]
+        self.library_view.set_sequence(member.dna, member.violations)
 
     # ---- candidates rendering ---------------------------------------------
 
@@ -1509,6 +2441,34 @@ class StudioWindow(QtWidgets.QMainWindow):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(api.to_fasta(delivered.dna, header=header))
         self.statusBar().showMessage(f"Wrote FASTA to {path}")
+
+    def _export_library(self) -> None:
+        """Write every sampled library member to one multi-record FASTA file.
+
+        Each record is named ``<job>_<index>`` and carries the sampler's honest
+        framing in its header, so a downstream reader cannot mistake a sampled
+        member for an optimized delivery.
+        """
+        if self._library is None or not self._library.results:
+            return
+        job = self.jobname_edit.text().strip() or "bt4"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Export library FASTA",
+            f"{job}_library.fasta",
+            "FASTA (*.fasta *.fa);;All files (*)",
+        )
+        if not path:
+            return
+        records = [
+            api.to_fasta(member.dna, header=f"{job}_{index} sampled")
+            for index, member in enumerate(self._library.results)
+        ]
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("".join(records))
+        self.statusBar().showMessage(
+            f"Wrote {len(records)} sampled sequence(s) to {path}"
+        )
 
     def _export_json(self) -> None:
         """Write the delivered result (with manifest) to a JSON file."""

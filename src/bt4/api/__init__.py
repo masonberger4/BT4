@@ -16,7 +16,9 @@ from bt4.biomodels.codon.build import build_table, count_codons, write_table
 from bt4.biomodels.codon.tables import available_organisms
 from bt4.biomodels.codon.tai import available_tai_organisms
 from bt4.biomodels.expression import ExpressionPredictor, ExpressionResult
+from bt4.biomodels.expression import available_backends as available_expression_backends
 from bt4.biomodels.expression import default as expression_model
+from bt4.biomodels.expression import resolve_backend as resolve_expression_backend
 from bt4.biomodels.splice import SpliceAuditReport, SpliceFlag, SplicePredictor
 from bt4.constraints import (
     ForbiddenPreset,
@@ -75,6 +77,7 @@ __all__ = [
     "assemble_and_rank_candidates",
     "audit_candidate_set",
     "available_enzymes",
+    "available_expression_backends",
     "available_forbidden_presets",
     "available_organisms",
     "available_splice_backends",
@@ -89,6 +92,7 @@ __all__ = [
     "parse_fasta",
     "read_fasta",
     "rerank_by_expression",
+    "resolve_expression_backend",
     "resolve_splice_backend",
     "result_to_dict",
     "result_to_json",

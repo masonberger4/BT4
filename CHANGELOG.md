@@ -8,6 +8,80 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **BT4 Studio surfaces the engine-ready backends, gains library mode, and gets
+  its Phase-4 polish** (`bt4.app`) — the two models that already existed behind
+  `bt4.api` but had no UI are now wired in, plus the sampler and the accessibility
+  work called for in CLAUDE.md §6.6. All of it is pure plumbing over the stable
+  API (no engine change, no calibration claim):
+  - **RiboNN in the Candidates tab.** An opt-in *Expression head* group (toggle,
+    species, and the fixed 5'/3' UTR context the model requires) routes a
+    `RiboNNExpressionModel` into `api.candidates`. The toggle is enabled **only**
+    when `available_expression_backends()` reports the user's own checkout and
+    weights actually resolve, so it is never a dead control, and it explains what
+    is missing otherwise. Missing/non-DNA UTRs are refused *before* the run starts
+    rather than raising mid-flight. RiboNN stays `calibrated=False`, so the banner
+    still reads **discovery order, not a ranking** and the solver's pick stays
+    delivered (§10.6).
+  - **Validate with ASSP.** The one control that leaves the machine. It asks for
+    consent first (naming the service and what is sent), runs
+    `api.splice_crosscheck` on a background thread, and renders the report led by
+    its tags — *network-derived, UNCALIBRATED, advisory, **not** part of the run
+    manifest and never exported* — with the localized sites in a table. An outage
+    degrades to a labeled "unavailable" banner and never fails a run (§10.15). The
+    panel is cleared whenever the delivered sequence changes, so one sequence's
+    splice sites can never be shown beside another's, and an export is
+    byte-identical whether or not a cross-check ran (regression-tested).
+  - **Library (sampled) tab.** `api.library` with members / temperature / seed
+    controls, a per-member table, the selected member's sequence with its
+    violation highlights, and a multi-record FASTA export whose every record is
+    named `sampled`. The banner leads with **sampled, not optimized** — the
+    `SAMPLED` certificate colours the badge directly, so it cannot drift from the
+    claim the engine made — and reports measured diversity (distinct count, mean
+    pairwise difference).
+  - **Phase-4 polish.** A File/Run/View/Help menu bar with standard shortcuts
+    makes every action keyboard-reachable; **View → System / Light / Dark**
+    switches theme at runtime (restyling the stylesheet, both plots, the badges,
+    and the sequence viewers' violation bands from the still-live results, via a
+    new `SequenceViewer.set_dark`); tab order covers every new control and each
+    carries an accessible name plus an explanatory tooltip.
+  - **One source of truth for run gating.** All four flows (optimize, rank+audit,
+    cross-check, library) share a `_wire_thread` helper and a `_update_run_buttons`
+    gate driven by explicit running-flags rather than thread references — so a
+    missed reference clear can no longer strand a control (the previous
+    optimize-then-rank stuck-button class of bug is now structurally impossible).
+  - New shared `_EngineWorker` base in `bt4.app.worker` (signal trio + the
+    never-raise contract) with `CrossCheckWorker` and `LibraryWorker` alongside
+    the existing two.
+
+  Found by an adversarial review of the above and fixed in the same change (each
+  with a regression test that fails without its fix):
+  - **A late cross-check could be attributed to the wrong sequence.** A report
+    describes exactly one sequence and carries it, so `_on_crosscheck_finished`
+    now compares `report.dna` to the live delivered DNA and *discards* a report
+    whose design changed while it ran, instead of rendering it. The panel-clearing
+    rule covered only the other ordering.
+  - **Menu shortcuts bypassed the single-flow gate.** `Ctrl+R` during an in-flight
+    cross-check started a second engine flow, because only the buttons were gated.
+    The Run actions are now gated alongside them, and each `_start_*` refuses via a
+    shared `_busy()` check — so the invariant lives in the code path, not only in a
+    greyed-out control.
+  - **A second library draw stranded the first draw's sequence on screen.**
+    Repopulating the table in place leaves the selection intact, so re-selecting
+    row 0 emitted nothing; the member viewer is now repainted explicitly.
+  - **Untrusted service text could rewrite the honesty banner.** ASSP's own error
+    text was interpolated unescaped into a RichText label — markup that could hide
+    the very "network-derived / UNCALIBRATED / advisory" labels marking it. All
+    externally-derived text is now HTML-escaped.
+  - **Closing mid-run destroyed a running `QThread`** (pre-existing, but this change
+    triples the number of flows that can be in flight). `closeEvent` now cancels
+    what is cancelable and gives each live thread a bounded chance to finish.
+- **Public expression-backend registry** (`bt4.biomodels.expression.available_backends`
+  / `resolve_backend`, re-exported as `bt4.api.available_expression_backends` /
+  `resolve_expression_backend`) — the mirror of the splice resolver, so a frontend
+  selects an expression head by name through the stable API instead of importing
+  `biomodels` across a layer (§3, §10.9). `available_backends()` never raises and
+  lists `"ribonn"` only when it can genuinely run; resolution is lazy (no torch
+  import, no weight load) and confers **no** calibration.
 - **Opt-in, out-of-loop ASSP splice cross-check** (`bt4.api.splice_crosscheck` /
   `bt4.pipeline.run_splice_crosscheck`, `bt4.biomodels.splice.AsspSplicePredictor`)
   — a **network** validator that runs the online ASSP service (Alternative Splice
