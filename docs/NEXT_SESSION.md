@@ -29,6 +29,7 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Rust trellis port (`trellis_solve`, regime-gated) | DONE | n/a | `rust/bt4_core`, `bt4_native` |
 | Objectives: CAI, tAI, GC, ramp, CpG, %MinMax, codon-pair | DONE | n/a | `objectives/` |
 | tAI (real GtRNAdb, 8 organisms) | DONE | n/a | `biomodels/codon/tai.py` |
+| Codon tables: 9 organisms (6 recounted from pinned Ensembl CDS) | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
 | Constraints: homopolymer, GC-run, max-repeat, tandem/inverted, forbidden+presets, restriction, Kozak-ATG, uORF, splice-motif | DONE | n/a | `constraints/` |
 | Budget backends: CP-SAT, Lagrangian, dinucleotide-count | DONE | n/a | `optimize/{cpsat,lagrangian}.py` |
 | SA refinement + block moves + parallel tempering | DONE | n/a | `optimize/anneal_refine.py` |
@@ -65,12 +66,23 @@ consented, clearly-labeled network control.
 Ordered. Each item is tagged by precondition. **Pick the first `self-contained`
 item unless you have a reason not to.**
 
-1. **[START HERE · self-contained] Phase-5 organism breadth** — add more organisms
-   with authoritative provenance via `bt4 build-table` on public CDS sets
-   (content-hash the sources; never fabricate a table), and grow the
-   restriction-enzyme / REBASE catalog. Fully autonomous, always welcome. Tables
-   feed CAI (and tAI where GtRNAdb data exists); wire each new organism through
-   `available_organisms()` and add its provenance sidecar.
+1. **[START HERE · self-contained] Phase-5 breadth, continued.** The six
+   organisms that had stranded tRNA tables (mouse, rat, zebrafish, *Drosophila*,
+   *C. elegans*, *Arabidopsis*) now ship **recounted** codon tables built by
+   `scripts/build_organism_tables.py` from release-pinned Ensembl CDS sets, so BT4
+   offers nine organisms and no bundled tRNA table is unreachable. What remains:
+   - **Grow the restriction-enzyme / REBASE catalog** (`constraints/restriction.py`)
+     — self-contained, cite each recognition site.
+   - **Add further organisms** by extending `SPECS` in the build script (CHO/*P.
+     pastoris*/*B. subtilis* are the obvious industrial gaps). Pair each with
+     GtRNAdb tRNA data where it exists; never fabricate a table.
+   - **Recount the three legacy tables.** human, *E. coli* and *S. cerevisiae* are
+     still hand-curated Kazusa-style *representative* values with `cds_count: null`
+     — now the least well-provenanced tables BT4 ships, and human is the **default
+     organism**. Recounting them through the same script would make provenance
+     uniform, but it **changes CAI numbers and therefore the golden tests**, so it
+     needs its own PR with the golden panel regenerated deliberately (and the
+     before/after CAI shift reported honestly, not quietly re-pinned).
 2. **[self-contained] Remaining BT4 Studio work.** The engine-ready backends are
    now surfaced (RiboNN in the Candidates tab, the opt-in ASSP cross-check on the
    Design tab), library mode has its own tab, and the menu bar / runtime

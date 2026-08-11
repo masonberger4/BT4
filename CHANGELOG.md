@@ -8,6 +8,45 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Six new organisms, recounted from release-pinned public CDS sets** — mouse,
+  rat, zebrafish, *Drosophila*, *C. elegans*, and *Arabidopsis*, taking BT4 from
+  three selectable organisms to nine (Phase 5 organism breadth, CLAUDE.md §8/§9).
+  This closes a real gap rather than padding a list: all six already shipped
+  authentic GtRNAdb **tRNA** tables, but tAI is only offered for an organism you
+  can *select*, and selection needs a codon-usage table — so six of the eight
+  bundled tRNA tables were **unreachable**. A regression test
+  (`test_every_trna_table_has_a_selectable_organism`) keeps that from recurring.
+  - **Every number is a real count, never a curated summary.** New
+    `scripts/build_organism_tables.py` downloads a **release-pinned** Ensembl /
+    Ensembl Plants CDS FASTA (release 116 / plants 63 — pinned, not `current`,
+    which moves), filters to complete unambiguous in-frame coding sequences
+    (ACGT-only, length 3N, ATG start, terminal stop, no internal stop), takes
+    **one representative CDS per gene** (the longest; ties broken by transcript id
+    so the pick is deterministic) so codon usage is not weighted by how finely a
+    gene happens to be annotated, and counts codons with BT4's own
+    `count_codons`. The terminal stop is counted, since BT4 chooses the stop it
+    appends.
+  - **Re-derivable by a third party.** Each provenance sidecar now carries the
+    source URL, the **downloaded file's own SHA-256**, assembly, database release,
+    total codons counted, the full per-filter drop tally, and the rebuild command
+    — alongside the existing content hash of the TSV itself. `--verify` rebuilds
+    into a temp directory and diffs against the committed bytes; all six verify
+    byte-identically.
+  - **Refuses rather than fabricates.** The builder aborts if a CDS set yields no
+    valid sequences, or if any of the 64 codons goes unobserved — it will not
+    smooth an invented number into a shipped table.
+  - **Checked against external ground truth (§8), not just self-consistency.**
+    The new tables reproduce independently-published facts: GC3 orders
+    *Drosophila* (0.63) > zebrafish (0.54) > *Arabidopsis* (0.42) > *C. elegans*
+    (0.40); mouse (0.573) and rat (0.578), counted from separate CDS sets, land
+    within 1.5 points of human (0.587); preferred Leu is CTG in the GC3-rich
+    genomes and CTT in the AT-rich ones; preferred stop is TGA in the GC-richer
+    genomes and TAA in the AT-rich ones. Gene counts match published
+    protein-coding counts (e.g. *C. elegans* 19,928; mouse 21,571).
+- `write_table` gained `build` / `note` / `extra` parameters so a recount can
+  describe what it actually did and attach a re-derivation trail. Reserved
+  provenance keys cannot be shadowed by `extra`, so a sidecar can never disagree
+  with itself.
 - **BT4 Studio surfaces the engine-ready backends, gains library mode, and gets
   its Phase-4 polish** (`bt4.app`) — the two models that already existed behind
   `bt4.api` but had no UI are now wired in, plus the sampler and the accessibility

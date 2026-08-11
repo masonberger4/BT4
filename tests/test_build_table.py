@@ -145,3 +145,38 @@ def test_write_table_provenance_sha256_matches_disk(tmp_path: Path) -> None:
     assert provenance["cds_count"] == 7
     assert isinstance(provenance["retrieved"], str)
     assert provenance["retrieved"]
+
+
+def test_write_table_accepts_build_note_and_extra(tmp_path: Path) -> None:
+    """A recount caller can override build/note and attach a re-derivation trail."""
+    counts: dict[str, int] = dict.fromkeys(CODON_TABLE, 3)
+    write_table(
+        counts,
+        organism="toy",
+        path=tmp_path,
+        source="pinned CDS set",
+        cds_count=42,
+        build="recounted from a pinned FASTA",
+        note="Real genome-wide codon counts.",
+        extra={"source_url": "https://example.org/toy.fa.gz", "source_sha256": "ab" * 32},
+    )
+    prov = json.loads((tmp_path / "toy.provenance.json").read_text(encoding="utf-8"))
+    assert prov["build"] == "recounted from a pinned FASTA"
+    assert prov["note"] == "Real genome-wide codon counts."
+    assert prov["source_url"] == "https://example.org/toy.fa.gz"
+    # Reserved keys still come from their own parameters, not from extra.
+    assert prov["source"] == "pinned CDS set"
+    assert prov["cds_count"] == 42
+
+
+def test_write_table_extra_cannot_shadow_reserved_keys(tmp_path: Path) -> None:
+    """`extra` must not be able to make the sidecar disagree with itself."""
+    counts: dict[str, int] = dict.fromkeys(CODON_TABLE, 1)
+    with pytest.raises(ValueError, match="reserved"):
+        write_table(
+            counts,
+            organism="toy",
+            path=tmp_path,
+            source="s",
+            extra={"sha256": "deadbeef", "note": "spoofed"},
+        )
