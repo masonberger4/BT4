@@ -25,6 +25,7 @@ from importlib.resources import files
 
 import pytest
 
+from bt4 import api
 from bt4.biomodels.codon.tables import (
     CodonUsageTable,
     available_organisms,
@@ -241,3 +242,30 @@ def test_cai_in_unit_interval(name: str) -> None:
     table = load_table(name)
     dna = "ATG" + "GCA" + "CTT" + "CGG" + "AAA" + "TAA"
     assert 0.0 < table.cai(dna) <= 1.0
+
+
+@pytest.mark.parametrize("name", RECOUNTED)
+def test_table_content_hash_reaches_the_run_manifest(name: str) -> None:
+    """Each new table's *content* hash must enter the provenance stamp (#9).
+
+    Hashing config field names -- BT4's cautionary tale from BT3 (§10.10) -- would
+    make two organisms stamp identically. Six new tables are six new chances to
+    regress that, so assert the actual TSV digest appears in the manifest.
+    """
+    result = api.optimize(
+        "MAALKHETQW", api.OptimizeConfig(organism=name, max_homopolymer=5)
+    )
+    manifest = json.loads(api.result_to_json(result))["audit"]["manifest"]
+    assert manifest["inputs"]["codon_table_sha256"] == load_provenance(name).sha256
+
+
+def test_each_organism_stamps_a_distinct_manifest() -> None:
+    """Swapping the organism must change the stamp (invariant #9)."""
+    stamps = set()
+    for name in RECOUNTED:
+        result = api.optimize(
+            "MAALKHETQW", api.OptimizeConfig(organism=name, max_homopolymer=5)
+        )
+        manifest = json.loads(api.result_to_json(result))["audit"]["manifest"]
+        stamps.add(json.dumps(manifest, sort_keys=True))
+    assert len(stamps) == len(RECOUNTED)

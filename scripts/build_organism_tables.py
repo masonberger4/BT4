@@ -274,16 +274,20 @@ def representative_cds(path: Path) -> tuple[list[str], FilterStats]:
         if not valid_cds(seq, stats):
             continue
         transcript, gene = parse_ids(header)
-        # Longest CDS wins; ties break on transcript id so the pick is stable
-        # across runs and machines (invariant #7 reaches the data, too).
+        # Longest CDS wins; an exact tie keeps the lexicographically smaller
+        # transcript id, so the pick is stable across runs and machines
+        # regardless of the order records happen to appear in the file
+        # (invariant #7 reaches the data, too).
         candidate = (len(seq), transcript, seq)
         current = best.get(gene)
         if current is None:
             best[gene] = candidate
-        else:
-            stats.dropped_isoform += 1
-            if (candidate[0], current[1]) > (current[0], candidate[1]):
-                best[gene] = candidate
+            continue
+        stats.dropped_isoform += 1
+        longer = candidate[0] > current[0]
+        tie_break = candidate[0] == current[0] and candidate[1] < current[1]
+        if longer or tie_break:
+            best[gene] = candidate
     stats.kept = len(best)
     return [entry[2] for entry in best.values()], stats
 
