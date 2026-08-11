@@ -42,7 +42,7 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Candidate-set assembly + expression rerank | DONE | calibrated-gated | `pipeline/candidates.py`, `bt4.api.candidates` |
 | Library / degenerate-design (SAMPLED) mode | DONE | n/a (sampler, not optimizer) | `optimize/sample.py`, `pipeline/library.py` |
 | Surfaces: `bt4.api`, `bt4` CLI, FastAPI service, provenance | DONE | n/a | `api/`, `cli/`, `service/`, `provenance/` |
-| **BT4 Studio** incl. Candidates & splice-audit tab | DONE | n/a | `app/studio.py`, `app/worker.py` |
+| **BT4 Studio** incl. Candidates & splice-audit tab | DONE · RiboNN + ASSP not yet surfaced in the UI (queue #2) | n/a | `app/studio.py`, `app/worker.py` |
 | Packaged installers (PyInstaller/Briefcase) | NOT-STARTED | n/a | `packaging/` |
 
 The **expression/splice design flow**
@@ -67,9 +67,22 @@ item unless you have a reason not to.**
    restriction-enzyme / REBASE catalog. Fully autonomous, always welcome. Tables
    feed CAI (and tAI where GtRNAdb data exists); wire each new organism through
    `available_organisms()` and add its provenance sidecar.
-2. **[self-contained] BT4 Studio polish** — light/dark theming, accessibility,
-   responsive layout (Phase 4 polish, §6.6); a library-mode control (`api.library`)
-   is a natural add.
+2. **[self-contained] BT4 Studio polish + surface engine-ready backends** — two
+   models already exist behind `bt4.api` but are **not yet wired into the UI**, and
+   are the highest-value app work (no calibration needed — pure plumbing over the
+   stable API):
+   - **Wire RiboNN into the Candidates tab.** `app/worker.py` calls `api.candidates(...)`
+     with no `predictor`, so Studio always uses the `NullExpressionModel` placeholder.
+     Add an opt-in control (mirroring the splice-CNN toggle) that passes a
+     `RiboNNExpressionModel` when `$BT4_RIBONN_DIR` is set; keep the uncalibrated
+     "discovery order, not a ranking" banner until its gate passes.
+   - **Add a "validate with ASSP" control** (§6.6) that runs `api.splice_crosscheck`
+     on the delivered sequence off-thread, rendering the result as a clearly-labeled
+     **network-derived / advisory / not-in-manifest** section (never folded into the
+     export) and degrading gracefully when the service is unavailable.
+
+   Then the Phase-4 polish: light/dark theming, accessibility, responsive layout
+   (§6.6); a library-mode control (`api.library`) is a natural add.
 3. **[self-contained] External-validation report** — compare BT4 output
    codon/GC/CpG distributions against real highly-expressed gene panels (§8), using
    public data and BT4's own recompute functions.
