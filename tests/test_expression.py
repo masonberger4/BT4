@@ -11,12 +11,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from bt4 import api
 from bt4.biomodels.expression import (
     ExpressionPredictor,
     ExpressionResult,
     NullExpressionModel,
+    RiboNNExpressionModel,
+    available_backends,
     default,
+    resolve_backend,
 )
 from bt4.pipeline.optimize import OptimizeConfig
 from bt4.pipeline.rerank import rerank_by_expression
@@ -98,3 +103,64 @@ def test_rerank_preserves_results_and_manifest() -> None:
     assert reranked.manifest == frontier.manifest
     # Sequences are untouched (annotation only).
     assert [r.dna for r in reranked.results] == [r.dna for r in frontier.results]
+
+
+# --------------------------------------------------------------------------- #
+# The public backend registry (what frontends select a head through).
+# --------------------------------------------------------------------------- #
+
+
+def test_available_backends_always_offers_the_placeholder() -> None:
+    """``null`` is always available, so a frontend always has a working default."""
+    names = available_backends()
+    assert names[0] == "null"
+    assert len(set(names)) == len(names)
+
+
+def test_available_backends_gates_ribonn_on_a_real_install() -> None:
+    """RiboNN is listed only when the user's own checkout can actually run it.
+
+    CI never has the Sanofi non-commercial checkout or weights, so the list stays
+    placeholder-only -- and a frontend can explain the absence instead of offering
+    a control that would fail on click.
+    """
+    assert ("ribonn" in available_backends()) is RiboNNExpressionModel().available()
+
+
+def test_resolve_backend_returns_the_placeholder_by_name() -> None:
+    for name in ("null", "NULL", " placeholder ", "none"):
+        model = resolve_backend(name)
+        assert isinstance(model, NullExpressionModel)
+        assert model.calibrated is False
+
+
+def test_resolve_backend_builds_ribonn_without_loading_weights() -> None:
+    """Constructing the wrapped head is cheap and confers no calibration.
+
+    Resolution must not import torch or touch the weights (that happens lazily on
+    the first score), so this works on a machine with no RiboNN install at all --
+    and the adapter still reports ``calibrated is False``: wrapping a published
+    model is not validating it for BT4's CDS-variant regime (CLAUDE.md §10.6).
+    """
+    model = resolve_backend("ribonn", species="mouse", utr5="ACGT", utr3="TTTT")
+    assert isinstance(model, RiboNNExpressionModel)
+    assert model.name == "ribonn[mouse]"
+    assert model.calibrated is False
+    assert model.utr5 == "ACGT"
+    assert model.utr3 == "TTTT"
+
+
+def test_resolve_backend_rejects_an_unknown_name() -> None:
+    with pytest.raises(ValueError, match="unknown expression backend"):
+        resolve_backend("magic-expression-oracle")
+
+
+def test_resolve_backend_propagates_adapter_validation() -> None:
+    with pytest.raises(ValueError):
+        resolve_backend("ribonn", species="axolotl")
+
+
+def test_api_reexports_the_registry() -> None:
+    """The app/CLI/service layers reach heads through ``bt4.api`` only (§3)."""
+    assert api.available_expression_backends() == available_backends()
+    assert api.resolve_expression_backend("null").name == default().name

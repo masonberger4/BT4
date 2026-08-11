@@ -188,10 +188,32 @@ pipx install "bt4[app] @ git+https://github.com/masonberger4/BT4"
 `bt4-studio` (or `python -m bt4.app`): paste a protein, pick the organism, set a
 GC target / max-homopolymer / max GC length / max repeat length / forbidden
 motifs (and tick any forbidden-sequence presets), and click **Optimize**. **Hover
-any control for a tooltip explaining what it does.** You get the optimality badge,
-a recomputed-metrics table, the interactive CAI/GC frontier (the delivered point
-starred), the coding sequence, and one-click FASTA/JSON export. The optimization
-runs on a background thread, so the window never blocks.
+any control for a tooltip explaining what it does.** Every run happens on a
+background thread, so the window never blocks, and the whole app is reachable
+from the keyboard through the **File / Run / View** menus (`Ctrl+R` optimize,
+`Ctrl+K` rank & audit, `Ctrl+L` sample a library, `Ctrl+E` export). **View →
+System / Light / Dark** switches the theme live.
+
+Three tabs:
+
+- **Design** — the optimality badge, a recomputed-metrics table, the interactive
+  CAI/GC frontier (the delivered point starred), the coding sequence with inline
+  violation highlights, per-site GC/CpG tracks, and one-click FASTA/JSON export.
+  It also holds the opt-in **Validate with ASSP** button: the one control that
+  touches the network. It asks before sending anything, and its numbers are
+  labeled network-derived, uncalibrated, advisory — they never enter the run
+  manifest or an export, and an ASSP outage can never fail your design.
+- **Candidates & splice audit** — assembles the frontier (plus repeat-refined
+  variants) into a finalist set, annotates each member, and runs an advisory
+  cryptic-splice audit. Optional toggles route the wrapped **SpliceAI/Pangolin**
+  CNNs into the audit and the wrapped **RiboNN** translation-efficiency head into
+  the scoring (both only when *you* have installed them — nothing is bundled).
+  Both are **uncalibrated**, so the table is labeled *discovery order, not a
+  ranking* and the solver's pick stays the delivered one.
+- **Library (sampled)** — Phase-5 degenerate design: draw N sequences by sampling
+  the codon distribution at a chosen temperature and seed. These are **sampled,
+  not optimized** (a `SAMPLED` certificate, no optimality claim), with measured
+  diversity and a multi-record FASTA export.
 
 ### Command line
 

@@ -46,11 +46,22 @@ __all__ = [
     "ExpressionResult",
     "NullExpressionModel",
     "RiboNNExpressionModel",
+    "available_backends",
     "default",
     "load_pinned_sha256",
+    "resolve_backend",
     "run_expression_gate",
     "verify_expression_gate",
 ]
+
+# Public backend registry (CLAUDE.md §10.9: registries are public, never private
+# symbols crossing a layer). Aliases map to a canonical key.
+_BACKENDS = {
+    "null": "null",
+    "placeholder": "null",
+    "none": "null",
+    "ribonn": "ribonn",
+}
 
 
 def default() -> ExpressionPredictor:
@@ -62,4 +73,75 @@ def default() -> ExpressionPredictor:
         selected here ahead of it. The placeholder claims nothing and must not be
         read as an expression prediction (CLAUDE.md §6, §10.6).
     """
+    return NullExpressionModel()
+
+
+def available_backends() -> tuple[str, ...]:
+    """Return the expression backends that can actually run on this machine.
+
+    ``"null"`` (the neutral placeholder) is always available. ``"ribonn"`` is
+    listed only when :meth:`RiboNNExpressionModel.available` reports that the
+    user's own RiboNN checkout, its ``<species>`` weight directory, and the heavy
+    deps all resolve -- so a frontend can offer the wrapped head *only* when
+    selecting it would work, and explain its absence otherwise.
+
+    Availability is emphatically **not** calibration: a listed RiboNN is still
+    ``calibrated is False`` until it passes the CDS-variant acceptance gate
+    (CLAUDE.md §6/§10.6), so an uncalibrated head must never be shown as a
+    ranking. Never raises.
+
+    Returns:
+        Backend names, always beginning with ``"null"``.
+    """
+    names = ["null"]
+    try:
+        if RiboNNExpressionModel().available():
+            names.append("ribonn")
+    except (OSError, ValueError, ImportError):
+        # Probing a user-supplied path / optional dependency must never break a
+        # caller that is only listing its options: an unreadable $BT4_RIBONN_DIR
+        # or a broken torch install means "not available here", not an error.
+        pass
+    return tuple(names)
+
+
+def resolve_backend(
+    name: str,
+    *,
+    species: str = "human",
+    utr5: str = "",
+    utr3: str = "",
+    top_k: int = 5,
+) -> ExpressionPredictor:
+    """Construct an expression backend by name (the mirror of the splice resolver).
+
+    Args:
+        name: ``"null"`` (aliases ``"placeholder"`` / ``"none"``) for the neutral
+            placeholder, or ``"ribonn"`` for the wrapped RiboNN head.
+        species: RiboNN weight set -- ``"human"`` or ``"mouse"``. Ignored by
+            ``"null"``.
+        utr5: Fixed 5' UTR context held constant while the CDS varies. RiboNN
+            **requires** it non-empty to score (its loader reads an all-empty UTR
+            column as NaN, and the UTRs carry most of its signal).
+        utr3: Fixed 3' UTR context, as ``utr5``.
+        top_k: Number of RiboNN cross-validation runs to ensemble.
+
+    Returns:
+        An :class:`ExpressionPredictor`. Constructing a RiboNN backend does not
+        load weights or import torch -- those happen lazily on the first score --
+        so this stays cheap and cannot fail on a missing checkout.
+
+    Raises:
+        ValueError: If ``name`` is not a known backend, or RiboNN rejects
+            ``species`` / ``top_k``.
+    """
+    key = _BACKENDS.get(name.strip().lower())
+    if key is None:
+        raise ValueError(
+            f"unknown expression backend {name!r}; choose from {sorted(set(_BACKENDS))}"
+        )
+    if key == "ribonn":
+        return RiboNNExpressionModel(
+            species=species, top_k=top_k, utr5=utr5, utr3=utr3
+        )
     return NullExpressionModel()

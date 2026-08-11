@@ -4,11 +4,15 @@ These run under Qt's ``offscreen`` platform (no display needed). They drive the
 engine synchronously through the worker's ``compute`` and call the window's
 result/failure slots directly -- no real ``QThread`` is started and the event
 loop is never entered, so the suite stays fast and hermetic.
+
+The ASSP cross-check tests are driven from the committed **offline** fixtures
+(``$BT4_ASSP_FIXTURE_DIR``), so the suite never makes a network call.
 """
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -16,11 +20,22 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 
 from bt4 import api
 from bt4.app.studio import SequenceViewer, StudioWindow
-from bt4.app.worker import CandidatesResult, CandidatesWorker, OptimizeWorker
+from bt4.app.worker import (
+    CandidatesResult,
+    CandidatesWorker,
+    CrossCheckWorker,
+    LibraryWorker,
+    OptimizeWorker,
+)
+
+ASSP_FIXTURES = Path(__file__).parent / "fixtures" / "assp"
+# The sequence the committed ASSP fixtures were captured for (fixtures are keyed
+# by sequence hash, so only this one resolves offline).
+ASSP_SEQ = "ATGGCCGGCGATCGATCGATCGTAA"
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -259,6 +274,445 @@ def test_distinct_site_count_merges_close_positions() -> None:
     assert _distinct_site_count([10, 12, 40], 3) == 2
     # A chain each within the window collapses to a single site.
     assert _distinct_site_count([10, 13, 16, 19], 3) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Expression head (RiboNN) wiring
+# --------------------------------------------------------------------------- #
+
+
+def test_ribonn_toggle_is_disabled_without_a_checkout() -> None:
+    """With no RiboNN install, the toggle is disabled -- never a dead control."""
+    window = StudioWindow()
+    # CI never has the Sanofi non-commercial checkout/weights, so the backend
+    # list is placeholder-only and the control disables itself with a tooltip
+    # explaining exactly what is missing.
+    assert "ribonn" not in api.available_expression_backends()
+    assert window._ribonn_available is False
+    assert not window.ribonn_check.isEnabled()
+    assert "BT4_RIBONN_DIR" in window.ribonn_check.toolTip()
+    # Its sub-controls follow the toggle rather than sitting enabled-but-useless.
+    assert not window.utr5_edit.isEnabled()
+    assert not window.ribonn_species_combo.isEnabled()
+
+
+def test_prepare_predictor_defaults_to_the_placeholder() -> None:
+    """With RiboNN unselected the candidate flow passes no predictor (=default)."""
+    window = StudioWindow()
+    ok, predictor = window._prepare_predictor()
+    assert ok is True
+    assert predictor is None
+
+
+def test_prepare_predictor_refuses_missing_utrs() -> None:
+    """Selecting RiboNN without UTR context is refused before the run starts.
+
+    RiboNN cannot score an empty UTR column, so catching it here (rather than
+    letting the engine raise mid-run) is what keeps the failure legible.
+    """
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+
+    ok, predictor = window._prepare_predictor()
+    assert ok is False
+    assert predictor is None
+    assert "UTR" in window.statusBar().currentMessage()
+
+
+def test_prepare_predictor_builds_an_uncalibrated_ribonn() -> None:
+    """With UTRs supplied the flow builds RiboNN -- still uncalibrated."""
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+    window.utr5_edit.setText("acgtacgt")
+    window.utr3_edit.setText("TTTTGGGG")
+
+    ok, predictor = window._prepare_predictor()
+    assert ok is True
+    assert predictor is not None
+    assert predictor.name == "ribonn[human]"
+    # Constructing the adapter must not confer calibration (CLAUDE.md §10.6):
+    # only a passing CDS-variant acceptance gate can.
+    assert predictor.calibrated is False
+
+
+def test_prepare_predictor_rejects_non_dna_utrs() -> None:
+    """A UTR box holding non-DNA characters is refused with a plain message."""
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+    window.utr5_edit.setText("ACGXTT")
+    window.utr3_edit.setText("ACGT")
+
+    ok, predictor = window._prepare_predictor()
+    assert ok is False
+    assert predictor is None
+
+
+def test_candidates_worker_forwards_the_predictor() -> None:
+    """A predictor handed to the worker reaches the candidate set's annotations."""
+    predictor = api.resolve_expression_backend("null")
+    worker = CandidatesWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        steps=5,
+        n=6,
+        repeat_variants=0,
+        include_cnns=False,
+        predictor=predictor,
+    )
+    result = worker.compute()
+    delivered = result.candidate_set.delivered()
+    assert delivered is not None
+    assert delivered.expression_model == predictor.name
+    # An uncalibrated head never steers delivery.
+    assert result.candidate_set.calibrated is False
+    assert result.candidate_set.order_basis == "discovery"
+
+
+# --------------------------------------------------------------------------- #
+# ASSP cross-check (offline fixtures; never a live call)
+# --------------------------------------------------------------------------- #
+
+
+def test_crosscheck_worker_renders_an_available_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fixture-backed ASSP report renders with its honesty tags and its sites."""
+    monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
+    report = CrossCheckWorker(ASSP_SEQ).compute()
+    assert report.available is True
+    assert report.network_derived is True
+    assert report.calibrated is False
+
+    window = StudioWindow()
+    window._on_crosscheck_finished(report)
+
+    banner = window.assp_banner.text()
+    assert "network-derived" in banner
+    assert "UNCALIBRATED" in banner
+    assert "not</b> part of the run manifest" in banner
+    assert window.assp_table.rowCount() == len(report.sites)
+    assert window.assp_btn.text() == "Validate with ASSP"
+
+
+def test_crosscheck_unavailable_leaves_the_run_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ASSP outage degrades to a labeled banner and never fails the design."""
+    monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+
+    # No fixture exists for this sequence, so the transport reports unavailable.
+    delivered = frontier.delivered()
+    assert delivered is not None
+    report = CrossCheckWorker(delivered.dna).compute()
+    assert report.available is False
+    assert report.reason
+
+    window._on_crosscheck_finished(report)
+    assert "Unavailable" in window.assp_banner.text()
+    assert not window.assp_table.isVisible()
+    # The delivered result is untouched and still exportable.
+    assert window._delivered() is not None
+    assert window.export_fasta_btn.isEnabled()
+
+
+def test_crosscheck_is_cleared_when_the_delivered_sequence_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A report is about ONE sequence, so a new result must clear the panel.
+
+    Otherwise the previous sequence's splice sites would be shown beside a
+    different design, silently attributing them to it.
+    """
+    monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
+    window = StudioWindow()
+    window._on_crosscheck_finished(CrossCheckWorker(ASSP_SEQ).compute())
+    assert window.assp_table.rowCount() > 0
+
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    assert window.assp_table.rowCount() == 0
+    assert "Not run" in window.assp_banner.text()
+
+
+def test_crosscheck_button_needs_a_delivered_sequence() -> None:
+    """The ASSP control is enabled only once there is something to cross-check."""
+    window = StudioWindow()
+    assert not window.assp_btn.isEnabled()
+
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    assert window.assp_btn.isEnabled()
+
+    window._on_failed(ValueError("boom"))
+    assert not window.assp_btn.isEnabled()
+
+
+def test_export_json_never_carries_crosscheck_numbers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An export is byte-identical whether or not a cross-check was run.
+
+    ASSP numbers are network-derived and excluded from the
+    reproducible-from-manifest guarantee (CLAUDE.md §6, §10.15), so they must
+    never reach an exported artifact.
+    """
+    monkeypatch.setenv("BT4_ASSP_FIXTURE_DIR", str(ASSP_FIXTURES))
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+
+    delivered = window._delivered()
+    assert delivered is not None
+    before = api.result_to_json(delivered)
+
+    # Render a real (fixture-backed) ASSP report into the window, then re-export.
+    window._on_crosscheck_finished(CrossCheckWorker(ASSP_SEQ).compute())
+    after = api.result_to_json(delivered)
+
+    assert before == after
+    assert "assp" not in after.lower()
+
+
+# --------------------------------------------------------------------------- #
+# Library (sampled) mode
+# --------------------------------------------------------------------------- #
+
+
+def test_library_worker_samples_and_renders() -> None:
+    """A sampled library renders with its SAMPLED framing, never as a ranking."""
+    app = QtWidgets.QApplication.instance()
+    assert isinstance(app, QtWidgets.QApplication)
+
+    worker = LibraryWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        n=6,
+        temperature=1.0,
+        seed=7,
+    )
+    result = worker.compute()
+    assert len(result.results) == 6
+    assert all(r.certificate.status.value == "sampled" for r in result.results)
+
+    window = StudioWindow()
+    window._on_library_finished(result)
+    app.processEvents()
+
+    assert window.library_table.rowCount() == 6
+    banner = window.lib_banner.text().lower()
+    assert "sampled, not optimized" in banner
+    assert "not a ranking" in banner
+    assert window.export_library_btn.isEnabled()
+    # Selecting the first row shows that member's own sequence.
+    assert window.library_view.toPlainText() == result.results[0].dna
+    assert window.library_btn.isEnabled()
+
+
+def test_library_is_deterministic_from_its_seed() -> None:
+    """The same seed reproduces the same draw (invariant #7 reaches the UI)."""
+    def draw() -> list[str]:
+        result = LibraryWorker(
+            "MAALKHETQW",
+            api.OptimizeConfig(max_homopolymer=5),
+            n=4,
+            temperature=1.2,
+            seed=11,
+        ).compute()
+        return [r.dna for r in result.results]
+
+    assert draw() == draw()
+
+
+def test_library_export_writes_every_member(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exporting the library writes one labeled FASTA record per sampled member."""
+    window = StudioWindow()
+    result = LibraryWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        n=3,
+        temperature=1.0,
+        seed=3,
+    ).compute()
+    window._on_library_finished(result)
+    window.jobname_edit.setText("job")
+
+    path = tmp_path / "lib.fasta"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(path), "")),
+    )
+    window._export_library()
+
+    text = path.read_text(encoding="utf-8")
+    assert text.count(">") == 3
+    # Each record names itself a sample, so a downstream reader cannot mistake a
+    # sampled member for an optimized delivery.
+    assert text.count("sampled") == 3
+    flat = text.replace("\n", "")
+    for member in result.results:
+        assert member.dna in flat
+
+
+def test_library_export_is_a_no_op_without_a_library(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no library drawn, the export writes nothing (no empty stub file)."""
+    window = StudioWindow()
+    path = tmp_path / "never.fasta"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(path), "")),
+    )
+    window._export_library()
+    assert not path.exists()
+
+
+def test_library_failure_resets_the_panel() -> None:
+    """A failed draw clears the table so nothing stale stays exportable."""
+    window = StudioWindow()
+    result = LibraryWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        n=2,
+        temperature=1.0,
+        seed=1,
+    ).compute()
+    window._on_library_finished(result)
+    assert window.export_library_btn.isEnabled()
+
+    window._on_library_failed(ValueError("boom"))
+    assert window.library_table.rowCount() == 0
+    assert not window.export_library_btn.isEnabled()
+    assert window._library is None
+    assert window.library_btn.isEnabled()
+
+
+# --------------------------------------------------------------------------- #
+# Run gating and theming
+# --------------------------------------------------------------------------- #
+
+
+def test_only_one_engine_flow_runs_at_a_time() -> None:
+    """Every start control is gated on "nothing is running", from one flag set."""
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    assert window.optimize_btn.isEnabled()
+    assert window.rank_btn.isEnabled()
+    assert window.library_btn.isEnabled()
+    assert window.assp_btn.isEnabled()
+
+    for setter in (
+        window._set_running,
+        window._set_candidates_running,
+        window._set_library_running,
+        window._set_crosscheck_running,
+    ):
+        setter(True)
+        assert not window.optimize_btn.isEnabled()
+        assert not window.rank_btn.isEnabled()
+        assert not window.library_btn.isEnabled()
+        assert not window.assp_btn.isEnabled()
+        setter(False)
+        assert window.optimize_btn.isEnabled()
+        assert window.rank_btn.isEnabled()
+        assert window.library_btn.isEnabled()
+        assert window.assp_btn.isEnabled()
+
+    # Cancel is live only during an optimization.
+    assert not window.cancel_btn.isEnabled()
+    window._set_running(True)
+    assert window.cancel_btn.isEnabled()
+    window._set_running(False)
+
+
+def _action(window: StudioWindow, text: str) -> QtGui.QAction:
+    """Find a menu action by its (mnemonic-stripped) label.
+
+    Actions are parented to the window (not the menu bar), so search there.
+    """
+    for action in window.findChildren(QtGui.QAction):
+        if action.text().replace("&", "") == text:
+            return action
+    raise AssertionError(f"no menu action named {text!r}")
+
+
+def test_menu_actions_are_wired_to_the_real_flows() -> None:
+    """Every action is reachable from the keyboard and triggers the actual slot."""
+    window = StudioWindow()
+    titles = [m.title().replace("&", "") for m in window.menuBar().findChildren(QtWidgets.QMenu)]
+    assert titles == ["File", "Run", "View", "Help"]
+
+    # Shortcuts are set, so the whole app is drivable without a mouse.
+    assert _action(window, "Optimize").shortcut().toString() == "Ctrl+R"
+    assert _action(window, "Sample library").shortcut().toString() == "Ctrl+L"
+
+    # Triggering Optimize with an empty protein box reaches _start_optimize and
+    # stops at its input validation -- proof the action is really connected.
+    _action(window, "Optimize").trigger()
+    assert "protein" in window.statusBar().currentMessage().lower()
+    assert window.optimize_btn.isEnabled()  # nothing was started
+
+    # The theme actions are an exclusive group with "System" checked by default.
+    assert _action(window, "System").isChecked()
+    _action(window, "Dark").trigger()
+    assert window._dark is True
+    assert _action(window, "Dark").isChecked()
+    assert not _action(window, "System").isChecked()
+
+
+def test_theme_switch_repaints_without_losing_results() -> None:
+    """Switching theme restyles the surfaces and keeps the delivered result."""
+    window = StudioWindow()
+    frontier = api.frontier("MAALKHETQW", api.OptimizeConfig(max_homopolymer=5), 5)
+    window._on_finished(frontier)
+    delivered = frontier.delivered()
+    assert delivered is not None
+
+    window._apply_theme("dark")
+    assert window._dark is True
+    assert window.sequence_view._dark is True
+    assert window.sequence_view.toPlainText() == delivered.dna
+
+    window._apply_theme("light")
+    assert window._dark is False
+    assert window.sequence_view._dark is False
+    assert window.sequence_view.toPlainText() == delivered.dna
+    assert window.export_fasta_btn.isEnabled()
+
+
+def test_sequence_viewer_set_dark_repaints_highlights() -> None:
+    """A theme change re-derives the violation bands from the held annotations."""
+    viewer = SequenceViewer(dark=False)
+    dna = "ACGTACGTACGT"
+    hard = api.Violation("max_repeat", api.Severity.HARD, 0, 4, "dispersed repeat")
+    viewer.set_sequence(dna, (hard,))
+    light = viewer._colour(api.Severity.HARD).name()
+    assert len(viewer.extraSelections()) == 1
+
+    viewer.set_dark(True)
+    # Same text, same annotations -- repainted in the dark palette.
+    assert viewer.toPlainText() == dna
+    assert len(viewer.extraSelections()) == 1
+    assert viewer._violation_at(2) is not None
+    assert viewer._colour(api.Severity.HARD).name() != light
+
+    # Idempotent: setting the theme it already has changes nothing.
+    viewer.set_dark(True)
+    assert len(viewer.extraSelections()) == 1
 
 
 def test_optimize_button_survives_optimize_then_rank() -> None:

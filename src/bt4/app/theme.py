@@ -114,6 +114,11 @@ def badge_category(status_value: str) -> str:
         return "amber"
     if status_value in {"relaxed", "context_capped", "gap_bounded"}:
         return "red"
+    if status_value == "sampled":
+        # A sampler makes no optimality claim at all, so it gets the neutral
+        # colour rather than a warning shade: there is nothing degraded here to
+        # warn about, and colouring "no claim" as "worse" would be its own lie.
+        return "neutral"
     return "neutral"
 
 
