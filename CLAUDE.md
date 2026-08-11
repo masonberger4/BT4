@@ -508,12 +508,16 @@ is a requirement, not a nice-to-have.
     minutes for this repo, not a 60 s round) and **perform the merge from that
     firing**. This deliberately avoids the old linear-backoff loop, which armed a
     new trigger every round and left pending triggers to hand-delete. Rules that
-    keep trigger churn at zero: (1) `send_later` one-shots **self-disable after
-    firing** — never call `delete_trigger` on a trigger that has already fired; (2)
-    do not stack a second check-in while one is pending — re-arm only *after* the
-    current one fires and the PR still isn't resolved; (3) a pending fallback only
-    needs deleting in the rare case the PR merges first, and even then letting it
-    fire once and no-op (see the PR is merged, do nothing) is acceptable.
+    keep trigger churn at zero — **never call `delete_trigger` at all**; one-shots
+    clean themselves up: (1) a `send_later` one-shot **self-disables after firing**
+    (`ended_reason: run_once_fired`), so a fired trigger is already dead — nothing to
+    delete; (2) do not stack a second check-in while one is pending — re-arm only
+    *after* the current one fires and the PR still isn't resolved; (3) if the PR
+    resolves (merges/closes) before a pending fallback fires, **do not delete it
+    either** — let it fire once and no-op (see the PR is merged, do nothing). A
+    single harmless no-op wake is cheaper than a permission-gated `delete_trigger`
+    call, and auto-merge already removes the timer from the common path — so an
+    agent should never need to delete a trigger.
 - **Provenance & packaging:** every result emits a **run manifest** (config hash,
   table provenance with SHA-256, model SHAs, solver certificate, seed, git
   commit, tool version) — reproducible from the stamp alone. Single-sourced
