@@ -149,6 +149,21 @@ def test_stamped_totals_match_the_shipped_counts(name: str) -> None:
     assert filters["records_in_source"] >= filters["cds_counted"]
 
 
+@pytest.mark.parametrize("name", RECOUNTED)
+def test_filter_tally_accounts_for_every_source_record(name: str) -> None:
+    """Kept + dropped must equal the source record count, exactly.
+
+    This is the one substantive provenance claim checkable **offline**, with no
+    network and no re-download: if the tally does not close, the sidecar is
+    describing a different run than the one that produced the shipped TSV, and
+    the "nothing is skipped silently" promise is not being kept.
+    """
+    filters = _raw_provenance(name)["filters"]
+    assert isinstance(filters, dict)
+    dropped = sum(v for k, v in filters.items() if k.startswith("dropped_"))
+    assert dropped + filters["cds_counted"] == filters["records_in_source"]
+
+
 # --------------------------------------------------------------------------- #
 # External ground truth: independently-published facts about each species.
 # --------------------------------------------------------------------------- #

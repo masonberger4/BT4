@@ -15,14 +15,18 @@ Usage::
     python scripts/build_organism_tables.py --cache-dir /tmp/cds --verify
 
 ``--verify`` rebuilds into a temporary directory and diffs against the committed
-TSVs instead of overwriting them, so CI or a reviewer can confirm the shipped
-tables really are what this script produces from the pinned sources.
+TSVs **and their provenance sidecars** (every field but ``retrieved``, a
+wall-clock stamp) instead of overwriting them, so CI or a reviewer can confirm
+the shipped tables really are what this script produces from the pinned sources
+-- and that each sidecar's re-derivation trail is the true one.
 
 Why these choices (all of them recorded in each table's provenance sidecar):
 
-* **Release-pinned URLs, not "current".** A ``current_fasta`` link moves; a
-  release-pinned one does not. The downloaded file's own SHA-256 is recorded, so
-  a future rebuild that silently gets different bytes is detectable.
+* **Release-pinned URLs with a pinned digest.** A ``current_fasta`` link moves;
+  a release-pinned one does not. Ensembl also reuses the *same filename* across
+  releases, so the archive's expected SHA-256 is pinned in the spec and checked
+  on every run -- cache hits included -- and a mismatch aborts rather than
+  silently counting a different release's genes.
 * **One representative CDS per gene.** Ensembl ships every annotated transcript,
   and gene families differ wildly in isoform count -- counting all of them would
   weight codon usage by how finely a gene happens to be annotated rather than by
@@ -46,6 +50,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import json
 import shutil
 import sys
 import tempfile
@@ -82,6 +87,10 @@ class OrganismSpec:
         assembly: Genome assembly the CDS set is annotated on.
         database: Which Ensembl division served it.
         release: That division's release number.
+        source_sha256: Expected SHA-256 of the downloaded archive. Ensembl reuses
+            the SAME filename across releases, so a cache keyed on the filename
+            alone could silently serve a different release's bytes. Verified on
+            every run, cache hit included; a mismatch aborts.
         extra_citation: An additional citation this specific assembly requires
             (e.g. TAIR10 for Arabidopsis), appended to the license note. Empty
             for species whose Ensembl citation alone suffices -- a sidecar should
@@ -94,10 +103,13 @@ class OrganismSpec:
     assembly: str
     database: str
     release: str
+    source_sha256: str
     extra_citation: str = ""
 
 
-def _ensembl(key: str, common_name: str, filename: str, assembly: str) -> OrganismSpec:
+def _ensembl(
+    key: str, common_name: str, filename: str, assembly: str, source_sha256: str
+) -> OrganismSpec:
     """Build a spec for a main-Ensembl (vertebrates/metazoa) species."""
     return OrganismSpec(
         key=key,
@@ -109,6 +121,7 @@ def _ensembl(key: str, common_name: str, filename: str, assembly: str) -> Organi
         assembly=assembly,
         database="Ensembl",
         release=ENSEMBL_RELEASE,
+        source_sha256=source_sha256,
     )
 
 
@@ -116,22 +129,27 @@ SPECS: tuple[OrganismSpec, ...] = (
     _ensembl(
         "mus_musculus", "Mus musculus (house mouse)",
         "Mus_musculus.GRCm39.cds.all.fa.gz", "GRCm39",
+        "8c0a53a7fe973adaf6d884884ec86a329deebfb519d0d4f736bd1c0c67f09964",
     ),
     _ensembl(
         "rattus_norvegicus", "Rattus norvegicus (Norway rat)",
         "Rattus_norvegicus.GRCr8.cds.all.fa.gz", "GRCr8",
+        "25a90be0825e525afb60eeb5568a6f5c6464216e4c262260a2547432d40acd0d",
     ),
     _ensembl(
         "danio_rerio", "Danio rerio (zebrafish)",
         "Danio_rerio.GRCz11.cds.all.fa.gz", "GRCz11",
+        "b5ff5b220650e0ad426df3082ed0c2587c3f283c41d8f92490297b8ef08c5fad",
     ),
     _ensembl(
         "drosophila_melanogaster", "Drosophila melanogaster (fruit fly)",
         "Drosophila_melanogaster.BDGP6.54.cds.all.fa.gz", "BDGP6.54",
+        "112c99442c2ad59c6f012ea803cd6c51dbb96eba491e8d33d810873381fb6112",
     ),
     _ensembl(
         "caenorhabditis_elegans", "Caenorhabditis elegans (nematode)",
         "Caenorhabditis_elegans.WBcel235.cds.all.fa.gz", "WBcel235",
+        "13a3ebf9bd0bfa3097a3565c979ba88a1c9fccd05cb343a7c6ef21841289e05e",
     ),
     OrganismSpec(
         key="arabidopsis_thaliana",
@@ -144,6 +162,7 @@ SPECS: tuple[OrganismSpec, ...] = (
         assembly="TAIR10",
         database="Ensembl Plants",
         release=ENSEMBL_PLANTS_RELEASE,
+        source_sha256="3580fd49dc079892359c1e5b7ffe76b7c2aa13718daa4daa6f397882ad41795d",
         extra_citation=(
             " The TAIR10 assembly/annotation is from TAIR (Lamesch et al., "
             "Nucleic Acids Res 2012, doi:10.1093/nar/gkr1090)."
@@ -298,6 +317,15 @@ def build_one(spec: OrganismSpec, cache_dir: Path, out_dir: Path) -> Path:
     archive = cache_dir / Path(spec.url).name
     download(spec.url, archive)
     source_sha = sha256_file(archive)
+    if source_sha != spec.source_sha256:
+        # Ensembl reuses the same filename across releases, so a stale cache
+        # entry -- or a re-cut upstream file -- would otherwise be counted
+        # silently and produce a table that does not match its own provenance.
+        raise SystemExit(
+            f"{spec.key}: source archive sha256 {source_sha} != pinned "
+            f"{spec.source_sha256} ({archive}). Delete the cached file to "
+            "re-download, or update the pin deliberately if upstream re-cut it."
+        )
 
     sequences, stats = representative_cds(archive)
     if not sequences:
@@ -369,6 +397,41 @@ def build_one(spec: OrganismSpec, cache_dir: Path, out_dir: Path) -> Path:
     return Path(written)
 
 
+def _verify_against_committed(spec: OrganismSpec, rebuilt_tsv: Path) -> list[str]:
+    """Diff a rebuilt table AND its sidecar against the committed ones.
+
+    Checking only the TSV would leave the *provenance* unverified -- and the
+    provenance is what carries the re-derivation trail, so a sidecar claiming
+    the wrong source URL or digest would pass a TSV-only check while telling a
+    third party to rebuild from the wrong data. Every sidecar field is compared
+    except ``retrieved``, which is a wall-clock stamp of when the rebuild ran and
+    is expected to differ.
+
+    Returns:
+        A list of human-readable mismatch descriptions (empty when clean).
+    """
+    problems: list[str] = []
+    committed_tsv = DATA_DIR / rebuilt_tsv.name
+    if not committed_tsv.is_file():
+        return [f"{spec.key}: no committed table"]
+    if committed_tsv.read_bytes() != rebuilt_tsv.read_bytes():
+        problems.append(f"{spec.key}: committed TSV differs from rebuild")
+
+    name = f"{spec.key}.provenance.json"
+    committed_side = DATA_DIR / name
+    rebuilt_side = rebuilt_tsv.parent / name
+    if not committed_side.is_file():
+        return [*problems, f"{spec.key}: no committed provenance sidecar"]
+    committed = json.loads(committed_side.read_text(encoding="utf-8"))
+    rebuilt = json.loads(rebuilt_side.read_text(encoding="utf-8"))
+    for key in sorted(set(committed) | set(rebuilt) - {"retrieved"}):
+        if key == "retrieved":
+            continue
+        if committed.get(key) != rebuilt.get(key):
+            problems.append(f"{spec.key}: provenance field {key!r} differs from rebuild")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     """Rebuild (or verify) the bundled organism tables."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -404,11 +467,7 @@ def main(argv: list[str] | None = None) -> int:
         for spec in chosen:
             written = build_one(spec, cache_dir, out_dir)
             if args.verify:
-                committed = DATA_DIR / written.name
-                if not committed.is_file():
-                    mismatched.append(f"{spec.key}: no committed table")
-                elif committed.read_bytes() != written.read_bytes():
-                    mismatched.append(f"{spec.key}: committed TSV differs from rebuild")
+                mismatched.extend(_verify_against_committed(spec, written))
 
         if mismatched:
             print("\nVERIFY FAILED:", file=sys.stderr)

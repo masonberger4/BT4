@@ -167,6 +167,16 @@ def write_table(
     tsv_path = directory / f"{organism}.tsv"
     provenance_path = directory / f"{organism}.provenance.json"
 
+    # Validate before writing anything: a rejected call must not leave a TSV on
+    # disk with no (or a stale) sidecar beside it.
+    reserved = {"source", "build", "cds_count", "retrieved", "sha256", "note"}
+    clashes = sorted(set(extra or {}) & reserved)
+    if clashes:
+        raise ValueError(
+            f"extra provenance keys {clashes} are reserved; pass them via "
+            "their own parameters so the sidecar cannot disagree with itself"
+        )
+
     lines = ["amino_acid\tcodon\tfrequency"]
     if pseudocount > 0:
         for codon in sorted(CODON_TABLE):
@@ -190,12 +200,6 @@ def write_table(
         "note": note if note is not None else _BUILD_NOTE,
     }
     if extra:
-        clashes = sorted(set(extra) & set(provenance))
-        if clashes:
-            raise ValueError(
-                f"extra provenance keys {clashes} are reserved; pass them via "
-                "their own parameters so the sidecar cannot disagree with itself"
-            )
         provenance.update(extra)
     provenance_path.write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"

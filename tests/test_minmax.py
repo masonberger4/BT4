@@ -15,7 +15,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from bt4.biomodels.codon.tables import load_table
-from bt4.domain.genetic_code import AMINO_ACIDS, STOP, synonymous_codons
+from bt4.domain.genetic_code import AMINO_ACIDS, CODON_TABLE, STOP, synonymous_codons
 from bt4.domain.scope import Scope
 from bt4.objectives import iter_codons
 from bt4.objectives.minmax import MinMaxTerm, min_max_profile
@@ -198,3 +198,57 @@ def test_profile_rejects_missing_codon() -> None:
     sparse = {codon: _FREQ[codon] for codon in synonymous_codons("A")}
     with pytest.raises(ValueError, match="missing"):
         min_max_profile(_backtranslate("LR"), sparse, window=1)
+
+
+def test_minmax_term_is_scale_invariant() -> None:
+    """The same table on a different scale must produce identical deltas.
+
+    Load-bearing, not cosmetic: BT4's bundled tables are NOT all on one scale --
+    the recounted organisms hold raw codon counts (~1e5) while the older
+    hand-curated ones hold per-thousand values (~1e1) -- and ``bt4 build-table``
+    hands users raw counts too. Without normalizing within each synonymous
+    family, the same ``minmax_weight`` would mean ~10,000x more on one organism
+    than another and silently swamp every other objective (CLAUDE.md §10.5).
+    """
+    base = load_table("homo_sapiens").frequency
+    for factor in (1e-3, 7.0, 1e4):
+        scaled = {codon: value * factor for codon, value in base.items()}
+        for direction in ("max", "min"):
+            plain = MinMaxTerm(base, direction)
+            rescaled = MinMaxTerm(scaled, direction)
+            for codon in base:
+                assert plain.delta("", codon, 0) == pytest.approx(
+                    rescaled.delta("", codon, 0), abs=1e-12
+                )
+
+
+def test_minmax_delta_magnitudes_are_comparable_across_organisms() -> None:
+    """A raw-count organism and a per-thousand organism must weigh alike.
+
+    This is the property a user relies on when they change the organism dropdown
+    and expect ``minmax_weight`` to keep meaning the same thing.
+    """
+    scales = []
+    for organism in ("homo_sapiens", "mus_musculus", "danio_rerio", "escherichia_coli"):
+        term = MinMaxTerm(load_table(organism).frequency, "max")
+        deltas = [abs(term.delta("", c, 0)) for c in load_table(organism).frequency]
+        nonzero = [d for d in deltas if d > 0.0]
+        scales.append(sum(nonzero) / len(nonzero))
+    # Every organism's mean |delta| is a within-family fraction, so they sit in
+    # the same order of magnitude rather than four apart.
+    assert max(scales) / min(scales) < 3.0
+
+
+def test_minmax_preserves_within_family_preference_order() -> None:
+    """Normalizing must not reorder codons inside a synonymous family.
+
+    The term still answers "which synonymous codon is more common"; only the
+    units change. A reordering here would silently alter what the optimizer picks.
+    """
+    freq = load_table("homo_sapiens").frequency
+    term = MinMaxTerm(freq, "max")
+    for amino_acid in ("L", "R", "S", "A", "V"):
+        synonyms = [c for c, aa in CODON_TABLE.items() if aa == amino_acid]
+        by_raw = sorted(synonyms, key=lambda c: freq[c])
+        by_delta = sorted(synonyms, key=lambda c: term.delta("", c, 0))
+        assert by_raw == by_delta

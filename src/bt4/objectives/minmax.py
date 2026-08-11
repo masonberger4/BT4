@@ -20,10 +20,19 @@ module therefore keeps two things strictly separate and honest about each:
   auditing; it does **not** participate in the DP.
 * :class:`MinMaxTerm` is the **DP-participating objective term**: a genuinely
   additive *codon-commonness prior*. Its per-codon contribution reads only the
-  codon itself — ``f(codon) - f_avg(aa)``, how much more common than its
-  synonymous average the codon is — so its ``delta`` sum equals its
-  whole-sequence ``score`` exactly (invariant #4, "delta == score"). It is a
-  cheap prior in the same spirit as %MinMax, not the windowed statistic itself.
+  codon itself — ``frac(codon) - frac_avg(aa)``, how much more common than its
+  synonymous average the codon is, where ``frac`` is the codon's share **within
+  its synonymous family** — so its ``delta`` sum equals its whole-sequence
+  ``score`` exactly (invariant #4, "delta == score"). It is a cheap prior in the
+  same spirit as %MinMax, not the windowed statistic itself.
+
+  Normalizing within the family is what makes the term **scale-invariant**, and
+  that is load-bearing rather than cosmetic: BT4's bundled tables are not all on
+  one scale (the recounted organisms hold raw codon counts, the older
+  hand-curated ones per-thousand values) and ``bt4 build-table`` hands users raw
+  counts too. On raw differences the same ``minmax_weight`` would mean ~10,000x
+  more on one organism than another and silently swamp every other objective —
+  a magic-scalar failure of exactly the kind §10.5 forbids.
 """
 
 from __future__ import annotations
@@ -66,6 +75,49 @@ def _synonymous_averages(frequencies: Mapping[str, float]) -> dict[str, float]:
         aa = CODON_TABLE[codon.upper()]
         groups.setdefault(aa, []).append(value)
     return {aa: sum(values) / len(values) for aa, values in groups.items()}
+
+
+def _synonymous_fractions(frequencies: Mapping[str, float]) -> dict[str, float]:
+    """Normalize frequencies to a fraction within each synonymous family.
+
+    Each codon's frequency is divided by the total over the codons encoding the
+    same amino acid, so the values become within-family fractions summing to
+    ``1.0`` per amino acid.
+
+    This is what makes the term **scale-invariant**, which it must be: BT4's
+    bundled tables are not all on one scale (the recounted organisms hold raw
+    codon counts, ~1e5; the older hand-curated ones hold per-thousand values,
+    ~1e1), and ``bt4 build-table`` hands users raw counts too. Without
+    normalizing, the *same* ``minmax_weight`` would mean four orders of magnitude
+    more on one organism than another -- the term would silently swamp every
+    other objective on a raw-count table. Ratios within a family are all this
+    term ever needed, exactly as CAI's ``w = f/f_max`` needs only ratios.
+
+    Args:
+        frequencies: Mapping ``codon -> frequency`` on any consistent scale.
+
+    Returns:
+        Mapping ``codon -> within-family fraction``.
+
+    Raises:
+        KeyError: If a key of ``frequencies`` is not a valid DNA codon.
+        ValueError: If a synonymous family's frequencies sum to zero, leaving no
+            meaningful fraction to compute.
+    """
+    totals: dict[str, float] = {}
+    for codon, value in frequencies.items():
+        aa = CODON_TABLE[codon.upper()]
+        totals[aa] = totals.get(aa, 0.0) + value
+    fractions: dict[str, float] = {}
+    for codon, value in frequencies.items():
+        aa = CODON_TABLE[codon.upper()]
+        total = totals[aa]
+        if total <= 0.0:
+            raise ValueError(
+                f"synonymous family {aa!r} has non-positive total frequency {total!r}"
+            )
+        fractions[codon.upper()] = value / total
+    return fractions
 
 
 def _window_min_max(xactual: float, xavg: float, xmax: float, xmin: float) -> float:
@@ -189,9 +241,11 @@ class MinMaxTerm:
 
     Holds the frequency mapping directly (``codon -> f``) rather than a codon-
     usage table, so this pure objective term depends on nothing below ``domain``.
-    Build it from a table via ``MinMaxTerm(table.frequency)``. Any consistent
-    frequency scale works; normalizing to a fraction within each amino acid makes
-    the per-codon contributions comparable across residues.
+    Build it from a table via ``MinMaxTerm(table.frequency)``. Frequencies are
+    normalized to a within-family fraction internally, so the term is
+    **scale-invariant**: raw codon counts and per-thousand values for the same
+    organism yield identical deltas, and ``minmax_weight`` means the same thing
+    on every table (see :func:`_synonymous_fractions`).
 
     Attributes:
         frequencies: Mapping ``codon -> frequency`` on any consistent scale.
@@ -201,6 +255,7 @@ class MinMaxTerm:
 
     frequencies: Mapping[str, float]
     direction: str = "max"
+    _fractions: Mapping[str, float] = field(init=False, repr=False, compare=False)
     _avg: Mapping[str, float] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -213,7 +268,13 @@ class MinMaxTerm:
             raise ValueError(
                 f"direction must be one of {sorted(_DIRECTIONS)}, got {self.direction!r}"
             )
-        object.__setattr__(self, "_avg", _synonymous_averages(self.frequencies))
+        # Normalize to within-family fractions FIRST, then average those, so the
+        # term is scale-invariant: a raw-count table and a per-thousand table for
+        # the same organism must produce identical deltas (see
+        # _synonymous_fractions for why that matters).
+        fractions = _synonymous_fractions(self.frequencies)
+        object.__setattr__(self, "_fractions", fractions)
+        object.__setattr__(self, "_avg", _synonymous_averages(fractions))
 
     @property
     def name(self) -> str:
@@ -250,7 +311,7 @@ class MinMaxTerm:
         aa = CODON_TABLE[up]
         if aa == STOP or aa in _NON_DEGENERATE:
             return 0.0
-        return self.sign * (self.frequencies[up] - self._avg[aa])
+        return self.sign * (self._fractions[up] - self._avg[aa])
 
     def score(self, dna: str) -> float:
         """Return the sum of :meth:`delta` over the codons of ``dna``.
