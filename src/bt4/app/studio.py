@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from difflib import get_close_matches
 from html import escape
 from itertools import pairwise
 
@@ -208,6 +209,38 @@ class SequenceViewer(QtWidgets.QPlainTextEdit):
         return super().event(event)
 
 
+class EnzymeCompleter(QtWidgets.QCompleter):
+    """Autocompletes the *last* comma-separated entry in the enzyme field.
+
+    The REBASE-derived catalog holds hundreds of enzymes, so typing a name from
+    memory is the weak point of an otherwise plain text field. A stock
+    ``QCompleter`` matches against the entire line, which breaks as soon as the
+    user has already listed one enzyme; this one splits on commas and completes
+    only the token being typed, then substitutes it back in place.
+    """
+
+    def __init__(self, names: list[str], parent: QtCore.QObject | None = None) -> None:
+        super().__init__(names, parent)
+        self.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        self.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
+        self.setCompletionMode(
+            QtWidgets.QCompleter.CompletionMode.PopupCompletion
+        )
+
+    def splitPath(self, path: str) -> list[str]:
+        """Complete against the text after the last comma only."""
+        return [path.split(",")[-1].strip()]
+
+    def pathFromIndex(self, index: QtCore.QModelIndex) -> str:
+        """Rebuild the full field with the completed name in the last slot."""
+        completed = str(super().pathFromIndex(index))
+        widget = self.widget()
+        if not isinstance(widget, QtWidgets.QLineEdit):
+            return completed
+        prefix = widget.text().rsplit(",", 1)[0] if "," in widget.text() else ""
+        return f"{prefix}, {completed}" if prefix.strip() else completed
+
+
 class StudioWindow(QtWidgets.QMainWindow):
     """The BT4 Studio main window: controls on the left, results on the right."""
 
@@ -370,12 +403,18 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._add_forbidden_presets(form)
 
         self.enzymes_edit = QtWidgets.QLineEdit()
-        self.enzymes_edit.setPlaceholderText("comma-separated, e.g. EcoRI,BamHI")
+        self.enzymes_edit.setPlaceholderText("comma-separated, e.g. EcoRI,BsaI")
         self.enzymes_edit.setAccessibleName("Restriction enzymes to avoid")
+        enzyme_names = list(api.available_enzymes())
+        self.enzyme_completer = EnzymeCompleter(enzyme_names, self)
+        self.enzymes_edit.setCompleter(self.enzyme_completer)
         self._add_row(
             form, "Restriction sites", self.enzymes_edit,
             "Restriction enzymes whose recognition sites (and reverse "
-            "complements) must not appear, comma-separated (e.g. EcoRI,BamHI).",
+            "complements) must not appear, comma-separated (e.g. EcoRI,BsaI). "
+            f"Start typing to search the {len(enzyme_names)}-enzyme REBASE "
+            "catalog. Only the recognition sequence is modelled -- not cut "
+            "position, star activity, or methylation sensitivity.",
         )
 
         self.cpg_combo = QtWidgets.QComboBox()
@@ -1375,7 +1414,11 @@ class StudioWindow(QtWidgets.QMainWindow):
         """Canonicalize the restriction-enzyme field case-insensitively.
 
         Returns the tuple of catalog-cased enzyme names, or ``None`` (after
-        listing the valid names) if any entry is not in the catalog.
+        explaining which entries are unknown) if any is not in the catalog.
+
+        The catalog holds hundreds of enzymes, so an error offers the closest
+        matching names rather than listing every one -- a wall of 500+ names
+        hides the answer instead of giving it.
         """
         raw = [e.strip() for e in self.enzymes_edit.text().split(",") if e.strip()]
         catalog = {name.lower(): name for name in api.available_enzymes()}
@@ -1385,10 +1428,18 @@ class StudioWindow(QtWidgets.QMainWindow):
             name = catalog.get(entry.lower())
             (canonical if name else unknown).append(name or entry)
         if unknown:
+            hints = []
+            for entry in unknown:
+                close = get_close_matches(entry, api.available_enzymes(), n=4, cutoff=0.6)
+                if close:
+                    hints.append(f"{entry} -> {', '.join(close)}")
+            detail = "Did you mean: " + "; ".join(hints) + "." if hints else (
+                f"The catalog has {len(catalog)} enzymes; run `bt4 enzymes` to list them."
+            )
             self._warn(
                 "Unknown restriction enzyme",
                 f"Not in the catalog: {', '.join(unknown)}.",
-                f"Available enzymes: {', '.join(api.available_enzymes())}.",
+                detail,
             )
             self.enzymes_edit.setFocus()
             return None

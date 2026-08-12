@@ -15,39 +15,77 @@ the incoming codon, so ``ok_suffix`` and ``validate`` agree (invariant #3).
 
 from __future__ import annotations
 
+import difflib
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from importlib.resources import files
+from types import MappingProxyType
 
 from bt4.constraints.iupac import find_iupac, is_iupac, reverse_complement_iupac
 from bt4.domain.result import Severity, Violation
 from bt4.domain.scope import Scope
 from bt4.domain.sequence import validate_dna
 
-__all__ = ["ENZYMES", "RestrictionSiteConstraint", "available_enzymes"]
+__all__ = [
+    "ENZYMES",
+    "RestrictionSiteConstraint",
+    "available_enzymes",
+    "enzyme_provenance",
+    "resolve_enzyme",
+]
 
-ENZYMES: dict[str, str] = {
-    "EcoRI": "GAATTC",
-    "BamHI": "GGATCC",
-    "HindIII": "AAGCTT",
-    "NotI": "GCGGCCGC",
-    "XhoI": "CTCGAG",
-    "NdeI": "CATATG",
-    "NcoI": "CCATGG",
-    "EcoRV": "GATATC",
-    "SalI": "GTCGAC",
-    "XbaI": "TCTAGA",
-    "KpnI": "GGTACC",
-    "SacI": "GAGCTC",
-    "SmaI": "CCCGGG",
-    "PstI": "CTGCAG",
-    "SphI": "GCATGC",
-    "HinfI": "GANTC",
-    "DraIII": "CACNNNGTG",
-}
-"""Catalog of common restriction enzymes to their (IUPAC) recognition sites.
+_DATA_PACKAGE = "bt4.constraints.data"
+_CATALOG_FILE = "rebase_enzymes.tsv"
+_PROVENANCE_FILE = "rebase_enzymes.provenance.json"
 
-Sites are textbook-correct 5'->3' recognition sequences. ``HinfI`` (``GANTC``)
-and ``DraIII`` (``CACNNNGTG``) are degenerate, exercising the IUPAC matcher.
+# How many near-miss suggestions an unknown-enzyme error offers. The catalog has
+# hundreds of entries, so listing them all would bury the answer in noise.
+_SUGGESTIONS = 5
+
+
+def _load_catalog() -> dict[str, str]:
+    """Parse the bundled REBASE-derived ``enzyme<TAB>site`` catalog."""
+    text = files(_DATA_PACKAGE).joinpath(_CATALOG_FILE).read_text(encoding="utf-8")
+    catalog: dict[str, str] = {}
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if not line.strip() or line.startswith("enzyme\t"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2:
+            raise ValueError(f"{_CATALOG_FILE}:{line_no}: expected 2 columns")
+        name, site = parts[0].strip(), parts[1].strip().upper()
+        if not name or not is_iupac(site):
+            raise ValueError(f"{_CATALOG_FILE}:{line_no}: bad entry {line!r}")
+        catalog[name] = site
+    if not catalog:
+        raise ValueError(f"{_CATALOG_FILE} is empty")
+    return catalog
+
+
+ENZYMES: MappingProxyType[str, str] = MappingProxyType(_load_catalog())
+"""Catalog mapping restriction-enzyme name to its IUPAC recognition site.
+
+Derived from a version-pinned **REBASE** release (Roberts et al.) by
+``scripts/build_enzyme_catalog.py`` -- commercially available Type II enzymes
+with a single fully-specified recognition sequence -- rather than hand-typed, so
+every site is checkable against a cited source and the shipped bytes are
+content-hashed in :func:`enzyme_provenance`. Isoschizomers are included, so a
+user can name the enzyme they actually own (``KpnI`` and ``Acc65I`` both resolve
+to ``GGTACC``).
+
+Read-only: the catalog is shipped data, not a mutable registry. BT4 models the
+*recognition sequence* only -- not cut position, star activity, methylation
+sensitivity, or buffer conditions.
+
+**Some real enzymes have highly degenerate sites.** ``MspJI`` is ``CNNR`` and
+``BslI`` is ``CCNNNNNNNGG``; those are their true REBASE recognition sequences,
+not placeholders. Banning a near-wildcard site inside a coding sequence can be
+genuinely unsatisfiable, and BT4 reports that honestly -- an infeasible run
+raises :class:`~bt4.optimize.InfeasibleError` naming ``restriction_site``, and a
+feasible one really does contain zero occurrences. What never happens is the
+third option BT3 would have taken: quietly accepting the request and returning a
+sequence that still contains the site.
 """
 
 
@@ -58,6 +96,48 @@ def available_enzymes() -> tuple[str, ...]:
         A deterministic (alphabetically sorted) tuple of enzyme names.
     """
     return tuple(sorted(ENZYMES))
+
+
+def enzyme_provenance() -> dict[str, object]:
+    """Return the enzyme catalog's provenance sidecar as a plain mapping.
+
+    Records the REBASE version and URL, the source file's SHA-256, the selection
+    rule, the shipped catalog's own digest, and REBASE's citation/licensing
+    terms -- so a third party can re-derive and re-verify the catalog rather than
+    taking its numbers on trust (CLAUDE.md §8).
+    """
+    text = files(_DATA_PACKAGE).joinpath(_PROVENANCE_FILE).read_text(encoding="utf-8")
+    data: dict[str, object] = json.loads(text)
+    return data
+
+
+def resolve_enzyme(name: str) -> str:
+    """Resolve an enzyme name to its recognition site, case-insensitively.
+
+    Args:
+        name: An enzyme name; matched exactly first, then case-insensitively
+            (so ``ecori`` finds ``EcoRI``).
+
+    Returns:
+        The IUPAC recognition sequence.
+
+    Raises:
+        ValueError: If no catalog entry matches. The message offers the closest
+            names rather than dumping the whole catalog -- with hundreds of
+            entries, a full listing hides the answer instead of giving it.
+    """
+    if name in ENZYMES:
+        return ENZYMES[name]
+    folded = {key.lower(): key for key in ENZYMES}
+    hit = folded.get(name.strip().lower())
+    if hit is not None:
+        return ENZYMES[hit]
+    close = difflib.get_close_matches(name, available_enzymes(), n=_SUGGESTIONS, cutoff=0.6)
+    hint = f"; did you mean {', '.join(close)}?" if close else ""
+    raise ValueError(
+        f"unknown enzyme {name!r}{hint} "
+        f"({len(ENZYMES)} enzymes in the catalog; see `bt4 enzymes`)"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,11 +169,7 @@ class RestrictionSiteConstraint:
         """
         collected: set[str] = set()
         for enzyme in self.enzymes:
-            if enzyme not in ENZYMES:
-                raise ValueError(
-                    f"unknown enzyme {enzyme!r}; known enzymes: {available_enzymes()}"
-                )
-            collected.add(ENZYMES[enzyme])
+            collected.add(resolve_enzyme(enzyme))
         for raw in self.extra_sites:
             site = raw.strip().upper()
             if not is_iupac(site):

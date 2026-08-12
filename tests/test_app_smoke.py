@@ -157,6 +157,43 @@ def test_enzyme_names_are_case_insensitive() -> None:
     assert window._prepare_enzymes() == ()
 
 
+def test_enzyme_field_completes_the_last_entry_only() -> None:
+    """The catalog has hundreds of enzymes, so the field has to be searchable.
+
+    A stock completer matches the whole line, which breaks once the user has
+    already listed one enzyme. This one completes only the token after the last
+    comma and substitutes it back, leaving earlier entries intact.
+    """
+    window = StudioWindow()
+    completer = window.enzyme_completer
+    assert completer.model().rowCount() == len(api.available_enzymes())
+
+    # Only the trailing token is completed against.
+    assert completer.splitPath("EcoRI, bsa") == ["bsa"]
+    assert completer.splitPath("ecori") == ["ecori"]
+
+    # Substituting a completion preserves the earlier entries.
+    window.enzymes_edit.setText("EcoRI, bsa")
+    completer.setCompletionPrefix("BsaI")
+    source_index = completer.completionModel().mapToSource(
+        completer.completionModel().index(0, 0)
+    )
+    assert completer.pathFromIndex(source_index) == "EcoRI, BsaI"
+
+
+def test_unknown_enzyme_warning_does_not_dump_the_catalog() -> None:
+    """A 500-name wall of text hides the answer; near misses give it."""
+    window = StudioWindow()
+    window.enzymes_edit.setText("EcoR1")
+    assert window._prepare_enzymes() is None
+
+    box = window._msgbox
+    assert box is not None
+    detail = box.informativeText()
+    assert "EcoRI" in detail, "the obvious correction should be offered"
+    assert len(detail) < 300, "the whole catalog must not be pasted into the error"
+
+
 def test_sequence_viewer_highlights_and_locates_violations() -> None:
     """A violation span is highlighted and locatable by nucleotide position."""
     viewer = SequenceViewer(dark=False)
