@@ -285,11 +285,14 @@ length" knob — LOCAL, exact), tandem **and reverse-complement/inverted** repea
 **max repeat length** (any dispersed direct/inverted/palindromic repeat, anywhere,
 RC-aware — genuinely GLOBAL, so refinement-enforced and honestly reported, *never*
 merged into the trellis, §10.1), forbidden-motif (with named, documented
-**forbidden-sequence presets**), **restriction sites (a 576-enzyme catalog derived from
-a version-pinned REBASE release — commercially available Type II enzymes incl.
-Type IIS; auto reverse-complement + IUPAC; content-hashed and re-derivable, never
-hand-typed; the recognition *sequence* only, not cut position/star
-activity/methylation)**, **strong splice-consensus donor/acceptor motifs**
+**forbidden-sequence presets**), **restriction sites (a 584-enzyme catalog derived from
+a version-pinned REBASE release — every commercially available *restriction*
+enzyme with a single fully-specified site — Type II, IIG, Type IIS, and the
+modification-dependent IIM ones (DpnI's `GATC` avoidance is mainstream precisely
+because a dam+ plasmid *is* Dam-methylated and *is* cut); methyltransferases and
+homing endonucleases excluded; auto reverse-complement + IUPAC; content-hashed, entering the run
+manifest when active, and re-derivable, never hand-typed; the recognition
+*sequence* only, not cut position/star activity/methylation)**, **strong splice-consensus donor/acceptor motifs**
 (`SpliceSiteMotifConstraint`/`avoid_splice_sites` — LOCAL, exact, IUPAC,
 **sense-strand only** so *no* RC-banning; an honest structural heuristic that bans
 only the strong consensus — donor `GTRAGT`, acceptor `YYYYYYNYAGG` — never the bare

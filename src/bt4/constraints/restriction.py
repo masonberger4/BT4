@@ -78,14 +78,23 @@ Read-only: the catalog is shipped data, not a mutable registry. BT4 models the
 *recognition sequence* only -- not cut position, star activity, methylation
 sensitivity, or buffer conditions.
 
-**Some real enzymes have highly degenerate sites.** ``MspJI`` is ``CNNR`` and
-``BslI`` is ``CCNNNNNNNGG``; those are their true REBASE recognition sequences,
-not placeholders. Banning a near-wildcard site inside a coding sequence can be
-genuinely unsatisfiable, and BT4 reports that honestly -- an infeasible run
-raises :class:`~bt4.optimize.InfeasibleError` naming ``restriction_site``, and a
+**What the catalog covers.** Every commercially available *restriction* enzyme
+REBASE lists with a single fully-specified site: Type II, Type II
+bifunctional/IIG, Type II modification-dependent/IIM (``DpnI`` among them), and
+one Type III. Methyltransferases and homing endonucleases are excluded -- they do
+not define a site a coding sequence must avoid. The modification-dependent ones
+are kept deliberately: avoiding ``DpnI``'s ``GATC`` is a mainstream design goal
+precisely *because* a plasmid grown in a standard dam+ strain is Dam-methylated
+and is cut by it.
+
+**Some genuine sites are highly degenerate.** ``MspJI`` is ``CNNR`` and ``BslI``
+is ``CCNNNNNNNGG`` -- their true recognition sequences, not placeholders. Banning
+a near-wildcard inside a coding sequence can be genuinely unsatisfiable, and BT4
+reports that honestly: an infeasible run raises
+:class:`~bt4.optimize.InfeasibleError` naming ``restriction_site``, and a
 feasible one really does contain zero occurrences. What never happens is the
-third option BT3 would have taken: quietly accepting the request and returning a
-sequence that still contains the site.
+third option BT3 would have taken -- quietly accepting the request and returning
+a sequence that still contains the site.
 """
 
 

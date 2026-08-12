@@ -1,19 +1,21 @@
 {
-  "build": "derived by scripts/build_enzyme_catalog.py from the pinned REBASE Bairoch-format file: Type II restriction enzymes (ET starting with R) that name at least one commercial supplier (CR) and have a single fully-specified IUPAC recognition site of 4-12 bases. Cut positions, source organisms, references and methylation data are not extracted -- only the name and its recognition sequence, which is all BT4 needs to ban a site. Isoschizomers are kept so a user can name the enzyme they actually own.",
-  "enzyme_count": 576,
-  "license_note": "REBASE is Copyright (c) Dr. Richard J. Roberts and is made freely available to the community for use WITH CITATION; it is not a CC/public-domain grant. What is bundled here is a derived subset (name + recognition sequence for commercially available Type II enzymes), not a redistribution of the REBASE database. Cite Roberts RJ, Vincze T, Posfai J, Macelis D. REBASE - a database for DNA restriction and modification: enzymes, genes and genomes. Nucleic Acids Res (2023), doi:10.1093/nar/gkac975. Re-derivable from source_url + source_sha256.",
+  "build": "derived by scripts/build_enzyme_catalog.py from the pinned REBASE Bairoch-format file: restriction enzymes (REBASE ET starting with R -- here Type II R2, Type II bifunctional/IIG RM2, Type II modification-dependent/IIM R2* such as DpnI, and one Type III EcoP15I) that name at least one commercial supplier (CR) and have a single fully-specified IUPAC recognition site of 4-20 bases. Methyltransferases and homing endonucleases are excluded. Cut positions, source organisms, references and methylation data are not extracted -- only the name and its recognition sequence, which is all BT4 needs to ban a site. Isoschizomers are kept so a user can name the enzyme they actually own.",
+  "enzyme_count": 584,
+  "license_note": "REBASE is Copyright (c) Dr. Richard J. Roberts and is made freely available to the community for use WITH CITATION; it is not a CC/public-domain grant. What is bundled here is a derived subset (enzyme name + recognition sequence for commercially available Type II enzymes -- each a published fact carried in its suppliers' catalogs), not a redistribution of the REBASE database. Cite Roberts RJ, Vincze T, Posfai J, Macelis D. REBASE - a database for DNA restriction and modification: enzymes, genes and genomes. Nucleic Acids Res (2023), doi:10.1093/nar/gkac975.",
   "note": "Real recognition sequences derived from REBASE, NOT hand-typed values. Each entry is an enzyme name paired with the IUPAC recognition sequence BT4 bans (together with its reverse complement, since sites are double-stranded). BT4 does not model cut positions, star activity, methylation sensitivity, or buffer conditions: a site being absent means the recognition sequence does not occur, not that a digest will behave as you expect.",
   "rebase_version": "608",
   "rebuild_command": "python scripts/build_enzyme_catalog.py",
+  "rederivation_note": "REBASE publishes only a MOVING url for its current release, with no versioned permalink, so source_url alone does not pin anything: the pin that holds is source_sha256, checked on every build. Re-deriving these exact bytes therefore requires REBASE version 608 specifically. A later release makes the build abort with the digest mismatch rather than silently producing a different catalog.",
   "retrieved": "2026-08-12",
   "selection": {
     "commercially_available": 596,
+    "duplicate_ids_merged": 12,
     "records_in_source": 17545,
-    "shipped": 576,
-    "type_ii": 5089,
-    "with_usable_site": 583
+    "restriction_enzymes": 5089,
+    "shipped": 584,
+    "with_usable_site": 596
   },
-  "sha256": "be776abbffe7a202c8c23d175fe278b0a1a2a686249f71322f25231ef6c3ab31",
+  "sha256": "56718d27f11dac894a1160ec7f9a0deab7e01399b4e719b3ac11d094a4b5053e",
   "source": "REBASE (The Restriction Enzyme Database) version 608",
   "source_sha256": "3c60506f3fd49f5c18afb993d1ed680f792d642e90b291ef4427d143ebcfa40c",
   "source_url": "http://rebase.neb.com/rebase/link_bairoch"

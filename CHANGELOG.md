@@ -7,8 +7,39 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **Enzyme catalog: corrected selection, and its hash now enters the manifest.**
+  Found by an adversarial review of the catalog change below, and fixed before
+  the numbers were relied on:
+  - **The documented selection rule now matches the code.** The build described
+    itself as "Type II only" while selecting any REBASE type starting with `R`.
+    The composition is now stated precisely — Type II (`R2`), bifunctional/IIG
+    (`RM2`), modification-dependent/IIM (`R2*`), and one Type III — in both the
+    script and the sidecar. The modification-dependent entries are **kept
+    deliberately**, with the reason recorded: an initial attempt to exclude them
+    as "cannot cut unmethylated synthetic DNA" would have deleted **DpnI**, whose
+    `GATC` avoidance is mainstream precisely *because* a plasmid from a dam+
+    strain is Dam-methylated and is cut by it.
+  - **SfiI and eleven others are no longer silently dropped.** An arbitrary
+    12-base cap discarded `SfiI` (`GGCCNNNNNGGCC`) and `XcmI`
+    (`CCANNNNNNNNNTGG`) with no signal. The bound is now a parse-sanity guard at
+    20, justified by the longest real site in the source.
+  - **Type IIB duplicates resolve to one site.** Enzymes like `AjuI`/`AloI`/`PsrI`
+    appear as two REBASE records leading with opposite strands. The builder now
+    verifies the two are reverse complements and keeps the first, instead of
+    last-wins (which made the shipped site depend on file order).
+  - **`enzyme_catalog_sha256` enters the run manifest** when restriction enzymes
+    are active (invariant #9). The sites moved from Python source — covered by
+    the manifest's `git_commit` — into a data file that no hash covered, so a
+    swapped catalog would have changed the constraint while leaving byte-identical
+    provenance: exactly the BT3 anti-pattern §10.10.
+  - **Re-derivability stated honestly.** REBASE publishes only a *moving*
+    current-release URL with no versioned permalink, so `source_url` pins nothing
+    on its own; the digest is the pin, and the sidecar now says so rather than
+    implying a stable link.
+
 ### Added
-- **REBASE-derived restriction-enzyme catalog (17 → 576 enzymes)**
+- **REBASE-derived restriction-enzyme catalog (17 → 584 enzymes)**
   (`bt4.constraints.restriction`, `scripts/build_enzyme_catalog.py`) — the
   catalog was seventeen hand-typed pairs described only as "textbook-correct",
   with no source, version, or way to check them. It is now **derived from a
@@ -29,7 +60,7 @@ its first tagged release.
   - **Isoschizomers kept** (`KpnI` and `Acc65I` both → `GGTACC`) so a user can
     name the enzyme they actually own.
   - New public `resolve_enzyme()` (case-insensitive, and on a miss offers the
-    closest names instead of dumping 576) and `enzyme_provenance()`, re-exported
+    closest names instead of dumping the catalog) and `enzyme_provenance()`, re-exported
     through `bt4.api`. `ENZYMES` is now read-only shipped data.
   - **BT4 Studio** gains a searchable enzyme field: a completer that matches the
     *last* comma-separated token and substitutes it back, leaving earlier entries

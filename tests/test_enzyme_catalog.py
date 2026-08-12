@@ -74,7 +74,7 @@ TYPE_IIS: dict[str, str] = {
 
 def test_catalog_is_substantial_and_sorted() -> None:
     names = available_enzymes()
-    assert len(names) > 400, "the derived catalog should cover the commercial set"
+    assert len(names) > 500, "the derived catalog should cover the commercial set"
     assert list(names) == sorted(names)
     assert len(set(names)) == len(names)
 
@@ -84,7 +84,7 @@ def test_every_site_is_valid_iupac() -> None:
         assert site, f"{name} has an empty site"
         assert is_iupac(site), f"{name} site {site!r} is not IUPAC"
         assert site == site.upper()
-        assert 4 <= len(site) <= 12, f"{name} site {site!r} has implausible length"
+        assert 4 <= len(site) <= 20, f"{name} site {site!r} has implausible length"
 
 
 def test_catalog_is_read_only() -> None:
@@ -192,7 +192,7 @@ def test_selection_tally_is_monotonic() -> None:
     # Each filter can only narrow the previous stage.
     assert (
         selection["records_in_source"]
-        >= selection["type_ii"]
+        >= selection["restriction_enzymes"]
         >= selection["commercially_available"]
         >= selection["with_usable_site"]
     )
@@ -208,7 +208,7 @@ def test_provenance_is_json_serializable() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("name", ["EcoRI", "BsaI", "SapI", "BslI", "MspJI"])
+@pytest.mark.parametrize("name", ["EcoRI", "BsaI", "SapI", "SfiI", "DpnI", "BslI", "MspJI"])
 def test_requested_site_is_enforced_or_the_run_is_refused(name: str) -> None:
     """No third option: a delivered sequence never contains a banned site.
 
@@ -243,3 +243,66 @@ def test_api_exposes_the_catalog_and_its_provenance() -> None:
     assert api.available_enzymes() == available_enzymes()
     assert api.resolve_enzyme("bsai") == "GGTCTC"
     assert api.enzyme_provenance()["enzyme_count"] == len(ENZYMES)
+
+
+# --------------------------------------------------------------------------- #
+# Only enzymes that can cut a synthetic (unmethylated) gene are shipped.
+# --------------------------------------------------------------------------- #
+
+
+def test_modification_dependent_enzymes_are_kept() -> None:
+    """Modification-dependent enzymes belong in the catalog, not excluded from it.
+
+    It is tempting to drop REBASE's ``R2*`` entries on the grounds that a
+    synthetic gene is unmethylated so they could never cut it. That reasoning is
+    wrong where it matters most: **DpnI** is ``R2*``, and avoiding its ``GATC``
+    site is a mainstream design goal precisely *because* a plasmid propagated in
+    a standard dam+ strain is Dam-methylated and is cut by it (DpnI template
+    digestion is a routine QuikChange/Gibson step). Several such entries also
+    share a site byte-for-byte with a plain Type II enzyme already shipped, so
+    dropping them would delete a name a user may reasonably type, not a
+    constraint.
+    """
+    assert ENZYMES["DpnI"] == "GATC"
+    # ...and an ordinary Type II isoschizomer of the same site is present too, so
+    # removing the modification-dependent name would change nothing but the alias.
+    assert ENZYMES["Bsp143I"] == "GATC"
+    assert "MspJI" in ENZYMES
+
+
+def test_long_real_sites_are_not_dropped_by_the_sanity_cap() -> None:
+    """The length guard must not silently discard genuine enzymes.
+
+    An earlier 12-base cap dropped SfiI (13) and XcmI (15) -- SfiI being a
+    thoroughly ordinary cloning enzyme -- with no signal that anything was lost.
+    """
+    assert ENZYMES["SfiI"] == "GGCCNNNNNGGCC"
+    assert ENZYMES["XcmI"] == "CCANNNNNNNNNTGG"
+    assert max(len(site) for site in ENZYMES.values()) >= 15
+
+
+def test_duplicate_rebase_ids_resolve_to_one_site() -> None:
+    """Type IIB enzymes are listed twice, once per strand -- one site, not two."""
+    # AjuI/AloI/PsrI each appear as two REBASE records leading with opposite
+    # strands; the builder verifies they are reverse complements and keeps one.
+    for name in ("AjuI", "AloI", "PsrI"):
+        assert name in ENZYMES
+    assert ENZYMES["AjuI"] == "GAANNNNNNNTTGG"
+
+
+def test_enzyme_catalog_hash_enters_the_run_manifest() -> None:
+    """A swapped catalog must not yield byte-identical provenance (invariant #9).
+
+    The site a name resolves to is *shipped data*, so hashing the names alone
+    would be exactly the BT3 provenance lie: a different catalog file silently
+    changes the constraint while the stamp stays the same.
+    """
+    from bt4.pipeline.optimize import _manifest
+
+    with_enzymes = _manifest(api.OptimizeConfig(restriction_enzymes=("EcoRI",)), {})
+    without = _manifest(api.OptimizeConfig(), {})
+
+    assert "enzyme_catalog_sha256" in with_enzymes.inputs
+    assert with_enzymes.inputs["enzyme_catalog_sha256"] == enzyme_provenance()["sha256"]
+    # Absent when no enzyme is requested: the stamp records what the run used.
+    assert "enzyme_catalog_sha256" not in without.inputs
