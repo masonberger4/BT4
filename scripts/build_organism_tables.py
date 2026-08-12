@@ -332,7 +332,12 @@ def representative_cds(path: Path) -> tuple[list[str], FilterStats]:
 def build_one(spec: OrganismSpec, cache_dir: Path, out_dir: Path) -> Path:
     """Download, filter, count, and write one organism's table + provenance."""
     print(f"{spec.key}:")
-    archive = cache_dir / Path(spec.url).name
+    # Namespace the cache by division+release: Ensembl encodes the release only in
+    # the URL *path*, so every release serves an identically-named file. Without
+    # this, bumping ENSEMBL_RELEASE with a warm cache would make no network request
+    # at all and count the OLD release's genes under the new release's stamp. The
+    # digest pin below catches that; namespacing means it cannot arise.
+    archive = cache_dir / f"{spec.database.replace(' ', '_')}-{spec.release}" / Path(spec.url).name
     download(spec.url, archive)
     source_sha = sha256_file(archive)
     if source_sha != spec.source_sha256:
