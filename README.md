@@ -55,11 +55,14 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   donor/acceptor motif guard (sense-strand IUPAC heuristic — reduces obvious
   cryptic-splice risk, never the bare GT/AG, no calibrated claim), and a
   **restriction-enzyme catalog** (IUPAC-aware, auto reverse-complement).
-- **Multiple organisms:** human, *E. coli*, and *S. cerevisiae* codon tables out
-  of the box, plus real **tAI** tables for eight organisms (human, mouse, rat,
-  zebrafish, *Drosophila*, *C. elegans*, *Arabidopsis*, and *S. cerevisiae*) from
-  GtRNAdb tRNA counts; `bt4 build-table` builds an authentic codon table from your
-  own CDS FASTA.
+- **Nine organisms:** human, mouse, rat, zebrafish, *Drosophila*, *C. elegans*,
+  *Arabidopsis*, *E. coli*, and *S. cerevisiae*. Six of those are **genome-wide
+  recounts** from release-pinned Ensembl CDS sets — every number is a real codon
+  count, stamped with the source URL, the source file's own SHA-256, the assembly,
+  and the filter tally, so anyone can rebuild the exact shipped bytes
+  (`python scripts/build_organism_tables.py --verify`). Real **tAI** tables from
+  GtRNAdb tRNA counts cover eight of the nine, and `bt4 build-table` builds an
+  authentic codon table from your own CDS FASTA.
 - **Benchmarked against real tools:** `scripts/compare_tools.py` places BT4 next
   to GeneOptimizer / IDT / Twist / GenScript on a cited, CC BY 4.0 panel — every
   metric recomputed from the sequence, and BT4 never claimed "better", just placed.

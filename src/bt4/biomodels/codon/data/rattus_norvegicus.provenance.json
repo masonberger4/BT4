@@ -1,0 +1,28 @@
+{
+  "assembly": "GRCr8",
+  "build": "genome-wide codon occurrence counts recounted from the pinned Ensembl CDS FASTA by scripts/build_organism_tables.py: one representative CDS per gene (the longest; ties broken by transcript id for determinism), keeping only ACGT-only sequences that are a multiple of three, start with ATG, end in a stop codon, and contain no internal stop. The terminal stop codon is counted; every other codon is a sense codon.",
+  "cds_count": 21444,
+  "database": "Ensembl",
+  "database_release": "116",
+  "filters": {
+    "cds_counted": 21444,
+    "dropped_internal_stop": 18,
+    "dropped_no_atg_start": 3112,
+    "dropped_no_terminal_stop": 672,
+    "dropped_non_acgt": 0,
+    "dropped_non_representative_isoform": 26322,
+    "dropped_not_multiple_of_three": 7,
+    "records_in_source": 51575
+  },
+  "genebuild": "Ensembl ENS01",
+  "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049).",
+  "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
+  "organism_common_name": "Rattus norvegicus (Norway rat)",
+  "rebuild_command": "python scripts/build_organism_tables.py rattus_norvegicus",
+  "retrieved": "2026-08-12",
+  "sha256": "650fa3190e51b2256cf1fb472c538295c63376f621a9565e47ab0fa51921bdbb",
+  "source": "Ensembl release 116 -- Rattus norvegicus (Norway rat) CDS set (assembly GRCr8, annotation Ensembl ENS01)",
+  "source_sha256": "25a90be0825e525afb60eeb5568a6f5c6464216e4c262260a2547432d40acd0d",
+  "source_url": "https://ftp.ensembl.org/pub/release-116/fasta/rattus_norvegicus/cds/Rattus_norvegicus.GRCr8.cds.all.fa.gz",
+  "total_codons_counted": 11942156
+}

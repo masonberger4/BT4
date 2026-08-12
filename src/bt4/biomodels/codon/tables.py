@@ -7,8 +7,23 @@ amino acid. The CAI of a coding sequence is the geometric mean of ``w`` over its
 codons (excluding non-degenerate residues and stops).
 
 Tables are loaded from packaged TSV data (``data/<organism>.tsv``) with a
-sidecar ``<organism>.provenance.json``. Bundled values are *representative
-published* figures (Kazusa-style), not an authoritative per-genome recount.
+sidecar ``<organism>.provenance.json``. **The bundled tables are not all of the
+same provenance grade, and the sidecar says which is which** -- read it rather
+than assuming:
+
+* Six organisms (mouse, rat, zebrafish, *Drosophila*, *C. elegans*,
+  *Arabidopsis*) are **genome-wide recounts**: raw codon counts from a
+  release-pinned Ensembl CDS set, with ``cds_count`` set and the source URL and
+  the source file's own SHA-256 in the sidecar, rebuildable by
+  ``scripts/build_organism_tables.py``.
+* Three (human, *E. coli*, *S. cerevisiae*) are older *representative published*
+  figures (Kazusa-style per-thousand values) with ``cds_count`` of ``None`` --
+  **not** an authoritative per-genome recount.
+
+Only ratios within an amino acid's synonymous group are ever used
+(``w = f/f_max``), so the two scales -- raw counts and per-thousand -- are
+interchangeable here. Consumers that need a scale-free reading must normalize
+the same way; see :class:`~bt4.objectives.minmax.MinMaxTerm`, which does.
 
 This module depends only on :mod:`bt4.domain` and the standard library.
 """

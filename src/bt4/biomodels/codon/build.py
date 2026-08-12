@@ -115,6 +115,9 @@ def write_table(
     retrieved: str | None = None,
     cds_count: int | None = None,
     pseudocount: float = 0.0,
+    build: str | None = None,
+    note: str | None = None,
+    extra: Mapping[str, object] | None = None,
 ) -> str:
     """Write codon counts to a TSV plus a sibling provenance JSON.
 
@@ -140,13 +143,39 @@ def write_table(
         cds_count: Number of coding sequences behind the counts, if known.
         pseudocount: When positive, write all 64 codons Laplace-smoothed by this
             amount; when ``0`` write only observed codons with their raw counts.
+        build: Overrides the default ``build`` string, for a caller that applied
+            its own documented selection/filtering rules (e.g. one representative
+            transcript per gene). Describe what was actually done.
+        note: Overrides the default honesty caveat. Use it to state precisely
+            what the numbers are and are not.
+        extra: Additional provenance keys merged into the sidecar (e.g. the
+            source URL, assembly, database release, and the SHA-256 of the
+            downloaded source file). They make the table **re-derivable by a
+            third party**, which is the point of the stamp (CLAUDE.md §8).
+            Reserved keys (``source``/``build``/``cds_count``/``retrieved``/
+            ``sha256``/``note``) cannot be overwritten -- pass those through
+            their own parameters -- so the loaded provenance can never disagree
+            with the sidecar.
 
     Returns:
         The filesystem path to the written TSV, as a string.
+
+    Raises:
+        ValueError: If ``extra`` tries to set a reserved provenance key.
     """
     directory = Path(path)
     tsv_path = directory / f"{organism}.tsv"
     provenance_path = directory / f"{organism}.provenance.json"
+
+    # Validate before writing anything: a rejected call must not leave a TSV on
+    # disk with no (or a stale) sidecar beside it.
+    reserved = {"source", "build", "cds_count", "retrieved", "sha256", "note"}
+    clashes = sorted(set(extra or {}) & reserved)
+    if clashes:
+        raise ValueError(
+            f"extra provenance keys {clashes} are reserved; pass them via "
+            "their own parameters so the sidecar cannot disagree with itself"
+        )
 
     lines = ["amino_acid\tcodon\tfrequency"]
     if pseudocount > 0:
@@ -162,14 +191,16 @@ def write_table(
     resolved_retrieved = (
         retrieved if retrieved is not None else datetime.date.today().isoformat()
     )
-    provenance = {
+    provenance: dict[str, object] = {
         "source": source,
-        "build": _BUILD_METHOD,
+        "build": build if build is not None else _BUILD_METHOD,
         "cds_count": cds_count,
         "retrieved": resolved_retrieved,
         "sha256": sha256_hex(tsv_bytes),
-        "note": _BUILD_NOTE,
+        "note": note if note is not None else _BUILD_NOTE,
     }
+    if extra:
+        provenance.update(extra)
     provenance_path.write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

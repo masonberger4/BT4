@@ -962,9 +962,31 @@ control.
   from its seed (#7), and carries the new `OptimalityStatus.SAMPLED` certificate
   that makes **no** optimality or expression claim (§1/§10.6). GLOBAL rules
   (max-repeat, uORF) are not enforced during sampling but are validated and any
-  residual violation reported honestly per member. Still ahead: more organisms
-  with authoritative provenance, restriction-enzyme catalogs, tissue/condition-
-  specific tables.
+  residual violation reported honestly per member. **Organism breadth has landed
+  for the six stranded species:** mouse, rat, zebrafish, *Drosophila*, *C.
+  elegans* and *Arabidopsis* now ship **genome-wide recounted** codon tables
+  (`scripts/build_organism_tables.py`), taking BT4 from three selectable organisms
+  to nine. This closed a real gap rather than padding a list — all six already had
+  authentic GtRNAdb tRNA tables, but tAI is only offered for an organism you can
+  *select*, and selection needs a codon table, so six of the eight tRNA tables were
+  **unreachable** (a regression test now forbids that state). The builder is the
+  §8 reproducible table-build pipeline made concrete: a **release-pinned** Ensembl
+  CDS FASTA (never a moving `current` link), documented validity filtering, **one
+  representative CDS per gene** so usage is not weighted by isoform-annotation
+  depth, counting via BT4's own `count_codons`, and a provenance sidecar carrying
+  the source URL, the **source file's own SHA-256**, assembly, release, total
+  codons, and the per-filter drop tally — so a third party rebuilds the exact
+  shipped bytes (`--verify` proves it). It **refuses rather than fabricates**:
+  no valid CDS, or any of the 64 codons unobserved, aborts the write instead of
+  smoothing in an invented number. The tables are checked against **external
+  ground truth** (§8), not just self-consistency — GC3 ordering across species,
+  mouse/rat independently landing within 1.5 points of human, and the known
+  preferred Leu/stop codons per species. Still ahead: further organisms (the
+  industrial gaps — CHO, *P. pastoris*, *B. subtilis*), a larger
+  restriction-enzyme catalog, tissue/condition-specific tables, and recounting the
+  three legacy hand-curated tables (human / *E. coli* / yeast — which would shift
+  CAI and therefore needs its own PR with the golden panel regenerated
+  deliberately).
 
 ---
 

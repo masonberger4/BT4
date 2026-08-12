@@ -1,0 +1,28 @@
+{
+  "assembly": "BDGP6.54",
+  "build": "genome-wide codon occurrence counts recounted from the pinned Ensembl CDS FASTA by scripts/build_organism_tables.py: one representative CDS per gene (the longest; ties broken by transcript id for determinism), keeping only ACGT-only sequences that are a multiple of three, start with ATG, end in a stop codon, and contain no internal stop. The terminal stop codon is counted; every other codon is a sense codon.",
+  "cds_count": 13884,
+  "database": "Ensembl",
+  "database_release": "116",
+  "filters": {
+    "cds_counted": 13884,
+    "dropped_internal_stop": 506,
+    "dropped_no_atg_start": 130,
+    "dropped_no_terminal_stop": 9,
+    "dropped_non_acgt": 0,
+    "dropped_non_representative_isoform": 16200,
+    "dropped_not_multiple_of_three": 73,
+    "records_in_source": 30802
+  },
+  "genebuild": "FlyBase dmel_r6.54_FB2023_05",
+  "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049).",
+  "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
+  "organism_common_name": "Drosophila melanogaster (fruit fly)",
+  "rebuild_command": "python scripts/build_organism_tables.py drosophila_melanogaster",
+  "retrieved": "2026-08-12",
+  "sha256": "2143d94ec40a0469759eff42b301634f954171436e5235817d5c7b58520295c4",
+  "source": "Ensembl release 116 -- Drosophila melanogaster (fruit fly) CDS set (assembly BDGP6.54, annotation FlyBase dmel_r6.54_FB2023_05)",
+  "source_sha256": "112c99442c2ad59c6f012ea803cd6c51dbb96eba491e8d33d810873381fb6112",
+  "source_url": "https://ftp.ensembl.org/pub/release-116/fasta/drosophila_melanogaster/cds/Drosophila_melanogaster.BDGP6.54.cds.all.fa.gz",
+  "total_codons_counted": 7421202
+}
