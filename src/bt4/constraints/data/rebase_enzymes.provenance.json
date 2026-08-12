@@ -11,6 +11,10 @@
     "commercially_available": 596,
     "duplicate_ids_merged": 12,
     "records_in_source": 17545,
+    "rejected_site_length": 0,
+    "rejected_site_multiple": 0,
+    "rejected_site_not_iupac": 0,
+    "rejected_site_unknown": 0,
     "restriction_enzymes": 5089,
     "shipped": 584,
     "with_usable_site": 596

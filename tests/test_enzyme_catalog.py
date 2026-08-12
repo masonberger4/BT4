@@ -31,7 +31,9 @@ from bt4.constraints.restriction import (
     RestrictionSiteConstraint,
     available_enzymes,
     enzyme_provenance,
+    enzyme_suggestions,
     resolve_enzyme,
+    unknown_enzyme_message,
 )
 from bt4.domain.sequence import validate_dna
 
@@ -137,8 +139,41 @@ def test_unknown_enzyme_suggests_instead_of_dumping_the_catalog() -> None:
     message = str(excinfo.value)
     assert "EcoRI" in message, "the obvious correction should be offered"
     # The whole catalog must not be pasted into the error.
-    assert message.count(",") < 10
-    assert len(message) < 300
+    assert len(message) < 500
+    assert str(len(ENZYMES)) in message
+
+
+def test_suggestions_are_labelled_as_spelling_matches_and_show_their_sites() -> None:
+    """A near-miss name is not a near-miss SITE, and the message must say so.
+
+    The suggestions come from a fuzzy *name* match with no notion of recognition
+    sequence, so a name-similar enzyme usually cuts something entirely different.
+    Offering a bare list would invite a user to accept a substitute that does not
+    ban the site they care about -- and the run would then report proven-optimal
+    with zero violations while their real site sat in the delivered sequence.
+    """
+    message = unknown_enzyme_message("NotI2")
+
+    assert "SPELLING" in message
+    assert "not by recognition site" in message
+    # Every suggestion carries its own site, so non-equivalence is visible
+    # rather than merely asserted.
+    for hit in enzyme_suggestions("NotI2"):
+        assert f"{hit} ({ENZYMES[hit]})" in message
+    # ...and the suggestions really are unrelated sites, which is the point.
+    sites = {ENZYMES[hit] for hit in enzyme_suggestions("NotI2")}
+    assert len(sites) > 1, "the fixture should show genuinely differing sites"
+    # The escape hatch is offered instead of a silent substitution.
+    assert "recognition sequence directly" in message
+
+
+def test_enzyme_suggestions_are_name_matches_only() -> None:
+    hits = enzyme_suggestions("EcoR1")
+    assert "EcoRI" in hits
+    assert all(hit in ENZYMES for hit in hits)
+    # Bounded, so no surface can turn it into a catalog dump.
+    assert len(hits) <= 5
+    assert enzyme_suggestions("zzzzzzzzzz") == ()
 
 
 def test_unknown_enzyme_without_near_miss_still_explains() -> None:
@@ -184,6 +219,26 @@ def test_provenance_carries_the_rederivation_trail() -> None:
     assert "not a" in licence.lower() or "NOT a" in licence
     # The honest scope limit: BT4 models the site, not the digest.
     assert "cut position" in str(prov["note"])
+
+
+def test_selection_tally_accounts_for_every_considered_record() -> None:
+    """Every commercial record is either shipped, merged, or counted as rejected.
+
+    The build calls its selection "auditable rather than a black box", so the
+    numbers have to close. An unexplained gap is how SfiI was silently dropped by
+    a length cap without anything in the sidecar showing a loss.
+    """
+    selection = enzyme_provenance()["selection"]
+    assert isinstance(selection, dict)
+    rejected = sum(v for k, v in selection.items() if k.startswith("rejected_"))
+    assert selection["with_usable_site"] + rejected == selection["commercially_available"]
+    assert (
+        selection["shipped"] + selection["duplicate_ids_merged"]
+        == selection["with_usable_site"]
+    )
+    # The length guard is a parse-sanity bound, not a filter that drops real
+    # enzymes -- and the stamp proves it rather than asking to be trusted.
+    assert selection["rejected_site_length"] == 0
 
 
 def test_selection_tally_is_monotonic() -> None:

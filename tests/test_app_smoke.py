@@ -191,7 +191,12 @@ def test_unknown_enzyme_warning_does_not_dump_the_catalog() -> None:
     assert box is not None
     detail = box.informativeText()
     assert "EcoRI" in detail, "the obvious correction should be offered"
-    assert len(detail) < 300, "the whole catalog must not be pasted into the error"
+    assert len(detail) < 600, "the whole catalog must not be pasted into the error"
+    # Each suggestion carries its own site and is labelled a SPELLING match, so a
+    # user cannot read a near-miss name as an equivalent recognition sequence.
+    assert "SPELLING" in detail
+    assert f"EcoRI ({api.resolve_enzyme('EcoRI')})" in detail
+    assert "Forbidden motifs" in detail, "the escape hatch should be offered"
 
 
 def test_sequence_viewer_highlights_and_locates_violations() -> None:

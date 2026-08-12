@@ -21,7 +21,9 @@ from bt4.constraints.restriction import (
     RestrictionSiteConstraint,
     available_enzymes,
     enzyme_provenance,
+    enzyme_suggestions,
     resolve_enzyme,
+    unknown_enzyme_message,
 )
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
 from bt4.constraints.splice_motif import (
@@ -50,6 +52,8 @@ __all__ = [
     "available_enzymes",
     "available_forbidden_presets",
     "enzyme_provenance",
+    "enzyme_suggestions",
     "resolve_enzyme",
     "resolve_forbidden_motifs",
+    "unknown_enzyme_message",
 ]

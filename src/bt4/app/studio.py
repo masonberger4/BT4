@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from difflib import get_close_matches
 from html import escape
 from itertools import pairwise
 
@@ -1419,6 +1418,14 @@ class StudioWindow(QtWidgets.QMainWindow):
         The catalog holds hundreds of enzymes, so an error offers the closest
         matching names rather than listing every one -- a wall of 500+ names
         hides the answer instead of giving it.
+
+        Each suggestion is shown **with its recognition site**, and labelled as
+        matched by spelling. The suggestions come from a fuzzy *name* match with
+        no notion of site similarity, so a near-miss usually cuts something
+        entirely different (``NotI`` is ``GCGGCCGC``, ``NcoI`` is ``CCATGG``).
+        Offering a bare list would invite the user to accept a substitute that
+        does not ban the site they care about -- and the run would then report
+        proven-optimal with zero violations while their real site remained.
         """
         raw = [e.strip() for e in self.enzymes_edit.text().split(",") if e.strip()]
         catalog = {name.lower(): name for name in api.available_enzymes()}
@@ -1430,11 +1437,20 @@ class StudioWindow(QtWidgets.QMainWindow):
         if unknown:
             hints = []
             for entry in unknown:
-                close = get_close_matches(entry, api.available_enzymes(), n=4, cutoff=0.6)
+                close = api.enzyme_suggestions(entry)
                 if close:
-                    hints.append(f"{entry} -> {', '.join(close)}")
-            detail = "Did you mean: " + "; ".join(hints) + "." if hints else (
-                f"The catalog has {len(catalog)} enzymes; run `bt4 enzymes` to list them."
+                    sites = ", ".join(f"{hit} ({api.resolve_enzyme(hit)})" for hit in close)
+                    hints.append(f"{entry} -> {sites}")
+            if hints:
+                detail = (
+                    "Closest catalog names by SPELLING, not by recognition site -- "
+                    "check the sequence before substituting: " + "; ".join(hints) + ". "
+                )
+            else:
+                detail = f"The catalog has {len(catalog)} enzymes. "
+            detail += (
+                "If BT4 does not carry your enzyme, add its recognition sequence "
+                "to 'Forbidden motifs' instead of substituting a similar name."
             )
             self._warn(
                 "Unknown restriction enzyme",
