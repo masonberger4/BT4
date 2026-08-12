@@ -24,6 +24,8 @@ from bt4.constraints import (
     ForbiddenPreset,
     available_enzymes,
     available_forbidden_presets,
+    enzyme_provenance,
+    resolve_enzyme,
 )
 from bt4.domain import AMINO_ACIDS, Result, Severity, Violation, validate_protein
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
@@ -85,6 +87,7 @@ __all__ = [
     "build_table",
     "candidates",
     "count_codons",
+    "enzyme_provenance",
     "expression_model",
     "frontier",
     "library",
@@ -92,6 +95,7 @@ __all__ = [
     "parse_fasta",
     "read_fasta",
     "rerank_by_expression",
+    "resolve_enzyme",
     "resolve_expression_backend",
     "resolve_splice_backend",
     "result_to_dict",

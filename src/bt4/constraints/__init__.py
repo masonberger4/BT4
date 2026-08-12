@@ -17,7 +17,12 @@ from bt4.constraints.gc_run import GcRunConstraint
 from bt4.constraints.kozak import InternalStartConstraint
 from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
-from bt4.constraints.restriction import RestrictionSiteConstraint, available_enzymes
+from bt4.constraints.restriction import (
+    RestrictionSiteConstraint,
+    available_enzymes,
+    enzyme_provenance,
+    resolve_enzyme,
+)
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
 from bt4.constraints.splice_motif import (
     DEFAULT_ACCEPTOR_MOTIFS,
@@ -44,5 +49,7 @@ __all__ = [
     "UorfConstraint",
     "available_enzymes",
     "available_forbidden_presets",
+    "enzyme_provenance",
+    "resolve_enzyme",
     "resolve_forbidden_motifs",
 ]

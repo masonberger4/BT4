@@ -8,6 +8,39 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **REBASE-derived restriction-enzyme catalog (17 → 576 enzymes)**
+  (`bt4.constraints.restriction`, `scripts/build_enzyme_catalog.py`) — the
+  catalog was seventeen hand-typed pairs described only as "textbook-correct",
+  with no source, version, or way to check them. It is now **derived from a
+  version-pinned REBASE release** and held as content-hashed package data, the
+  same discipline the recounted codon tables get (CLAUDE.md §8):
+  - **Selection is documented and auditable:** commercially available Type II
+    enzymes (REBASE `ET`/`CR`) with a single fully-specified IUPAC recognition
+    site of 4–12 bases. The provenance sidecar records the REBASE version, URL,
+    the source file's own SHA-256, the stage-by-stage selection tally, and the
+    shipped TSV's digest — so a third party re-derives and re-verifies it
+    (`python scripts/build_enzyme_catalog.py --verify`).
+  - **Type IIS enzymes included** — BsaI, BsmBI, BbsI, SapI, Esp3I, AarI, the
+    Golden Gate workhorses. REBASE lists an asymmetric site once per strand; the
+    builder *verifies* the second entry is the reverse complement of the first
+    rather than assuming it, and takes one (BT4 bans both strands anyway).
+  - **Verified against the values it replaces:** all 17 previously shipped
+    enzymes resolve to byte-identical sites, cross-validating old and new.
+  - **Isoschizomers kept** (`KpnI` and `Acc65I` both → `GGTACC`) so a user can
+    name the enzyme they actually own.
+  - New public `resolve_enzyme()` (case-insensitive, and on a miss offers the
+    closest names instead of dumping 576) and `enzyme_provenance()`, re-exported
+    through `bt4.api`. `ENZYMES` is now read-only shipped data.
+  - **BT4 Studio** gains a searchable enzyme field: a completer that matches the
+    *last* comma-separated token and substitutes it back, leaving earlier entries
+    intact — a stock completer matches the whole line and breaks after the first
+    enzyme.
+  - **Honest scope, stated in the data:** BT4 models the recognition *sequence*
+    only — not cut position, star activity, methylation sensitivity, or buffer.
+    Some real entries are highly degenerate (`MspJI` is `CNNR`); banning one in a
+    CDS can be genuinely unsatisfiable, and BT4 raises `InfeasibleError` naming
+    `restriction_site` rather than returning a sequence that still contains it.
+    A regression test pins that either/or across degenerate and ordinary sites.
 - **Six new organisms, recounted from release-pinned public CDS sets** — mouse,
   rat, zebrafish, *Drosophila*, *C. elegans*, and *Arabidopsis*, taking BT4 from
   three selectable organisms to nine (Phase 5 organism breadth, CLAUDE.md §8/§9).
