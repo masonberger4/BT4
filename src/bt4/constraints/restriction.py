@@ -32,7 +32,9 @@ __all__ = [
     "RestrictionSiteConstraint",
     "available_enzymes",
     "enzyme_provenance",
+    "enzyme_suggestions",
     "resolve_enzyme",
+    "unknown_enzyme_message",
 ]
 
 _DATA_PACKAGE = "bt4.constraints.data"
@@ -67,9 +69,9 @@ ENZYMES: MappingProxyType[str, str] = MappingProxyType(_load_catalog())
 """Catalog mapping restriction-enzyme name to its IUPAC recognition site.
 
 Derived from a version-pinned **REBASE** release (Roberts et al.) by
-``scripts/build_enzyme_catalog.py`` -- commercially available Type II enzymes
-with a single fully-specified recognition sequence -- rather than hand-typed, so
-every site is checkable against a cited source and the shipped bytes are
+``scripts/build_enzyme_catalog.py`` -- every commercially available restriction
+enzyme with a single fully-specified recognition sequence -- rather than
+hand-typed, so every site is checkable against a cited source and the shipped bytes are
 content-hashed in :func:`enzyme_provenance`. Isoschizomers are included, so a
 user can name the enzyme they actually own (``KpnI`` and ``Acc65I`` both resolve
 to ``GGTACC``).
@@ -133,7 +135,14 @@ def resolve_enzyme(name: str) -> str:
     Raises:
         ValueError: If no catalog entry matches. The message offers the closest
             names rather than dumping the whole catalog -- with hundreds of
-            entries, a full listing hides the answer instead of giving it.
+            entries, a full listing hides the answer instead of giving it -- and
+            it shows each suggestion's **site**, because the suggestions are
+            matched on *spelling*, not on recognition sequence. A name-similar
+            enzyme usually cuts something completely different (``NotI`` is
+            ``GCGGCCGC``, ``NcoI`` is ``CCATGG``), so presenting a bare list
+            would invite a user to accept a substitute that does not ban the
+            site they care about -- and the run would then report
+            proven-optimal with zero violations while their real site remained.
     """
     if name in ENZYMES:
         return ENZYMES[name]
@@ -141,12 +150,41 @@ def resolve_enzyme(name: str) -> str:
     hit = folded.get(name.strip().lower())
     if hit is not None:
         return ENZYMES[hit]
-    close = difflib.get_close_matches(name, available_enzymes(), n=_SUGGESTIONS, cutoff=0.6)
-    hint = f"; did you mean {', '.join(close)}?" if close else ""
-    raise ValueError(
-        f"unknown enzyme {name!r}{hint} "
-        f"({len(ENZYMES)} enzymes in the catalog; see `bt4 enzymes`)"
+    raise ValueError(unknown_enzyme_message(name))
+
+
+def enzyme_suggestions(name: str, limit: int = _SUGGESTIONS) -> tuple[str, ...]:
+    """Return catalog names spelled similarly to ``name`` (NOT site-similar).
+
+    A pure fuzzy *name* match, exposed so a frontend can show the same list the
+    engine would -- and, like the engine, must label it as spelling-matched and
+    show each site, since these enzymes generally do not share a recognition
+    sequence with each other or with what the user typed.
+    """
+    return tuple(
+        difflib.get_close_matches(name, available_enzymes(), n=limit, cutoff=0.6)
     )
+
+
+def unknown_enzyme_message(name: str) -> str:
+    """Build the shared "unknown enzyme" explanation used by every surface.
+
+    Kept in one place so the CLI, the API and BT4 Studio cannot drift into
+    telling the user different things about the same miss.
+    """
+    close = enzyme_suggestions(name)
+    parts = [f"unknown enzyme {name!r}"]
+    if close:
+        shown = ", ".join(f"{hit} ({ENZYMES[hit]})" for hit in close)
+        parts.append(
+            f"closest catalog names by SPELLING, not by recognition site: {shown}"
+        )
+    parts.append(
+        f"{len(ENZYMES)} enzymes in the catalog (see `bt4 enzymes`). If BT4 does "
+        "not carry yours, ban its recognition sequence directly instead of "
+        "substituting a similarly-named enzyme"
+    )
+    return "; ".join(parts)
 
 
 @dataclass(frozen=True, slots=True)

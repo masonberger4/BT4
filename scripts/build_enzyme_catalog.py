@@ -162,7 +162,9 @@ def iter_records(path: Path) -> Iterator[dict[str, str]]:
         yield current
 
 
-def recognition_site(record: dict[str, str]) -> str | None:
+def recognition_site(
+    record: dict[str, str], stats: dict[str, int] | None = None
+) -> str | None:
     """Extract a single fully-specified IUPAC recognition site, or ``None``.
 
     A REBASE ``RS`` field looks like ``GAATTC, 1;`` -- the site, then the cut
@@ -180,19 +182,30 @@ def recognition_site(record: dict[str, str]) -> str | None:
     listing two genuinely different sites yields ``None``, so it is skipped
     rather than guessed at.
     """
+    def reject(reason: str) -> None:
+        if stats is not None:
+            stats[f"rejected_{reason}"] = stats.get(f"rejected_{reason}", 0) + 1
+
     raw = record.get("RS", "").strip()
     if not raw or raw.startswith("?"):
+        reject("site_unknown")
         return None
     alternatives = [part for part in raw.split(";") if part.strip()]
     sites = [part.split(",")[0].strip().upper() for part in alternatives]
     if not sites or not all(is_iupac(site) for site in sites if site):
+        reject("site_not_iupac")
         return None
-    if len(sites) == 2 and reverse_complement_iupac(sites[0]) != sites[1]:
-        return None  # two genuinely different sites: not a two-strand listing
-    if len(sites) > 2:
+    if len(sites) > 2 or (
+        len(sites) == 2 and reverse_complement_iupac(sites[0]) != sites[1]
+    ):
+        # Not a two-strand listing of one site: genuinely several targets.
+        reject("site_multiple")
         return None
     site = sites[0]
     if not site or not _MIN_SITE <= len(site) <= _MAX_SITE:
+        # Counted, never silent: an unexplained length cut is how SfiI went
+        # missing from a shipped catalog without anyone noticing.
+        reject("site_length")
         return None
     return site
 
@@ -211,6 +224,10 @@ def select_enzymes(path: Path) -> tuple[dict[str, str], dict[str, int]]:
         "commercially_available": 0,
         "with_usable_site": 0,
         "duplicate_ids_merged": 0,
+        "rejected_site_unknown": 0,
+        "rejected_site_not_iupac": 0,
+        "rejected_site_multiple": 0,
+        "rejected_site_length": 0,
     }
     catalog: dict[str, str] = {}
     for record in iter_records(path):
@@ -221,7 +238,7 @@ def select_enzymes(path: Path) -> tuple[dict[str, str], dict[str, int]]:
         if record.get("CR", ".").strip() in (".", ""):
             continue
         stats["commercially_available"] += 1
-        site = recognition_site(record)
+        site = recognition_site(record, stats)
         name = record.get("ID", "").strip()
         if not site or not name:
             continue

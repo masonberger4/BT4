@@ -8,6 +8,26 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **Unknown-enzyme suggestions no longer read as equivalent substitutes.** The
+  near-miss list is a fuzzy match on the *name* with no notion of recognition
+  sequence, so a suggestion usually cuts something entirely different (`NotI` is
+  `GCGGCCGC`, `NcoI` is `CCATGG`). A bare list invited a user to accept a
+  substitute that does not ban the site they care about — and the run would then
+  report proven-optimal with zero hard violations while their real site sat in
+  the delivered sequence, which is precisely the §1 failure BT4 exists to
+  prevent. Every suggestion now carries **its own site** and is labelled a
+  spelling match, so non-equivalence is *visible* rather than asserted, and the
+  message points at banning the sequence directly instead. New public
+  `enzyme_suggestions()` / `unknown_enzyme_message()` (re-exported through
+  `bt4.api`) keep the CLI, API and BT4 Studio from drifting into telling the user
+  different things about the same miss.
+- **The catalog build's selection tally now closes.** It called itself "auditable
+  rather than a black box" while length / unknown-site / multi-site rejections
+  were folded silently into the gap between two counters — which is how an
+  arbitrary length cap dropped SfiI without anything in the sidecar showing a
+  loss. Each rejection reason is counted and stamped, and a test asserts the
+  numbers add up. `rejected_site_length` is now `0`, so the stamp *proves* the
+  sanity bound drops no real enzyme rather than asking to be trusted.
 - **Enzyme catalog: corrected selection, and its hash now enters the manifest.**
   Found by an adversarial review of the catalog change below, and fixed before
   the numbers were relied on:
