@@ -6,6 +6,7 @@
   "database_release": "116",
   "filters": {
     "cds_counted": 21571,
+    "dropped_alt_locus_or_patch": 0,
     "dropped_internal_stop": 99,
     "dropped_no_atg_start": 2423,
     "dropped_no_terminal_stop": 3331,

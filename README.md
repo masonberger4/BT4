@@ -58,10 +58,11 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   release (IUPAC-aware, auto reverse-complement, Type IIS included — BsaI,
   BsmBI, BbsI, SapI), content-hashed and re-derivable rather than hand-typed.
 - **Nine organisms:** human, mouse, rat, zebrafish, *Drosophila*, *C. elegans*,
-  *Arabidopsis*, *E. coli*, and *S. cerevisiae*. Six of those are **genome-wide
-  recounts** from release-pinned Ensembl CDS sets — every number is a real codon
+  *Arabidopsis*, *E. coli*, and *S. cerevisiae* — **all nine** are genome-wide
+  recounts from release-pinned Ensembl CDS sets. Every number is a real codon
   count, stamped with the source URL, the source file's own SHA-256, the assembly,
-  and the filter tally, so anyone can rebuild the exact shipped bytes
+  the gene annotation, and the filter tally, so anyone can rebuild the exact
+  shipped bytes
   (`python scripts/build_organism_tables.py --verify`). Real **tAI** tables from
   GtRNAdb tRNA counts cover eight of the nine, and `bt4 build-table` builds an
   authentic codon table from your own CDS FASTA.

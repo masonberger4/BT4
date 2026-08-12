@@ -381,7 +381,7 @@ class SpliceAiSplicePredictor:
                 "no SpliceAI weights directory resolved; set "
                 f"${_WEIGHTS_ENV_VAR}, pass model_dir=, or install the 'spliceai' package"
             )
-        import numpy as np  # type: ignore[import-not-found]  # lazy: TF ships numpy
+        import numpy as np  # lazy: TF ships numpy
 
         ensemble = _load_ensemble(str(model_dir))
         padded = "N" * SPLICEAI_FLANK + seq + "N" * SPLICEAI_FLANK

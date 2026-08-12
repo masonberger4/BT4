@@ -7,6 +7,34 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Changed
+- **All nine organism tables are now recounted from release-pinned public CDS
+  sets.** Human, *E. coli* and *S. cerevisiae* were the last hand-typed
+  "representative published values" with `cds_count: null` — which made BT4's
+  **default organism** its least checkable table. They now go through the same
+  `scripts/build_organism_tables.py` pipeline as the other six, so every bundled
+  number is a real codon count with a source URL, the source file's own SHA-256,
+  assembly, genebuild, and a per-filter drop tally (CLAUDE.md §8).
+  - **The delivered sequences did not change.** Across a four-protein panel × the
+    three rebuilt organisms, the optimized DNA is **byte-identical** and CAI moves
+    by at most +0.0003. CAI normalizes within each synonymous group, and the
+    most-preferred codon per amino acid is unchanged in all three — so the
+    published values were qualitatively right, and this is a provenance upgrade
+    rather than a change in behavior. Textbook biases still hold (*E. coli* CTG
+    for Leu, yeast AGA for Arg), now as counted facts rather than asserted ones.
+  - **Alternate haplotypes and patch scaffolds are excluded.** Ensembl ships
+    human alt loci (seven alternate MHC/HLA haplotypes, the chr19 KIR and LRC
+    haplotypes) and patches alongside the primary assembly, each with its own
+    gene IDs — so per-gene de-duplication does not collapse them. Counting them
+    weighted the most polymorphic immune loci roughly sevenfold; 11,498 such
+    records are now dropped and the count is stamped. Measured to be a **no-op
+    for the other eight organisms** (zero genes dropped), and genuine unplaced
+    contigs are kept. The region-label match also covers `primary_assembly:`,
+    which rat and *Drosophila* use — a naive "chromosomes only" rule would have
+    discarded every record for those two.
+  - `test_every_bundled_organism_is_recounted` now fails if any future organism
+    reintroduces an undocumented table.
+
 ### Fixed
 - **Unknown-enzyme suggestions no longer read as equivalent substitutes.** The
   near-miss list is a fuzzy match on the *name* with no notion of recognition

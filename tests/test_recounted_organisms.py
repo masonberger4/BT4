@@ -41,8 +41,11 @@ RECOUNTED: tuple[str, ...] = (
     "caenorhabditis_elegans",
     "danio_rerio",
     "drosophila_melanogaster",
+    "escherichia_coli",
+    "homo_sapiens",
     "mus_musculus",
     "rattus_norvegicus",
+    "saccharomyces_cerevisiae",
 )
 
 _STOPS = ("TAA", "TAG", "TGA")
@@ -112,7 +115,10 @@ def test_provenance_is_a_real_recount_not_a_summary(name: str) -> None:
     # The load-bearing distinction from the older bundled tables: a real CDS
     # count stands behind these numbers, and the note says so plainly.
     assert prov.cds_count is not None
-    assert prov.cds_count > 5_000, "a genome-wide CDS set, not a sample"
+    # A genome-wide set, not a sample. The bound accommodates the smallest
+    # genome BT4 ships -- E. coli has only ~3,800 counted genes in total, which
+    # IS its whole genome, so a mammal-sized floor would wrongly reject it.
+    assert prov.cds_count > 3_000, "a genome-wide CDS set, not a sample"
     assert "Real genome-wide codon counts" in prov.note
     assert "REPRESENTATIVE" not in prov.note
 
@@ -291,3 +297,26 @@ def test_each_organism_stamps_a_distinct_manifest() -> None:
         manifest = json.loads(api.result_to_json(result))["audit"]["manifest"]
         stamps.add(json.dumps(manifest, sort_keys=True))
     assert len(stamps) == len(RECOUNTED)
+
+
+def test_expected_strong_biases_in_the_microbial_tables() -> None:
+    """Textbook biases must survive the switch from published values to recounts.
+
+    *E. coli* strongly prefers CTG for Leu and *S. cerevisiae* prefers AGA for
+    Arg. These held in the older hand-curated tables and must still hold now that
+    the numbers are counted from the genome -- old and new agreeing here is what
+    shows the recount reproduced the biology rather than merely replacing it.
+    """
+    assert load_table("escherichia_coli").weight("CTG") == pytest.approx(1.0)
+    assert load_table("saccharomyces_cerevisiae").weight("AGA") == pytest.approx(1.0)
+
+
+def test_every_bundled_organism_is_recounted() -> None:
+    """No organism may quietly fall back to an undocumented table.
+
+    BT4 used to ship three hand-typed "representative" tables, including the one
+    for its DEFAULT organism -- so the most-used numbers were the least checkable.
+    Every bundled organism is now a counted, re-derivable table, and this test is
+    what keeps a future addition from reintroducing the old asymmetry.
+    """
+    assert set(available_organisms()) == set(RECOUNTED)

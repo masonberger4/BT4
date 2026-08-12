@@ -44,13 +44,13 @@ def _import_rna() -> Any:
             baseline model.
     """
     try:
-        import RNA  # type: ignore[import-not-found]
+        import RNA
 
         return RNA
     except ImportError:
         pass
     try:
-        import ViennaRNA  # type: ignore[import-not-found]
+        import ViennaRNA
 
         return ViennaRNA
     except ImportError as exc:

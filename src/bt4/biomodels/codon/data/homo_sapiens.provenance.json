@@ -1,8 +1,29 @@
 {
-  "source": "Kazusa Codon Usage Database (representative published Homo sapiens values)",
-  "build": "hand-curated representative table, per-thousand codon frequencies",
-  "cds_count": null,
-  "retrieved": "2026-07-31",
-  "sha256": "9d0e163bbec3a82cea14ef6a3f7591638fb22e6eab826e416852da06956d9e68",
-  "note": "These are REPRESENTATIVE published Homo sapiens codon-usage values (Kazusa-style, per-thousand), NOT an authoritative per-genome recount from a specific CDS set. Frequencies are relative usage on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Do not present these as an exact genome-wide count."
+  "assembly": "GRCh38",
+  "build": "genome-wide codon occurrence counts recounted from the pinned Ensembl CDS FASTA by scripts/build_organism_tables.py: one representative CDS per gene (the longest; ties broken by transcript id for determinism), keeping only ACGT-only sequences that are a multiple of three, start with ATG, end in a stop codon, and contain no internal stop. The terminal stop codon is counted; every other codon is a sense codon.",
+  "cds_count": 19824,
+  "database": "Ensembl",
+  "database_release": "116",
+  "filters": {
+    "cds_counted": 19824,
+    "dropped_alt_locus_or_patch": 11498,
+    "dropped_internal_stop": 144,
+    "dropped_no_atg_start": 4595,
+    "dropped_no_terminal_stop": 5889,
+    "dropped_non_acgt": 8165,
+    "dropped_non_representative_isoform": 320513,
+    "dropped_not_multiple_of_three": 11800,
+    "records_in_source": 382428
+  },
+  "genebuild": "Ensembl/GENCODE (release 116)",
+  "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049).",
+  "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
+  "organism_common_name": "Homo sapiens (human)",
+  "rebuild_command": "python scripts/build_organism_tables.py homo_sapiens",
+  "retrieved": "2026-08-12",
+  "sha256": "a418653109d8f14f1a62297975f57e4902707d71c29e5628bfebe8ece05562c9",
+  "source": "Ensembl release 116 -- Homo sapiens (human) CDS set (assembly GRCh38, annotation Ensembl/GENCODE (release 116))",
+  "source_sha256": "f8c6731e185957e29816a8a38ce21dc61ef6c3fc4963fbb9c0cdd8ebd20f1342",
+  "source_url": "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/cds/Homo_sapiens.GRCh38.cds.all.fa.gz",
+  "total_codons_counted": 11703350
 }

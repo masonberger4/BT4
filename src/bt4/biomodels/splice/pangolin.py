@@ -263,7 +263,7 @@ def _import_torch() -> Any:
             package (see the module docstring), or use the baseline predictor.
     """
     try:
-        import torch  # type: ignore[import-not-found]
+        import torch
 
         return torch
     except ImportError as exc:
@@ -285,7 +285,7 @@ def _import_pangolin_model() -> tuple[Any, Any, Any, Any]:
             provides both the module and its weights.
     """
     try:
-        from pangolin.model import AR, L, Pangolin, W  # type: ignore[import-not-found]
+        from pangolin.model import AR, L, Pangolin, W
 
         return Pangolin, L, W, AR
     except ImportError as exc:
@@ -315,7 +315,7 @@ def _resolve_model_dir(explicit: str | None = None) -> Path | None:
             path = Path(candidate)
             return path if path.is_dir() else None
     try:
-        import pangolin  # type: ignore[import-not-found]
+        import pangolin
     except ImportError:
         return None
     pkg_file = getattr(pangolin, "__file__", None)

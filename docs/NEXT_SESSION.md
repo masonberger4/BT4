@@ -29,7 +29,7 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Rust trellis port (`trellis_solve`, regime-gated) | DONE | n/a | `rust/bt4_core`, `bt4_native` |
 | Objectives: CAI, tAI, GC, ramp, CpG, %MinMax, codon-pair | DONE | n/a | `objectives/` |
 | tAI (real GtRNAdb, 8 organisms) | DONE | n/a | `biomodels/codon/tai.py` |
-| Codon tables: 9 organisms (6 recounted from pinned Ensembl CDS) | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
+| Codon tables: **all 9** recounted from pinned Ensembl CDS | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
 | Constraints: homopolymer, GC-run, max-repeat, tandem/inverted, forbidden+presets, restriction, Kozak-ATG, uORF, splice-motif | DONE | n/a | `constraints/` |
 | Budget backends: CP-SAT, Lagrangian, dinucleotide-count | DONE | n/a | `optimize/{cpsat,lagrangian}.py` |
 | SA refinement + block moves + parallel tempering | DONE | n/a | `optimize/anneal_refine.py` |
@@ -79,13 +79,13 @@ item unless you have a reason not to.**
    - **Add further organisms** by extending `SPECS` in the build script (CHO/*P.
      pastoris*/*B. subtilis* are the obvious industrial gaps). Pair each with
      GtRNAdb tRNA data where it exists; never fabricate a table.
-   - **Recount the three legacy tables.** human, *E. coli* and *S. cerevisiae* are
-     still hand-curated Kazusa-style *representative* values with `cds_count: null`
-     — now the least well-provenanced tables BT4 ships, and human is the **default
-     organism**. Recounting them through the same script would make provenance
-     uniform, but it **changes CAI numbers and therefore the golden tests**, so it
-     needs its own PR with the golden panel regenerated deliberately (and the
-     before/after CAI shift reported honestly, not quietly re-pinned).
+   - **Cell-type / tissue-specific tables for human** — the maintainer's next
+     priority, and the unimplemented `build-table --highly-expressed` flag §8
+     already specifies. Note the scientific fork this opens: textbook CAI (Sharp
+     & Li 1987) derives its weights from a reference set of *highly expressed*
+     genes, whereas BT4's tables are genome-wide and unweighted. Decide that
+     deliberately before building, and never present a tissue-specific CAI as a
+     validated expression prediction (§10.5/§10.6).
 2. **[self-contained] Remaining BT4 Studio work.** The engine-ready backends are
    now surfaced (RiboNN in the Candidates tab, the opt-in ASSP cross-check on the
    Design tab), library mode has its own tab, and the menu bar / runtime

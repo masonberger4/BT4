@@ -51,6 +51,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -137,7 +138,37 @@ def _ensembl(
     )
 
 
+ENSEMBL_BACTERIA_RELEASE = "63"
+
 SPECS: tuple[OrganismSpec, ...] = (
+    _ensembl(
+        "homo_sapiens", "Homo sapiens (human)",
+        "Homo_sapiens.GRCh38.cds.all.fa.gz", "GRCh38", "Ensembl/GENCODE (release 116)",
+        "f8c6731e185957e29816a8a38ce21dc61ef6c3fc4963fbb9c0cdd8ebd20f1342",
+    ),
+    _ensembl(
+        "saccharomyces_cerevisiae", "Saccharomyces cerevisiae (baker's yeast)",
+        "Saccharomyces_cerevisiae.R64-1-1.cds.all.fa.gz", "R64-1-1", "SGD",
+        "159651a0141d5302c0541c33651fce5c067a47731eabc0955911a6fedd5d296d",
+    ),
+    OrganismSpec(
+        key="escherichia_coli",
+        common_name="Escherichia coli K-12 substr. MG1655",
+        url=(
+            "https://ftp.ebi.ac.uk/ensemblgenomes/pub/bacteria/"
+            f"release-{ENSEMBL_BACTERIA_RELEASE}/fasta/bacteria_0_collection/"
+            "escherichia_coli_str_k_12_substr_mg1655_gca_000005845/cds/"
+            "Escherichia_coli_str_k_12_substr_mg1655_gca_000005845"
+            ".ASM584v2.cds.all.fa.gz"
+        ),
+        assembly="ASM584v2",
+        database="Ensembl Bacteria",
+        release=ENSEMBL_BACTERIA_RELEASE,
+        genebuild="ENA/INSDC annotation of GCA_000005845",
+        source_sha256=(
+            "b5c8ca361b5bead8429f99432792ac16496715e974655c0de8add2479dce162e"
+        ),
+    ),
     _ensembl(
         "mus_musculus", "Mus musculus (house mouse)",
         "Mus_musculus.GRCm39.cds.all.fa.gz", "GRCm39", "GENCODE M39",
@@ -201,6 +232,7 @@ class FilterStats:
     dropped_no_stop: int = 0
     dropped_internal_stop: int = 0
     dropped_isoform: int = 0
+    dropped_alt_locus: int = 0
 
     def as_dict(self) -> dict[str, int]:
         """The stats as a provenance-ready mapping."""
@@ -213,6 +245,7 @@ class FilterStats:
             "dropped_no_terminal_stop": self.dropped_no_stop,
             "dropped_internal_stop": self.dropped_internal_stop,
             "dropped_non_representative_isoform": self.dropped_isoform,
+            "dropped_alt_locus_or_patch": self.dropped_alt_locus,
         }
 
 
@@ -272,6 +305,36 @@ def parse_ids(header: str) -> tuple[str, str]:
     return transcript, gene
 
 
+# Ensembl publishes ALTERNATE HAPLOTYPE loci and assembly PATCHES alongside the
+# primary assembly, and they carry their own gene IDs -- so per-gene de-duplication
+# does not collapse them. In human that is 3,322 extra "genes" (GRCh38/Ensembl
+# 116): seven alternate MHC/HLA haplotypes, the KIR and LRC haplotypes on
+# chromosome 19, and the patch scaffolds. Counting them would weight the most
+# polymorphic immune loci roughly sevenfold against the rest of the genome.
+#
+# The pattern is Ensembl's own naming for those regions, and it is a **verified
+# no-op** for the other eight organisms BT4 ships (measured: zero genes dropped),
+# because only human currently has published alt loci. Genuine unplaced contigs
+# (accession-style names such as KI270713.1) are NOT matched and are kept, since
+# they are real unique sequence rather than a second copy of something.
+_ALT_LOCUS = re.compile(r"(_PATCH$|^CHR_|^HSCHR|_alt$)", re.IGNORECASE)
+
+# Ensembl labels a CDS's home region differently across divisions -- "chromosome"
+# for human/mouse, "primary_assembly" for rat and fly, "scaffold" for unplaced
+# sequence. Matching the label set (rather than assuming "chromosome") is what
+# keeps this from silently discarding every record for rat and Drosophila.
+_REGION = re.compile(
+    r"\b(?:chromosome|scaffold|primary_assembly|contig|supercontig|plasmid):"
+    r"[^:]+:([^:]+):"
+)
+
+
+def on_alt_locus(header: str) -> bool:
+    """Whether a CDS record sits on an alternate haplotype or a patch scaffold."""
+    match = _REGION.search(header)
+    return bool(match and _ALT_LOCUS.search(match.group(1)))
+
+
 def valid_cds(seq: str, stats: FilterStats) -> bool:
     """Whether ``seq`` is a complete, unambiguous, in-frame coding sequence.
 
@@ -307,6 +370,9 @@ def representative_cds(path: Path) -> tuple[list[str], FilterStats]:
     best: dict[str, tuple[int, str, str]] = {}  # gene -> (length, transcript, seq)
     for header, raw in iter_fasta(path):
         stats.records += 1
+        if on_alt_locus(header):
+            stats.dropped_alt_locus += 1
+            continue
         seq = raw.upper()
         if not valid_cds(seq, stats):
             continue
