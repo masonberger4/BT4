@@ -126,6 +126,7 @@ def test_provenance_carries_the_rederivation_trail(name: str) -> None:
         "source_url",
         "source_sha256",
         "assembly",
+        "genebuild",
         "database",
         "database_release",
         "total_codons_counted",
@@ -136,6 +137,12 @@ def test_provenance_carries_the_rederivation_trail(name: str) -> None:
     assert str(prov["source_url"]).startswith("https://")
     assert len(str(prov["source_sha256"])) == 64
     assert f"release-{prov['database_release']}" in str(prov["source_url"])
+    # Assembly and gene annotation are different things, and it is the ANNOTATION
+    # that defines which CDS were counted -- so the sidecar must name both, and
+    # the human-readable source line must not conflate them.
+    assert str(prov["genebuild"]).strip()
+    assert f"assembly {prov['assembly']}" in str(prov["source"])
+    assert f"annotation {prov['genebuild']}" in str(prov["source"])
 
 
 @pytest.mark.parametrize("name", RECOUNTED)

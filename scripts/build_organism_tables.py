@@ -87,6 +87,11 @@ class OrganismSpec:
         assembly: Genome assembly the CDS set is annotated on.
         database: Which Ensembl division served it.
         release: That division's release number.
+        genebuild: The **gene annotation** set the CDS models come from, which is
+            NOT the same thing as the assembly: e.g. Arabidopsis CDS are Araport11
+            gene models on the TAIR10 assembly, and the fly/worm models are
+            FlyBase/WormBase. Recording only the assembly would misattribute the
+            very sequences that were counted.
         source_sha256: Expected SHA-256 of the downloaded archive. Ensembl reuses
             the SAME filename across releases, so a cache keyed on the filename
             alone could silently serve a different release's bytes. Verified on
@@ -103,12 +108,18 @@ class OrganismSpec:
     assembly: str
     database: str
     release: str
+    genebuild: str
     source_sha256: str
     extra_citation: str = ""
 
 
 def _ensembl(
-    key: str, common_name: str, filename: str, assembly: str, source_sha256: str
+    key: str,
+    common_name: str,
+    filename: str,
+    assembly: str,
+    genebuild: str,
+    source_sha256: str,
 ) -> OrganismSpec:
     """Build a spec for a main-Ensembl (vertebrates/metazoa) species."""
     return OrganismSpec(
@@ -121,6 +132,7 @@ def _ensembl(
         assembly=assembly,
         database="Ensembl",
         release=ENSEMBL_RELEASE,
+        genebuild=genebuild,
         source_sha256=source_sha256,
     )
 
@@ -128,27 +140,29 @@ def _ensembl(
 SPECS: tuple[OrganismSpec, ...] = (
     _ensembl(
         "mus_musculus", "Mus musculus (house mouse)",
-        "Mus_musculus.GRCm39.cds.all.fa.gz", "GRCm39",
+        "Mus_musculus.GRCm39.cds.all.fa.gz", "GRCm39", "GENCODE M39",
         "8c0a53a7fe973adaf6d884884ec86a329deebfb519d0d4f736bd1c0c67f09964",
     ),
     _ensembl(
         "rattus_norvegicus", "Rattus norvegicus (Norway rat)",
-        "Rattus_norvegicus.GRCr8.cds.all.fa.gz", "GRCr8",
+        "Rattus_norvegicus.GRCr8.cds.all.fa.gz", "GRCr8", "Ensembl ENS01",
         "25a90be0825e525afb60eeb5568a6f5c6464216e4c262260a2547432d40acd0d",
     ),
     _ensembl(
         "danio_rerio", "Danio rerio (zebrafish)",
-        "Danio_rerio.GRCz11.cds.all.fa.gz", "GRCz11",
+        "Danio_rerio.GRCz11.cds.all.fa.gz", "GRCz11", "Ensembl ENS01",
         "b5ff5b220650e0ad426df3082ed0c2587c3f283c41d8f92490297b8ef08c5fad",
     ),
     _ensembl(
         "drosophila_melanogaster", "Drosophila melanogaster (fruit fly)",
         "Drosophila_melanogaster.BDGP6.54.cds.all.fa.gz", "BDGP6.54",
+        "FlyBase dmel_r6.54_FB2023_05",
         "112c99442c2ad59c6f012ea803cd6c51dbb96eba491e8d33d810873381fb6112",
     ),
     _ensembl(
         "caenorhabditis_elegans", "Caenorhabditis elegans (nematode)",
         "Caenorhabditis_elegans.WBcel235.cds.all.fa.gz", "WBcel235",
+        "WormBase WS282",
         "13a3ebf9bd0bfa3097a3565c979ba88a1c9fccd05cb343a7c6ef21841289e05e",
     ),
     OrganismSpec(
@@ -162,10 +176,14 @@ SPECS: tuple[OrganismSpec, ...] = (
         assembly="TAIR10",
         database="Ensembl Plants",
         release=ENSEMBL_PLANTS_RELEASE,
+        genebuild="Araport11",
         source_sha256="3580fd49dc079892359c1e5b7ffe76b7c2aa13718daa4daa6f397882ad41795d",
         extra_citation=(
-            " The TAIR10 assembly/annotation is from TAIR (Lamesch et al., "
-            "Nucleic Acids Res 2012, doi:10.1093/nar/gkr1090)."
+            " The TAIR10 *assembly* is from TAIR (Lamesch et al., Nucleic Acids "
+            "Res 2012, doi:10.1093/nar/gkr1090); the *gene annotation* these CDS "
+            "come from is Araport11 (Cheng et al., Plant J 2017, "
+            "doi:10.1111/tpj.13415) -- assembly and annotation are not the same "
+            "thing, and it is the annotation that defines the counted CDS."
         ),
     ),
 )
@@ -351,7 +369,7 @@ def build_one(spec: OrganismSpec, cache_dir: Path, out_dir: Path) -> Path:
         path=out_dir,
         source=(
             f"{spec.database} release {spec.release} -- {spec.common_name} "
-            f"CDS set ({spec.assembly})"
+            f"CDS set (assembly {spec.assembly}, annotation {spec.genebuild})"
         ),
         cds_count=stats.kept,
         build=(
@@ -377,6 +395,7 @@ def build_one(spec: OrganismSpec, cache_dir: Path, out_dir: Path) -> Path:
         extra={
             "organism_common_name": spec.common_name,
             "assembly": spec.assembly,
+            "genebuild": spec.genebuild,
             "database": spec.database,
             "database_release": spec.release,
             "source_url": spec.url,

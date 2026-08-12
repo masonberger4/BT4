@@ -14,13 +14,14 @@
     "dropped_not_multiple_of_three": 6657,
     "records_in_source": 270228
   },
+  "genebuild": "GENCODE M39",
   "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049).",
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Mus musculus (house mouse)",
   "rebuild_command": "python scripts/build_organism_tables.py mus_musculus",
-  "retrieved": "2026-08-11",
+  "retrieved": "2026-08-12",
   "sha256": "e046eb862f43bcfe43a5776369a58059d37c43f56d5da8ba5fdc97b86e3d7471",
-  "source": "Ensembl release 116 -- Mus musculus (house mouse) CDS set (GRCm39)",
+  "source": "Ensembl release 116 -- Mus musculus (house mouse) CDS set (assembly GRCm39, annotation GENCODE M39)",
   "source_sha256": "8c0a53a7fe973adaf6d884884ec86a329deebfb519d0d4f736bd1c0c67f09964",
   "source_url": "https://ftp.ensembl.org/pub/release-116/fasta/mus_musculus/cds/Mus_musculus.GRCm39.cds.all.fa.gz",
   "total_codons_counted": 12141587

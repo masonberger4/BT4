@@ -27,7 +27,11 @@ its first tagged release.
     `count_codons`. The terminal stop is counted, since BT4 chooses the stop it
     appends.
   - **Re-derivable by a third party.** Each provenance sidecar now carries the
-    source URL, the **downloaded file's own SHA-256**, assembly, database release,
+    source URL, the **downloaded file's own SHA-256**, assembly, **genebuild**
+    (the gene annotation the CDS models come from — *not* the same thing as the
+    assembly: Arabidopsis CDS are Araport11 models on the TAIR10 assembly, and the
+    fly/worm models are FlyBase/WormBase; recording only the assembly would
+    misattribute the very sequences that were counted), database release,
     total codons counted, the full per-filter drop tally, and the rebuild command
     — alongside the existing content hash of the TSV itself. `--verify` rebuilds
     into a temp directory and diffs against the committed bytes; all six verify
@@ -154,6 +158,31 @@ its first tagged release.
     ships" posture as the wrapped CNNs.
 
 ### Fixed
+- **`MinMaxTerm` is now scale-invariant — `minmax_weight` finally means the same
+  thing on every organism.** Its `delta` was a raw frequency *difference*
+  (`f(codon) - f_avg(aa)`), so its magnitude tracked the codon table's units: mean
+  `|delta|` was ~4.5 on the per-thousand hand-curated tables but ~52,000 on a
+  raw-count table — a **~11,700x disparity**. The same `minmax_weight` therefore
+  meant four orders of magnitude more on one organism than another, and on a
+  raw-count table the term silently swamped CAI, GC and every other frontier axis:
+  precisely the magic-scalar failure §10.5 exists to prevent. The term now
+  normalizes frequencies to a **within-family fraction** first, which is all it
+  ever needed (exactly as CAI's `w = f/f_max` needs only ratios); mean `|delta|` is
+  ~0.07 on every organism. Within-family preference order is provably unchanged, so
+  a `minmax`-only solve picks the same codons — what changes is that the knob is
+  now comparable across organisms. **This was already live before the new tables
+  shipped:** `bt4 build-table` emits raw counts, so anyone optimizing with
+  `minmax_weight` against their own table was affected. Regression-tested for
+  scale-invariance, cross-organism comparability, and order preservation.
+- **The table builder could count the wrong species.** Source archives were cached
+  by bare filename, and Ensembl reuses the *same* filename across releases, so a
+  stale cache entry would be counted silently. Each source archive's expected
+  SHA-256 is now pinned in the build spec and checked on every run (cache hits
+  included); verified by planting one species' archive under another's filename,
+  which now aborts. `--verify` also diffs the provenance **sidecars**, not just the
+  TSVs, so a sidecar naming the wrong source can no longer pass clean. And
+  `write_table` validates `extra` before writing anything, so a rejected call no
+  longer leaves a TSV on disk without its sidecar.
 - **RiboNN adapter: correct ensemble aggregation and honest empty-UTR guard.** The
   first end-to-end runs against real RiboNN weights surfaced two integration bugs.
   (1) RiboNN returns the ensemble as **one row per cross-validation model**, so a

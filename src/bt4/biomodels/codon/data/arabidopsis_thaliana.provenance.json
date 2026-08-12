@@ -14,13 +14,14 @@
     "dropped_not_multiple_of_three": 7,
     "records_in_source": 48321
   },
-  "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049). The TAIR10 assembly/annotation is from TAIR (Lamesch et al., Nucleic Acids Res 2012, doi:10.1093/nar/gkr1090).",
+  "genebuild": "Araport11",
+  "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049). The TAIR10 *assembly* is from TAIR (Lamesch et al., Nucleic Acids Res 2012, doi:10.1093/nar/gkr1090); the *gene annotation* these CDS come from is Araport11 (Cheng et al., Plant J 2017, doi:10.1111/tpj.13415) -- assembly and annotation are not the same thing, and it is the annotation that defines the counted CDS.",
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Arabidopsis thaliana (thale cress)",
   "rebuild_command": "python scripts/build_organism_tables.py arabidopsis_thaliana",
-  "retrieved": "2026-08-11",
+  "retrieved": "2026-08-12",
   "sha256": "a9f3bba92bf8d8d7654f3bd61e64fec2262fae95a1dad58fe111b935e2287609",
-  "source": "Ensembl Plants release 63 -- Arabidopsis thaliana (thale cress) CDS set (TAIR10)",
+  "source": "Ensembl Plants release 63 -- Arabidopsis thaliana (thale cress) CDS set (assembly TAIR10, annotation Araport11)",
   "source_sha256": "3580fd49dc079892359c1e5b7ffe76b7c2aa13718daa4daa6f397882ad41795d",
   "source_url": "https://ftp.ebi.ac.uk/ensemblgenomes/pub/plants/release-63/fasta/arabidopsis_thaliana/cds/Arabidopsis_thaliana.TAIR10.cds.all.fa.gz",
   "total_codons_counted": 11189049
