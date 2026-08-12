@@ -15,14 +15,19 @@ Usage::
 
 What is selected, and why:
 
-* **Type II restriction enzymes only** (REBASE ``ET`` starting with ``R``).
-  Methyltransferases and homing endonucleases do not define a site a synthetic
-  coding sequence must avoid in the sense BT4 means.
+* **Restriction enzymes** (REBASE ``ET`` starting with ``R``) -- in this release
+  that is Type II (``R2``), Type II bifunctional/IIG (``RM2``), Type II
+  modification-dependent/IIM (``R2*``, e.g. **DpnI**), and one Type III
+  (``EcoP15I``). Methyltransferases and homing endonucleases are excluded: they
+  do not define a site a synthetic coding sequence must avoid. The
+  modification-dependent ones are kept on purpose -- avoiding DpnI's ``GATC`` is
+  a mainstream goal precisely because a plasmid from a dam+ strain *is*
+  Dam-methylated and *is* cut by it.
 * **Commercially available only** (REBASE ``CR`` naming at least one supplier).
   An enzyme nobody sells is not one a user will clone with, and the restriction
   is what keeps the shipped subset small and practical rather than a bulk copy
   of the database.
-* **A single, fully-specified IUPAC recognition sequence** of 4-12 bases.
+* **A single, fully-specified IUPAC recognition sequence** of 4-20 bases.
   Entries whose site is unknown (``?``) or given as multiple alternatives are
   skipped rather than guessed at.
 
@@ -30,11 +35,19 @@ Isoschizomers are deliberately kept (e.g. both ``KpnI`` and ``Acc65I`` for
 ``GGTACC``): users name the enzyme they actually own, and BT4 bans the site
 either way.
 
+**On re-derivability, honestly.** REBASE publishes only a *moving* URL for the
+current release -- there is no versioned permalink for a specific version (the
+obvious candidates 404). So the pin that actually holds is the **digest**:
+``REBASE_SHA256`` is checked on every run and a mismatch aborts, which detects
+drift but cannot resurrect the old bytes. Re-deriving the shipped catalog
+therefore requires REBASE version 608 specifically; a user holding a later
+release will get an abort telling them so, not a silently different catalog.
+
 **On REBASE and licensing.** REBASE is Copyright (c) Dr. Richard J. Roberts and
 is made freely available to the community for use *with citation*; it is not a
 CC or public-domain grant. What BT4 ships is a derived subset -- enzyme names
-paired with their recognition sequences, each an individually published fact
-found in every supplier catalog -- not a redistribution of the REBASE database
+paired with their recognition sequences, each a published fact carried in its
+suppliers' own catalogs -- not a redistribution of the REBASE database
 (no cut positions, organisms, references, methylation data, or the other fields
 that make up the database). The provenance sidecar records the REBASE version,
 URL, and source digest so any user can re-derive and re-verify. This mirrors how
@@ -77,7 +90,30 @@ REBASE_VERSION = "608"
 REBASE_SHA256 = "3c60506f3fd49f5c18afb993d1ed680f792d642e90b291ef4427d143ebcfa40c"
 
 _MIN_SITE = 4
-_MAX_SITE = 12
+# Upper bound is a parse-sanity guard, not a biological limit: the longest real
+# commercially-available site in REBASE 608 is XcmI's 15-base CCANNNNNNNNNTGG, so
+# anything past 20 is a malformed field rather than an enzyme. An earlier cap of
+# 12 silently dropped SfiI (GGCCNNNNNGGCC) and eleven others.
+_MAX_SITE = 20
+
+# REBASE enzyme-type codes BT4 ships: every restriction enzyme (ET starting with
+# "R"), which in this release resolves to
+#   R2   Type II restriction enzyme                              (547)
+#   RM2  Type II bifunctional restriction-modification / IIG      (17)
+#   R2*  Type II MODIFICATION-DEPENDENT, subtype IIM              (11)
+#   R3   Type III (EcoP15I only)                                   (1)
+# Methyltransferases (M*) and homing endonucleases (IE) are excluded: they do not
+# define a site a synthetic coding sequence must avoid.
+#
+# The modification-dependent ones are kept deliberately, and it would be a
+# mistake to drop them as "cannot cut synthetic DNA". DpnI is R2*, and avoiding
+# its GATC site is a mainstream design goal precisely BECAUSE a plasmid grown in
+# a standard dam+ strain is Dam-methylated and is cut by it (DpnI template
+# digestion is a routine QuikChange/Gibson step). Eight of the R2* entries also
+# share a site byte-for-byte with a plain-R2 enzyme already in the catalog
+# (DpnI GATC = Bsp143I, GlaI GCGC = HhaI, KroI GCCGGC = NaeI), so excluding them
+# would delete an alias a user may reasonably type, not a constraint.
+_SHIPPED_TYPES_PREFIX = "R"
 
 
 def sha256_file(path: Path) -> str:
@@ -171,16 +207,17 @@ def select_enzymes(path: Path) -> tuple[dict[str, str], dict[str, int]]:
     """
     stats = {
         "records_in_source": 0,
-        "type_ii": 0,
+        "restriction_enzymes": 0,
         "commercially_available": 0,
         "with_usable_site": 0,
+        "duplicate_ids_merged": 0,
     }
     catalog: dict[str, str] = {}
     for record in iter_records(path):
         stats["records_in_source"] += 1
-        if not record.get("ET", "").startswith("R"):
+        if not record.get("ET", "").strip().startswith(_SHIPPED_TYPES_PREFIX):
             continue
-        stats["type_ii"] += 1
+        stats["restriction_enzymes"] += 1
         if record.get("CR", ".").strip() in (".", ""):
             continue
         stats["commercially_available"] += 1
@@ -189,6 +226,24 @@ def select_enzymes(path: Path) -> tuple[dict[str, str], dict[str, int]]:
         if not site or not name:
             continue
         stats["with_usable_site"] += 1
+        previous = catalog.get(name)
+        if previous is not None:
+            # REBASE lists some enzymes (the Type IIB ones that cut both sides,
+            # e.g. AjuI/AloI/PsrI) as TWO records under one name, each leading
+            # with a different strand. That is one double-stranded site seen
+            # twice, not two sites -- and BT4 bans both strands regardless. Keep
+            # the first-listed strand (the source is digest-pinned, so file order
+            # is reproducible) and *verify* the equivalence rather than assuming
+            # it: a name that genuinely disagrees with itself is a data problem to
+            # resolve deliberately, not to settle by whichever record comes last.
+            if previous != site and reverse_complement_iupac(previous) != site:
+                raise SystemExit(
+                    f"REBASE lists {name} with conflicting sites {previous!r} and "
+                    f"{site!r} that are not reverse complements; resolve "
+                    "deliberately rather than taking whichever comes last"
+                )
+            stats["duplicate_ids_merged"] += 1
+            continue
         catalog[name] = site
     stats["shipped"] = len(catalog)
     return catalog, stats
@@ -232,10 +287,13 @@ def build(cache_dir: Path, out_dir: Path) -> tuple[Path, Path]:
         "rebase_version": REBASE_VERSION,
         "build": (
             "derived by scripts/build_enzyme_catalog.py from the pinned REBASE "
-            "Bairoch-format file: Type II restriction enzymes (ET starting with "
-            "R) that name at least one commercial supplier (CR) and have a single "
-            f"fully-specified IUPAC recognition site of {_MIN_SITE}-{_MAX_SITE} "
-            "bases. Cut positions, source organisms, references and methylation "
+            "Bairoch-format file: restriction enzymes (REBASE ET starting with "
+            "R -- here Type II R2, Type II bifunctional/IIG RM2, Type II "
+            "modification-dependent/IIM R2* such as DpnI, and one Type III "
+            "EcoP15I) that name at least one commercial supplier (CR) and have a "
+            f"single fully-specified IUPAC recognition site of {_MIN_SITE}-{_MAX_SITE} "
+            "bases. Methyltransferases and homing endonucleases are excluded. Cut "
+            "positions, source organisms, references and methylation "
             "data are not extracted -- only the name and its recognition sequence, "
             "which is all BT4 needs to ban a site. Isoschizomers are kept so a "
             "user can name the enzyme they actually own."
@@ -258,12 +316,20 @@ def build(cache_dir: Path, out_dir: Path) -> tuple[Path, Path]:
             "REBASE is Copyright (c) Dr. Richard J. Roberts and is made freely "
             "available to the community for use WITH CITATION; it is not a "
             "CC/public-domain grant. What is bundled here is a derived subset "
-            "(name + recognition sequence for commercially available Type II "
-            "enzymes), not a redistribution of the REBASE database. Cite Roberts "
+            "(enzyme name + recognition sequence for commercially available "
+            "Type II enzymes -- each a published fact carried in its suppliers' "
+            "catalogs), not a redistribution of the REBASE database. Cite Roberts "
             "RJ, Vincze T, Posfai J, Macelis D. REBASE - a database for DNA "
             "restriction and modification: enzymes, genes and genomes. Nucleic "
-            "Acids Res (2023), doi:10.1093/nar/gkac975. Re-derivable from "
-            "source_url + source_sha256."
+            "Acids Res (2023), doi:10.1093/nar/gkac975."
+        ),
+        "rederivation_note": (
+            "REBASE publishes only a MOVING url for its current release, with no "
+            "versioned permalink, so source_url alone does not pin anything: the "
+            "pin that holds is source_sha256, checked on every build. Re-deriving "
+            f"these exact bytes therefore requires REBASE version {REBASE_VERSION} "
+            "specifically. A later release makes the build abort with the digest "
+            "mismatch rather than silently producing a different catalog."
         ),
     }
     provenance_path = out_dir / PROVENANCE_NAME
@@ -271,7 +337,7 @@ def build(cache_dir: Path, out_dir: Path) -> tuple[Path, Path]:
         json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(
-        f"  {stats['records_in_source']} records -> {stats['type_ii']} type-II -> "
+        f"  {stats['records_in_source']} records -> {stats['restriction_enzymes']} type-II -> "
         f"{stats['commercially_available']} commercial -> {len(catalog)} shipped"
     )
     return tsv_path, provenance_path

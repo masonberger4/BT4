@@ -54,7 +54,7 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   enforced, not a calibrated expression claim), a **strong splice-consensus**
   donor/acceptor motif guard (sense-strand IUPAC heuristic — reduces obvious
   cryptic-splice risk, never the bare GT/AG, no calibrated claim), and a
-  **576-enzyme restriction catalog** derived from a version-pinned **REBASE**
+  **584-enzyme restriction catalog** derived from a version-pinned **REBASE**
   release (IUPAC-aware, auto reverse-complement, Type IIS included — BsaI,
   BsmBI, BbsI, SapI), content-hashed and re-derivable rather than hand-typed.
 - **Nine organisms:** human, mouse, rat, zebrafish, *Drosophila*, *C. elegans*,

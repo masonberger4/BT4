@@ -32,7 +32,7 @@ from bt4.constraints.gc_run import GcRunConstraint
 from bt4.constraints.kozak import InternalStartConstraint
 from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
-from bt4.constraints.restriction import RestrictionSiteConstraint
+from bt4.constraints.restriction import RestrictionSiteConstraint, enzyme_provenance
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
 from bt4.constraints.splice_motif import SpliceSiteMotifConstraint
 from bt4.constraints.uorf import UorfConstraint
@@ -537,6 +537,14 @@ def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
     if config.tai_weight != 0.0:
         # tAI in play => the tRNA-count table's content hash enters the stamp too.
         inputs["trna_table_sha256"] = load_tai_provenance(config.organism).sha256
+    if config.restriction_enzymes:
+        # Named enzymes in play => the CATALOG's content hash enters the stamp,
+        # not just the names (invariant #9). The names alone would be a BT3-style
+        # provenance lie: the site a name resolves to is shipped data, so a
+        # swapped catalog silently changes the constraint while leaving a
+        # byte-identical manifest behind.
+        catalog_prov = enzyme_provenance()
+        inputs["enzyme_catalog_sha256"] = str(catalog_prov["sha256"])
     if config.cpb_weight != 0.0 and config.cpb_reference_cds:
         # Codon-pair bias in play => the reference CDS set determines the table and
         # so the objective, so its content hash enters the stamp (invariant #9): a

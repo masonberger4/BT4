@@ -43,7 +43,7 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Expression: wrapped RiboNN (Sanofi non-commercial) | GROUNDWORK | **no** (acceptance gate pending) | `biomodels/expression/ribonn.py` |
 | Candidate-set assembly + expression rerank | DONE | calibrated-gated | `pipeline/candidates.py`, `bt4.api.candidates` |
 | Library / degenerate-design (SAMPLED) mode | DONE | n/a (sampler, not optimizer) | `optimize/sample.py`, `pipeline/library.py` |
-| Restriction catalog (576 enzymes, REBASE-derived + content-hashed) | DONE | n/a | `constraints/restriction.py`, `constraints/data/` |
+| Restriction catalog (584 enzymes, REBASE-derived + content-hashed) | DONE | n/a | `constraints/restriction.py`, `constraints/data/` |
 | Surfaces: `bt4.api`, `bt4` CLI, FastAPI service, provenance | DONE | n/a | `api/`, `cli/`, `service/`, `provenance/` |
 | **BT4 Studio** — Design / Candidates+splice-audit / Library tabs, RiboNN + ASSP surfaced, menus + runtime theming | DONE | n/a | `app/studio.py`, `app/worker.py`, `app/theme.py` |
 | Expression backend registry (`available_expression_backends` / `resolve_expression_backend`) | DONE | n/a | `biomodels/expression/__init__.py`, `api/` |
@@ -72,7 +72,7 @@ item unless you have a reason not to.**
    *C. elegans*, *Arabidopsis*) now ship **recounted** codon tables built by
    `scripts/build_organism_tables.py` from release-pinned Ensembl CDS sets, so BT4
    offers nine organisms and no bundled tRNA table is unreachable. The
-   **restriction-enzyme catalog is likewise now derived, not hand-typed**: 576
+   **restriction-enzyme catalog is likewise now derived, not hand-typed**: 584
    commercially available Type II enzymes (Type IIS included) from a
    version-pinned REBASE release via `scripts/build_enzyme_catalog.py`, content
    hashed and `--verify`-able. What remains:
