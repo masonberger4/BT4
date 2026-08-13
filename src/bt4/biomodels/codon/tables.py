@@ -407,6 +407,60 @@ def _resolve_reference_set(organism: str, reference_set: str | None) -> str:
     return reference_set
 
 
+def _validate_stamped_reference_set(
+    organism: str, resolved: str, data: Mapping[str, object] | None = None
+) -> None:
+    """Enforce that a bundled table's sidecar declares the reference set its
+    filename implies.
+
+    ``w = f/f_max`` is uninterpretable without knowing which genes it was counted
+    over, so the label is load-bearing and must be *checked*, not inferred and
+    trusted. Two failure modes, both of which used to slip past one loader or the
+    other (workflow-confirmed findings #5 and #6):
+
+    * **Missing** -- a sidecar with no ``reference_set`` key. The check must be
+      REQUIRED, not defaulted: defaulting a missing label to whatever the caller
+      asked for makes it fail *open*, validating one file as every reference set
+      in turn.
+    * **Mismatched** -- a sidecar that names a different reference set than the
+      file it sits beside (e.g. a user-installed ``build-table`` output stamped
+      ``custom`` dropped in at ``<organism>.tsv``). Loading it as ``genome_wide``
+      would print a false provenance label.
+
+    Both loaders call this, so ``tracks`` (which reads only ``load_table``) is now
+    as strict as ``optimize`` (which reads ``load_provenance``) -- they can no
+    longer disagree about a sequence's declared reference set.
+
+    Args:
+        organism: Canonical organism key (for the error message).
+        resolved: The reference set the filename implies.
+        data: The already-parsed sidecar, when the caller has it; otherwise the
+            sidecar is read here. A table with **no** sidecar at all is left to
+            the caller (``load_provenance`` raises its own "no provenance" error;
+            ``load_table`` tolerates a sidecar-less TSV).
+
+    Raises:
+        ValueError: If the sidecar exists but omits ``reference_set`` or names one
+            other than ``resolved``.
+    """
+    if data is None:
+        resource = files(_DATA_PACKAGE).joinpath(f"{_stem(organism, resolved)}.provenance.json")
+        if not resource.is_file():
+            return
+        data = json.loads(resource.read_text(encoding="utf-8"))
+    if "reference_set" not in data:
+        raise ValueError(
+            f"provenance for {organism!r} does not state its reference set; "
+            "a codon table's w = f/f_max is uninterpretable without it"
+        )
+    stamped = str(data["reference_set"])
+    if stamped != resolved:
+        raise ValueError(
+            f"provenance for {organism!r} claims reference set {stamped!r} but sits "
+            f"beside the {resolved!r} table"
+        )
+
+
 def load_table_from_file(path: str | Path) -> CodonUsageTable:
     """Load a :class:`CodonUsageTable` from a TSV file on disk.
 
@@ -447,6 +501,14 @@ def load_table(organism: str, *, reference_set: str | None = None) -> CodonUsage
     """
     key = _canonical(organism)
     resolved = _resolve_reference_set(key, reference_set)
+    # Cross-check the sidecar's own label, exactly as load_provenance does. Without
+    # this, load_table derived the reference set from the FILENAME alone, so a table
+    # at ``<organism>.tsv`` whose sidecar honestly says ``custom`` (e.g. a
+    # user-installed build-table output) loaded as ``genome_wide`` -- and the
+    # tracks path, which reads load_table but never load_provenance, would then
+    # print that false label while optimize (which reads the sidecar) correctly
+    # refused. The two paths must agree.
+    _validate_stamped_reference_set(key, resolved)
     resource = files(_DATA_PACKAGE).joinpath(f"{_stem(key, resolved)}.tsv")
     freq = _parse_tsv(resource.read_text(encoding="utf-8"))
     return CodonUsageTable(organism=key, frequency=freq, reference_set=resolved)
@@ -473,24 +535,7 @@ def load_provenance(organism: str, *, reference_set: str | None = None) -> Table
     if not resource.is_file():
         raise ValueError(f"no provenance for organism {organism!r} ({resolved})")
     data = json.loads(resource.read_text(encoding="utf-8"))
-    # REQUIRED, not defaulted. Defaulting a missing label to whatever the caller
-    # asked for would make the check fail *open*: a sidecar with no
-    # ``reference_set`` would validate as every reference set in turn, which is
-    # precisely the guarantee this field exists to provide.
-    if "reference_set" not in data:
-        raise ValueError(
-            f"provenance for {organism!r} does not state its reference set; "
-            "a codon table's w = f/f_max is uninterpretable without it"
-        )
-    stamped = str(data["reference_set"])
-    if stamped != resolved:
-        # The sidecar names a different reference set than the file it sits
-        # beside. Something is mis-filed, and every downstream honesty claim
-        # ("this run used the highly-expressed table") rests on this label.
-        raise ValueError(
-            f"provenance for {organism!r} claims reference set {stamped!r} but sits "
-            f"beside the {resolved!r} table"
-        )
+    _validate_stamped_reference_set(key, resolved, data)
     return TableProvenance(
         source=str(data["source"]),
         build=str(data["build"]),

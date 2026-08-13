@@ -34,7 +34,12 @@ from types import ModuleType
 import pytest
 
 from bt4 import api
-from bt4.biomodels.codon.tables import GENOME_WIDE, HIGHLY_EXPRESSED, load_table
+from bt4.biomodels.codon.tables import (
+    GENOME_WIDE,
+    HIGHLY_EXPRESSED,
+    load_provenance,
+    load_table,
+)
 
 # An organism whose two reference sets disagree at eight amino acids, so any
 # "wrong table" shows up immediately rather than needing a lucky protein.
@@ -93,6 +98,46 @@ def test_candidates_are_scored_against_the_table_that_designed_them(
         dna = cand.result.dna
         assert cand.result.audit["codon_reference_set"] == reference_set
         assert float(cand.result.audit["cai"]) == pytest.approx(table.cai(dna), abs=1e-9)
+
+
+# A repetitive protein whose CAI-optimal seed carries a repeat longer than the
+# limit below, so candidate assembly must produce repeat-refined variants.
+_REPEATY_PROTEIN = "M" + "EAAAK" * 6 + "GGGGSGGGGS" + "HHHHHH"
+
+
+def test_repeat_refined_candidates_use_the_run_table_not_the_default() -> None:
+    """The candidates revert-detector must reach the ``repeat_refined`` members.
+
+    ``pipeline/candidates.py`` builds repeat-refined variants from a table loaded
+    at one call site; the other candidates come from ``run_frontier``, which
+    threads the reference set on its own. So a config with **no** GLOBAL rule
+    produces zero repeat-refined variants and never exercises that call site --
+    which is exactly why the earlier suite stayed green when it was reverted.
+    This test forces the variants (a GLOBAL ``max_repeat_length`` the seed
+    violates) under ``genome_wide`` and checks invariant #2 for every member.
+
+    MUTATION THAT MUST FAIL THIS: drop ``reference_set=config.reference_set`` from
+    the ``load_table`` call in ``assemble_and_rank_candidates``. Verified: the
+    repeat-refined member then reports ``highly_expressed`` and its CAI recomputes
+    against the wrong table.
+    """
+    config = api.OptimizeConfig(
+        organism=ORGANISM, reference_set=GENOME_WIDE, max_repeat_length=10, seed=0
+    )
+    cand_set = api.candidates(_REPEATY_PROTEIN, config, n=6)
+
+    sources = {c.source for c in cand_set.candidates}
+    assert "repeat_refined" in sources, (
+        "premise broken: no repeat_refined variant produced, so this test would "
+        f"pass vacuously; sources={sources}"
+    )
+
+    table = load_table(ORGANISM, reference_set=GENOME_WIDE)
+    for cand in cand_set.candidates:
+        assert cand.result.audit["codon_reference_set"] == GENOME_WIDE, cand.source
+        assert float(cand.result.audit["cai"]) == pytest.approx(
+            table.cai(cand.result.dna), abs=1e-9
+        ), cand.source
 
 
 @pytest.mark.parametrize("reference_set", [HIGHLY_EXPRESSED, GENOME_WIDE])
@@ -243,31 +288,132 @@ def test_an_ambiguous_identifier_is_dropped_rather_than_guessed(
     assert stats["rows_matched_via_gene_id"] == 0
 
 
-def test_a_sidecar_that_does_not_state_its_reference_set_is_refused(
-    tmp_path: pathlib.Path,
-) -> None:
-    """The provenance guard must fail closed.
+def test_write_table_stamps_a_custom_reference_set(tmp_path: pathlib.Path) -> None:
+    """A caller's own CDS set is honestly labelled ``custom``, unprompted.
 
-    Defaulting a missing label to whatever the caller asked for would validate one
-    sidecar as *every* reference set in turn -- the same fail-open shape this
-    change removed from ``available_organisms``.
+    (This does NOT test the load-time guard -- see the ``load_*`` tests below.
+    An earlier version of this test was named for the guard but only checked
+    ``write_table``/``load_table_from_file``, so a reverted guard passed it: the
+    exact "test that would pass if the thing it names were broken" the project
+    warns about. Renamed to what it actually checks.)
     """
     from bt4.biomodels.codon import build as codon_build
     from bt4.biomodels.codon.tables import load_table_from_file
 
     counts = {"ATG": 5, "TGG": 3, "TAA": 2, "GCC": 7, "GCT": 4}
     codon_build.write_table(
-        counts,
-        organism="toy",
-        path=tmp_path,
-        source="unit-test",
-        pseudocount=1.0,
+        counts, organism="toy", path=tmp_path, source="unit-test", pseudocount=1.0
     )
-    sidecar = tmp_path / "toy.provenance.json"
-    payload = json.loads(sidecar.read_text(encoding="utf-8"))
-    # write_table must state it, unprompted, for a caller's own CDS set.
+    payload = json.loads((tmp_path / "toy.provenance.json").read_text(encoding="utf-8"))
     assert payload["reference_set"] == "custom"
     assert load_table_from_file(tmp_path / "toy.tsv").reference_set == "custom"
+
+
+# --------------------------------------------------------------------------- #
+# The sidecar reference-set guard -- tested at the loader, not the writer.
+# --------------------------------------------------------------------------- #
+#
+# These use a monkeypatched data directory so a crafted sidecar never touches the
+# real package data. Each is paired with the exact one-line mutation that must
+# make it fail; a test that stays green under its mutation is worthless (the
+# project's own review caught one such vacuous test, which is why these exist).
+
+_TSV_HEADER = "amino_acid\tcodon\tfrequency\n"
+
+
+def _write_fake_table(
+    directory: pathlib.Path, stem: str, sidecar: dict[str, object] | None
+) -> None:
+    """Write a valid <stem>.tsv (all 64 codons) and, optionally, a sidecar."""
+    from bt4.domain.genetic_code import CODON_TABLE
+
+    rows = [f"{aa}\t{codon}\t{i + 1}" for i, (codon, aa) in enumerate(sorted(CODON_TABLE.items()))]
+    (directory / f"{stem}.tsv").write_text(_TSV_HEADER + "\n".join(rows) + "\n", encoding="utf-8")
+    if sidecar is not None:
+        (directory / f"{stem}.provenance.json").write_text(
+            json.dumps(sidecar), encoding="utf-8"
+        )
+
+
+def _point_data_dir_at(monkeypatch: pytest.MonkeyPatch, directory: pathlib.Path) -> None:
+    """Make the tables module read its bundled data from ``directory``."""
+    from bt4.biomodels.codon import tables as tables_mod
+
+    monkeypatch.setattr(tables_mod, "files", lambda _pkg: directory)
+
+
+def _full_sidecar(reference_set: str | None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source": "unit-test",
+        "build": "unit-test",
+        "cds_count": 1,
+        "retrieved": "2026-01-01",
+        "sha256": "0" * 64,
+        "note": "unit-test",
+    }
+    if reference_set is not None:
+        payload["reference_set"] = reference_set
+    return payload
+
+
+def test_load_provenance_refuses_a_keyless_sidecar(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sidecar with no ``reference_set`` must be refused, not defaulted.
+
+    MUTATION THAT MUST FAIL THIS: in ``_validate_stamped_reference_set``, replace
+    the missing-key ``raise`` with ``stamped = str(data.get("reference_set",
+    resolved))``. Verified: with that revert, this test fails and the suite
+    otherwise stays green -- which is the whole point.
+    """
+    _write_fake_table(tmp_path, "keyless", _full_sidecar(None))
+    _point_data_dir_at(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="does not state its reference set"):
+        load_provenance("keyless")
+
+
+def test_load_table_refuses_a_keyless_sidecar(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_table enforces the same guard as load_provenance (findings #5/#6)."""
+    _write_fake_table(tmp_path, "keyless", _full_sidecar(None))
+    _point_data_dir_at(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="does not state its reference set"):
+        load_table("keyless")
+
+
+def test_load_table_refuses_a_mismatched_sidecar(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``custom``-stamped sidecar at ``<organism>.tsv`` must not load as genome_wide.
+
+    This is finding #6's own reproduction: a user's ``build-table`` output
+    (honestly ``custom``) dropped into the data dir. Before the fix, load_table
+    derived the label from the filename and returned ``genome_wide``; load_provenance
+    already refused, so the two disagreed and ``tracks`` printed the false label.
+    """
+    _write_fake_table(tmp_path, "mismatch", _full_sidecar("custom"))
+    _point_data_dir_at(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="claims reference set 'custom'"):
+        load_table("mismatch")
+    with pytest.raises(ValueError, match="claims reference set 'custom'"):
+        load_provenance("mismatch")
+
+
+def test_tracks_refuses_rather_than_printing_a_false_reference_set(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tracks path must agree with optimize: refuse, never mislabel.
+
+    ``api.tracks`` reads only ``load_table``; before the fix it would have
+    published ``codon_reference_set="genome_wide"`` for a ``custom`` table while
+    ``api.optimize`` (which reads the sidecar) refused. Now both refuse.
+    """
+    _write_fake_table(tmp_path, "mismatch", _full_sidecar("custom"))
+    _point_data_dir_at(monkeypatch, tmp_path)
+    dna = "ATG" + "GCC" * 8 + "TAA"
+    with pytest.raises(ValueError, match="claims reference set 'custom'"):
+        api.tracks(dna, "mismatch")
 
 
 def test_reference_set_is_a_reserved_provenance_key() -> None:

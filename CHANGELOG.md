@@ -7,6 +7,42 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **Three confirmed-open findings from the completed verification workflow.** The
+  exhaustive multi-lens review (seven lenses × three refuters per finding) was
+  re-run to completion after its first pass hit a usage limit; its honest tally
+  was **6 confirmed, 36 refuted, 0 unverified** (the earlier run's "38 refuted"
+  had silently counted never-run verifiers as refuted — the aggregation now
+  distinguishes *unverified* from *refuted*). A completeness critic then
+  re-checked the six confirmed against what actually shipped. Four were already
+  fixed; three were genuinely open and are closed here:
+  - **The `load_provenance` fail-open guard was untested — and the test named for
+    it was vacuous.** A test titled "the provenance guard must fail closed" only
+    checked `write_table`/`load_table_from_file` and never called `load_provenance`
+    with a keyless sidecar, so reverting the guard to its fail-open form left the
+    whole suite green. It is renamed to what it actually checks, and real tests now
+    exercise the guard at the loader — each verified to fail under the exact
+    one-line revert.
+  - **`load_table` mislabelled a custom table's reference set.** The label was
+    derived from the *filename* only in `load_table`, and cross-checked against the
+    sidecar only in `load_provenance` — so a user's `build-table` output (honestly
+    stamped `custom`) dropped in at `<organism>.tsv` loaded as `genome_wide`, and
+    `bt4 tracks` (which reads `load_table`, never `load_provenance`) would print
+    that false label while `bt4 optimize` correctly refused. The sidecar check is
+    now a shared helper both loaders call, so `tracks` is as strict as `optimize`:
+    the two paths can no longer disagree about a sequence's declared reference set.
+  - **The candidate-assembly reference-set threading was untested.** The library
+    and tracks revert-detectors were effective, but the candidates one was not: its
+    only test used a config with no GLOBAL rule, so zero repeat-refined variants
+    were produced and the reference-set-carrying table was never consumed — a
+    revert left CI green while a `genome_wide` run with `max_repeat_length` active
+    would have scored its repeat-refined variants against the highly-expressed
+    table (invariant #2). A new revert-detector forces the variants and asserts
+    invariant #2 for every member.
+
+  Every new test was verified to **fail under the exact mutation it guards** —
+  the lesson from the vacuous test above.
+
 ### Added
 - **Highly-expressed CAI reference sets — and they are now the default.** A codon
   table's `w = f/f_max` only means something relative to a set of genes, and BT4's
