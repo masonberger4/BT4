@@ -57,9 +57,10 @@ its first tagged release.
     than one built on a guess; the genome-wide table stays its only, honestly
     labeled, option — and asking for `highly_expressed` there **raises** instead of
     silently substituting the other table.
-  - **Surfaces:** `--reference-set` on `bt4 optimize`/`frontier`/`validate`/
-    `tracks`; `bt4 organisms` now prints each organism's default and available
-    sets; a **Reference set** picker in BT4 Studio that repopulates from the engine
+  - **Surfaces:** `--reference-set` on `bt4 optimize`, `library`, `validate` and
+    `tracks` (there is no `bt4 frontier` subcommand; the frontier is reached via
+    `api.frontier`); `bt4 organisms` now prints each organism's default and
+    available sets; a **Reference set** picker in BT4 Studio that repopulates from the engine
     per organism (and disables itself, with a reason, when only one exists);
     `reference_set` on the service's optimize request and in `/organisms`;
     `OptimizeConfig.reference_set`; and `api.available_reference_sets` /
@@ -69,6 +70,16 @@ its first tagged release.
     (PLoS ONE 2009) found an *E. coli* variant built by maximizing exactly this
     quantity expressed at a fraction of alternatives. CAI stays one axis of the
     objective vector (§10.7).
+
+### Fixed
+- **`bt4 --help` and `bt4 tracks --help` crashed** with
+  `ValueError: unsupported format character 'M'`. argparse %-formats help strings
+  *while rendering help*, and the `tracks` parser wrote a literal percent sign as
+  `%MinMax` instead of `%%MinMax` — in both the subcommand's own `--organism`
+  help and its one-line summary, which the top-level listing reprints. So the
+  first command a new user types has been broken, and every other test passed
+  because nothing in the suite invoked `--help`. Fixed, and every command's
+  `--help` is now a parametrized regression test.
 
 ### Changed
 - **Results now report their CAI reference set.** `result.audit` carries

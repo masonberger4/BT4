@@ -486,9 +486,15 @@ def _parser() -> argparse.ArgumentParser:
     p_pre = sub.add_parser("presets", help="list named forbidden-sequence presets")
     p_pre.set_defaults(func=_cmd_presets)
 
-    p_trk = sub.add_parser("tracks", help="per-site composition tracks (GC/CpG/%MinMax)")
+    # argparse %-formats every help string as it RENDERS help, so a literal
+    # percent sign must be escaped as "%%": a bare "%M" raises ValueError from
+    # inside the help formatter, which took out both `bt4 --help` (the subparser
+    # entry below is listed there) and `bt4 tracks --help`.
+    p_trk = sub.add_parser("tracks", help="per-site composition tracks (GC/CpG/%%MinMax)")
     p_trk.add_argument("dna", help="ACGT coding sequence")
-    p_trk.add_argument("--organism", default="homo_sapiens", help="table for the %MinMax track")
+    p_trk.add_argument(
+        "--organism", default="homo_sapiens", help="table for the %%MinMax track"
+    )
     p_trk.add_argument(
         "--reference-set", default=None, dest="reference_set",
         choices=list(api.REFERENCE_SETS),

@@ -127,7 +127,7 @@ from bt4.biomodels.codon.tables import (  # noqa: E402
     REFERENCE_SET_SUFFIX,
     sha256_hex,
 )
-from bt4.domain.genetic_code import CODON_TABLE  # noqa: E402
+from bt4.domain.genetic_code import CODON_TABLE, STOP  # noqa: E402
 
 # PaxDb release. Pinned, never "latest" -- the same rule the CDS sources follow.
 PAXDB_RELEASE = "6.1"
@@ -732,6 +732,12 @@ def report(spec: AbundanceSpec, cache_dir: Path, grid: tuple[int, ...]) -> None:
     For each candidate size: how many codons go unobserved (the constraint that
     sets the floor) and how many amino acids' most-used codon differs from the
     genome-wide table (the signal that fades as the size grows).
+
+    The **stop codon is counted separately** from the amino-acid tally, so this
+    output matches the per-organism counts quoted in the module docstring. A stop
+    is not an amino acid and its preferred codon moves independently (it moves in
+    human, mouse and zebrafish and in none of the others), so folding it into the
+    same number would make the tool disagree with the prose that cites it.
     """
     from bt4.biomodels.codon.tables import GENOME_WIDE, load_table
 
@@ -743,12 +749,19 @@ def report(spec: AbundanceSpec, cache_dir: Path, grid: tuple[int, ...]) -> None:
         counts = count_codons(reference.sequences[:size])
         missing = sorted(set(CODON_TABLE) - set(counts))
         argmax = _argmax_by_aa(counts)
-        differs = sorted(aa for aa in argmax if gw_argmax.get(aa) != argmax[aa])
+        differs = sorted(
+            aa for aa in argmax if aa != STOP and gw_argmax.get(aa) != argmax[aa]
+        )
+        stop = (
+            f" stop {gw_argmax.get(STOP)}->{argmax[STOP]}"
+            if argmax.get(STOP) != gw_argmax.get(STOP)
+            else ""
+        )
         print(
             f"  N={size:5d}  unobserved codons={len(missing):2d}"
             f"{'' if not missing else ' (' + ','.join(missing) + ')'}"
             f"  amino acids differing from genome-wide={len(differs):2d} "
-            f"{''.join(differs)}"
+            f"{''.join(differs)}{stop}"
         )
 
 

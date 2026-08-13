@@ -193,3 +193,89 @@ def test_build_table(tmp_path: pytest.TempPathFactory, capsys: pytest.CaptureFix
     table = load_table_from_file(out / "demo.tsv")
     assert table.organism == "demo"
     assert 0.0 < table.cai("ATGGCC") <= 1.0
+
+
+# The subcommands `bt4 --help` lists. Kept explicit rather than scraped from the
+# parser so that adding a command without a rendering help string fails here.
+_SUBCOMMANDS = (
+    "optimize",
+    "library",
+    "validate",
+    "organisms",
+    "enzymes",
+    "presets",
+    "tracks",
+    "build-table",
+)
+
+
+@pytest.mark.parametrize("command", ["", *_SUBCOMMANDS])
+def test_help_renders_for_every_command(
+    command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every ``--help`` must actually render.
+
+    argparse %-formats help strings *while formatting help*, so a literal
+    percent sign written as ``%M`` instead of ``%%M`` raises ValueError from
+    inside the formatter. That is exactly what happened to ``bt4 tracks`` -- and,
+    because a subparser's one-line help is reprinted in the top-level listing, to
+    ``bt4 --help`` itself. Nothing else in the suite invokes ``--help``, so the
+    first thing a new user types was broken and every other test passed.
+    """
+    argv = [command, "--help"] if command else ["--help"]
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 0
+    assert capsys.readouterr().out.strip()
+
+
+def test_reference_set_flag_changes_the_delivered_sequence(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--reference-set`` must reach the engine, and the run must report it."""
+    protein = "MKTAYIAKQRQISFVKSHFSRQ"
+    assert main(["optimize", protein, "--organism", "escherichia_coli", "--json"]) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert main(
+        [
+            "optimize", protein, "--organism", "escherichia_coli",
+            "--reference-set", "genome_wide", "--json",
+        ]
+    ) == 0
+    genome_wide = json.loads(capsys.readouterr().out)
+
+    assert default["audit"]["codon_reference_set"] == "highly_expressed"
+    assert genome_wide["audit"]["codon_reference_set"] == "genome_wide"
+    assert default["dna"] != genome_wide["dna"]
+
+
+def test_reference_set_refuses_rather_than_substituting(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Asking for a table an organism lacks must fail, not silently swap.
+
+    A. thaliana ships only the genome-wide table (PaxDb identifies its proteins
+    by UniProt accession the pinned annotation does not carry). Quietly handing
+    that table back would make the run's CAI answer a different question than
+    the one asked, while still exiting 0.
+    """
+    code = main(
+        [
+            "optimize", "MAAL", "--organism", "arabidopsis_thaliana",
+            "--reference-set", "highly_expressed",
+        ]
+    )
+    assert code != 0
+    assert "no 'highly_expressed' codon table" in capsys.readouterr().err
+
+
+def test_organisms_lists_reference_sets(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["organisms"]) == 0
+    out = capsys.readouterr().out
+    assert "highly_expressed" in out
+    # A. thaliana has only the genome-wide table, and the listing must say so
+    # rather than implying every organism offers both.
+    arabidopsis = next(
+        line for line in out.splitlines() if line.startswith("arabidopsis_thaliana")
+    )
+    assert "highly_expressed" not in arabidopsis
