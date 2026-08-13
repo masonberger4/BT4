@@ -7,23 +7,29 @@ amino acid. The CAI of a coding sequence is the geometric mean of ``w`` over its
 codons (excluding non-degenerate residues and stops).
 
 Tables are loaded from packaged TSV data (``data/<organism>.tsv``) with a
-sidecar ``<organism>.provenance.json``. **The bundled tables are not all of the
-same provenance grade, and the sidecar says which is which** -- read it rather
-than assuming:
-
-* Six organisms (mouse, rat, zebrafish, *Drosophila*, *C. elegans*,
-  *Arabidopsis*) are **genome-wide recounts**: raw codon counts from a
-  release-pinned Ensembl CDS set, with ``cds_count`` set and the source URL and
-  the source file's own SHA-256 in the sidecar, rebuildable by
-  ``scripts/build_organism_tables.py``.
-* Three (human, *E. coli*, *S. cerevisiae*) are older *representative published*
-  figures (Kazusa-style per-thousand values) with ``cds_count`` of ``None`` --
-  **not** an authoritative per-genome recount.
+sidecar ``<organism>.provenance.json``. **All nine bundled tables are
+genome-wide recounts**: raw codon occurrence counts from a release-pinned
+Ensembl CDS set, each with ``cds_count`` set and the source URL, the source
+file's own SHA-256, the assembly, the gene annotation and a per-filter drop
+tally in its sidecar, all rebuildable by ``scripts/build_organism_tables.py``.
+Read the sidecar rather than assuming; it is the record of what was counted.
 
 Only ratios within an amino acid's synonymous group are ever used
-(``w = f/f_max``), so the two scales -- raw counts and per-thousand -- are
-interchangeable here. Consumers that need a scale-free reading must normalize
-the same way; see :class:`~bt4.objectives.minmax.MinMaxTerm`, which does.
+(``w = f/f_max``), so the absolute scale never matters. Consumers that need a
+scale-free reading must normalize the same way; see
+:class:`~bt4.objectives.minmax.MinMaxTerm`, which does.
+
+**Scope caveat -- these are genome-wide, not highly-expressed, reference sets.**
+CAI as Sharp & Li (1987) defined it derives ``w`` from a reference set of very
+highly expressed genes, so that ``w = 1`` marks the codon translation *prefers*.
+A genome-wide table instead marks the codon that is most *common*, which under
+weak translational selection is set by mutation and GC bias. The two coincide in
+human at all but a couple of amino acids, but they differ sharply where
+translational selection is strong: in the bundled *E. coli* table the top Phe
+codon is ``TTT`` and the top Asp codon is ``GAT``, whereas highly-expressed
+*E. coli* genes prefer ``TTC`` and ``GAC``. Read the shipped metric as a
+codon-commonness index; a highly-expressed reference set is a separate, declared
+table (not yet shipped) rather than a correction to this one.
 
 This module depends only on :mod:`bt4.domain` and the standard library.
 """
