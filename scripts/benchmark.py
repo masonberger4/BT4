@@ -192,7 +192,7 @@ def benchmark(
         is ``None`` when the sequence is shorter than one %MinMax window.
     """
     cfg = config if config is not None else api.OptimizeConfig()
-    frequencies = load_table(cfg.organism).frequency
+    frequencies = load_table(cfg.organism, reference_set=cfg.reference_set).frequency
     rows: list[dict[str, object]] = []
     for name, protein in proteins.items():
         naive_dna = naive_backtranslate(protein)

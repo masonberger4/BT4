@@ -118,6 +118,12 @@ ethos requires stating it plainly:
   bias **did not correlate** with expression across 154 synonymous GFP variants;
   **5′ mRNA folding near the start dominated**. Welch et al. 2009 (*PLoS ONE*)
   state flatly that "CAI has no value in predicting gene expression" in their data.
+  Note that this verdict lands on CAI computed against a *highly-expressed*
+  reference set — the strong form of the metric, and the one BT4 now ships as its
+  default. Moving from genome-wide counts to a highly-expressed reference makes
+  CAI a **better-founded proxy**; it does not make it predictive — in Welch's
+  own data the *E. coli* variant built by maximizing exactly it expressed at a
+  fraction of the alternatives they tested.
 - **Expression is multifactorial.** tRNA adaptation (tAI), codon-pair bias, the 5′
   translational ramp, GC, CpG/UpA content, cryptic splicing, and — above all — 5′
   UTR and initiation-region folding all contribute (Tuller 2010; Coleman 2008;

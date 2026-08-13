@@ -25,7 +25,12 @@ from dataclasses import dataclass
 
 from bt4 import __version__
 from bt4.biomodels.codon.pairs import build_codon_pair_table
-from bt4.biomodels.codon.tables import CodonUsageTable, load_provenance, load_table
+from bt4.biomodels.codon.tables import (
+    CodonUsageTable,
+    default_reference_set,
+    load_provenance,
+    load_table,
+)
 from bt4.biomodels.codon.tai import load_tai_provenance, load_tai_table
 from bt4.constraints.forbidden import resolve_forbidden_motifs
 from bt4.constraints.gc_run import GcRunConstraint
@@ -87,6 +92,15 @@ class OptimizeConfig:
 
     Attributes:
         organism: Codon-usage table key or alias (default human).
+        reference_set: Which gene set the organism's CAI weights are counted
+            over -- ``"highly_expressed"`` (the reference set CAI is defined on,
+            and the default wherever it is bundled) or ``"genome_wide"`` (codon
+            *commonness* across the whole annotation). ``None`` takes the
+            organism's default. Requesting a set an organism does not have
+            raises rather than substituting the other, and the resolved name
+            goes into the manifest beside the table's content hash -- the two
+            answer different questions, so a result that did not say which one
+            it used would not be reproducible from its own stamp.
         gc_target: Desired GC fraction in ``[0, 1]`` for the GC-proximity term.
         cai_weight: Weight on the CAI (log-w) objective in a single solve.
         tai_weight: Weight on the tRNA-adaptation-index (log-w) objective (0
@@ -202,6 +216,7 @@ class OptimizeConfig:
     """
 
     organism: str = "homo_sapiens"
+    reference_set: str | None = None
     gc_target: float = 0.55
     cai_weight: float = 1.0
     tai_weight: float = 0.0
@@ -486,9 +501,23 @@ def _n_scored_codons(dna: str) -> int:
     )
 
 
+def _resolved_reference_set(config: OptimizeConfig) -> str:
+    """Return the reference set this run will actually use.
+
+    ``config.reference_set`` may be ``None`` ("whatever this organism defaults
+    to"), but a manifest must record what was *used*, not what was asked for --
+    otherwise two runs that resolved to different tables would stamp the same
+    ``None`` (CLAUDE.md §10.10).
+    """
+    if config.reference_set is None:
+        return default_reference_set(config.organism)
+    return config.reference_set
+
+
 def _config_dict(config: OptimizeConfig) -> dict[str, object]:
     return {
         "organism": config.organism,
+        "reference_set": _resolved_reference_set(config),
         "gc_target": config.gc_target,
         "cai_weight": config.cai_weight,
         "tai_weight": config.tai_weight,
@@ -530,7 +559,7 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
 
 
 def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
-    prov = load_provenance(config.organism)
+    prov = load_provenance(config.organism, reference_set=config.reference_set)
     cfg = _config_dict(config)
     cfg.update(extra)
     inputs: dict[str, str] = {"codon_table_sha256": prov.sha256}
@@ -600,6 +629,11 @@ def _make_result(
         stamp_extra["alpha"] = alpha
     audit: dict[str, object] = {
         "cai": table.cai(dna),
+        # A CAI without its reference set is a number with no question attached:
+        # 1.0 against genome-wide counts and 1.0 against highly-expressed counts
+        # are different claims about the same sequence. The table itself carries
+        # the label, so this cannot drift from the numbers above it.
+        "codon_reference_set": table.reference_set,
         "gc_percent": metrics.gc * 100.0,
         "n_scored_codons": _n_scored_codons(dna),
         "solver": certificate.solver,
@@ -869,7 +903,7 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
             "pass that would not re-enforce the budget"
         )
     p = validate_protein(protein)
-    table = load_table(config.organism)
+    table = load_table(config.organism, reference_set=config.reference_set)
     active = _active_terms(table, config)
     terms = [term for term, _ in active]
     constraints = _build_constraints(config)
@@ -987,7 +1021,7 @@ def run_frontier(
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
     p = validate_protein(protein)
-    table = load_table(config.organism)
+    table = load_table(config.organism, reference_set=config.reference_set)
     constraints = _build_constraints(config)
     # The frontier is a pure exact-solve trade-off explorer: each point is
     # proven-optimal for the local constraints, so the non-local max-repeat rule is
@@ -1066,7 +1100,7 @@ def run_validate(dna: str, config: OptimizeConfig | None = None) -> ValidationRe
     """
     config = config or OptimizeConfig()
     d = validate_dna(dna)
-    table = load_table(config.organism)
+    table = load_table(config.organism, reference_set=config.reference_set)
     terms = [term for term, _ in _active_terms(table, config)]
     constraints = _build_constraints(config)
     violations = _violations(d, constraints)

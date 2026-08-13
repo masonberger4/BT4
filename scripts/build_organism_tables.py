@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild BT4's bundled codon-usage tables from release-pinned Ensembl CDS sets.
+"""Rebuild BT4's **genome-wide** codon-usage tables from pinned Ensembl CDS sets.
 
 This is the reproducible provenance trail behind the organism tables BT4 ships
 (CLAUDE.md §8): every number in ``src/bt4/biomodels/codon/data/<organism>.tsv``
@@ -7,6 +7,16 @@ is a **codon count from a real, publicly downloadable coding-sequence set**, and
 this script is how anyone re-derives it. Nothing here is hand-authored, and a
 table is never invented for an organism whose CDS set could not be fetched --
 the run fails loudly instead (the "never fabricate a table" rule).
+
+These are the ``genome_wide`` reference set: one representative CDS per gene
+across the whole annotation, weighted by nothing. That answers "which codon is
+most *common*", which is not the question CAI asks -- Sharp & Li's ``w`` is
+defined over *highly expressed* genes. The sibling
+``scripts/build_highly_expressed_tables.py`` builds that second reference set,
+counting the same filtered CDS over a PaxDb-ranked subset of genes, and it is
+the default wherever it exists. Keep the two builders' filtering rules identical:
+the tables are only comparable because they differ in which genes they count and
+in nothing else.
 
 Usage::
 
@@ -41,8 +51,9 @@ Why these choices (all of them recorded in each table's provenance sidecar):
   in the table is a sense codon, exactly as CAI expects.
 
 This script is a maintainer tool: it reaches the network and writes into the
-package data directory. It is not imported by the library, and BT4 never fetches
-anything at runtime.
+package data directory. It is not imported by the library, and no BT4 *table* is
+ever fetched at runtime -- the only runtime network access BT4 has at all is
+the opt-in, explicitly-consented ASSP splice cross-check (CLAUDE.md §6).
 """
 
 from __future__ import annotations
@@ -64,6 +75,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from bt4.biomodels.codon.build import count_codons, write_table  # noqa: E402
+from bt4.biomodels.codon.tables import GENOME_WIDE  # noqa: E402
 from bt4.domain.genetic_code import CODON_TABLE  # noqa: E402
 
 DATA_DIR = REPO_ROOT / "src" / "bt4" / "biomodels" / "codon" / "data"
@@ -260,6 +272,13 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# A descriptive User-Agent, sent on every fetch. Two reasons, both practical:
+# it identifies this traffic to the data providers whose bandwidth we are using,
+# and some of them (PaxDb among them) reject the bare ``Python-urllib/3.x``
+# default outright, which would otherwise look like the dataset had vanished.
+USER_AGENT = "bt4-table-builder/1 (+https://github.com/masonberger4/bt4)"
+
+
 def download(url: str, dest: Path) -> None:
     """Fetch ``url`` to ``dest`` (skipping the download if it is already there)."""
     if dest.exists() and dest.stat().st_size > 0:
@@ -268,7 +287,8 @@ def download(url: str, dest: Path) -> None:
     print(f"  fetching {url}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url) as response, partial.open("wb") as out:
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request) as response, partial.open("wb") as out:
         shutil.copyfileobj(response, out)
     partial.replace(dest)
 
@@ -350,10 +370,22 @@ _REGION = re.compile(
 )
 
 
+def cds_region(header: str) -> str:
+    """Return the assembly region a CDS record sits on, or ``""`` if unstated.
+
+    The region is the sequence name inside the header's location field -- a
+    chromosome (``17``, ``MT``), a scaffold, or an organelle genome. Callers use
+    it to decide what a record *is*: an alternate haplotype, a patch, or (see
+    ``build_highly_expressed_tables.py``) an organelle-encoded gene.
+    """
+    match = _REGION.search(header)
+    return match.group(1) if match else ""
+
+
 def on_alt_locus(header: str) -> bool:
     """Whether a CDS record sits on an alternate haplotype or a patch scaffold."""
-    match = _REGION.search(header)
-    return bool(match and _ALT_LOCUS.search(match.group(1)))
+    region = cds_region(header)
+    return bool(region and _ALT_LOCUS.search(region))
 
 
 def suspicious_kept_region(header: str) -> bool:
@@ -363,8 +395,8 @@ def suspicious_kept_region(header: str) -> bool:
     filter's naming list has fallen behind the source and a shipped table is
     being inflated by duplicate gene copies.
     """
-    match = _REGION.search(header)
-    return bool(match and _SUSPICIOUS_KEPT.search(match.group(1)))
+    region = cds_region(header)
+    return bool(region and _SUSPICIOUS_KEPT.search(region))
 
 
 def valid_cds(seq: str, stats: FilterStats) -> bool:
@@ -499,6 +531,7 @@ def build_one(spec: OrganismSpec, cache_dir: Path, out_dir: Path) -> Path:
             "source_url + source_sha256 by rerunning "
             "scripts/build_organism_tables.py."
         ),
+        reference_set=GENOME_WIDE,
         extra={
             "organism_common_name": spec.common_name,
             "assembly": spec.assembly,
@@ -550,9 +583,11 @@ def _verify_against_committed(spec: OrganismSpec, rebuilt_tsv: Path) -> list[str
         return [*problems, f"{spec.key}: no committed provenance sidecar"]
     committed = json.loads(committed_side.read_text(encoding="utf-8"))
     rebuilt = json.loads(rebuilt_side.read_text(encoding="utf-8"))
-    for key in sorted(set(committed) | set(rebuilt) - {"retrieved"}):
-        if key == "retrieved":
-            continue
+    # Parenthesized: "-" binds tighter than "|", so the unparenthesized form is
+    # `committed | (rebuilt - {...})` -- which happens to be neutralized only by
+    # a redundant guard. Keep this identical in shape to the highly-expressed
+    # builder's twin; the two drifting apart is how one of them starts lying.
+    for key in sorted((set(committed) | set(rebuilt)) - {"retrieved"}):
         if committed.get(key) != rebuilt.get(key):
             problems.append(f"{spec.key}: provenance field {key!r} differs from rebuild")
     return problems

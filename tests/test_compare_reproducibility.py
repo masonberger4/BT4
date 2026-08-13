@@ -84,7 +84,11 @@ def test_metrics_recomputed_from_sequence() -> None:
 
 
 def test_json_output_is_valid(capsys: pytest.CaptureFixture[str]) -> None:
+    """The payload names the tables it scored with, then carries the rows."""
     assert repro.main(["--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert isinstance(payload, list) and len(payload) == 15  # 3 proteins x 5 sources
-    assert all("protein" in row and "source" in row and "cai" in row for row in payload)
+    assert payload["organism"] == "homo_sapiens"
+    assert payload["codon_reference_set"] == "highly_expressed"
+    rows = payload["rows"]
+    assert isinstance(rows, list) and len(rows) == 15  # 3 proteins x 5 sources
+    assert all("protein" in row and "source" in row and "cai" in row for row in rows)

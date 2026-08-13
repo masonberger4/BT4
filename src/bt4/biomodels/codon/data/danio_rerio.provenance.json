@@ -21,6 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Danio rerio (zebrafish)",
   "rebuild_command": "python scripts/build_organism_tables.py danio_rerio",
+  "reference_set": "genome_wide",
   "retrieved": "2026-08-13",
   "sha256": "ccfd18b0060152ed697920f8b2118eeb6198a854200939a605bf9dc1d74ab6d8",
   "source": "Ensembl release 116 -- Danio rerio (zebrafish) CDS set (assembly GRCz11, annotation Ensembl ENS01)",

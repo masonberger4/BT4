@@ -21,6 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Arabidopsis thaliana (thale cress)",
   "rebuild_command": "python scripts/build_organism_tables.py arabidopsis_thaliana",
+  "reference_set": "genome_wide",
   "retrieved": "2026-08-13",
   "sha256": "a9f3bba92bf8d8d7654f3bd61e64fec2262fae95a1dad58fe111b935e2287609",
   "source": "Ensembl Plants release 63 -- Arabidopsis thaliana (thale cress) CDS set (assembly TAIR10, annotation Araport11)",

@@ -7,7 +7,203 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **Highly-expressed CAI reference sets — and they are now the default.** A codon
+  table's `w = f/f_max` only means something relative to a set of genes, and BT4's
+  tables answered the wrong question: they were counted genome-wide, marking the
+  codon that is most *common* (a quantity set largely by mutation and GC bias)
+  rather than the codon translation *prefers*. `w` as Sharp & Li (1987) defined it
+  comes from a reference set of **highly expressed** genes. BT4 now ships both,
+  and every table, result, CLI line, app row, and manifest says which one it is.
+  - **`scripts/build_highly_expressed_tables.py`** counts each organism's **300
+    most abundant proteins**, ranked by **PaxDb v6.1** whole-organism *integrated*
+    proteomics (CC BY 4.0 — a weighted consensus over many published studies, in
+    ppm) and joined to the **same release-pinned Ensembl CDS** the genome-wide
+    tables use, under the **same** filtering rules — so the two tables differ only
+    in *which genes* they count, never in how a gene is read.
+  - **The join uses no third-party mapping layer.** PaxDb protein IDs resolve
+    against the pinned release's own peptide FASTA; an identifier that resolves to
+    two genes is dropped as ambiguous and *counted separately* from one the
+    annotation simply lacks. All three sources (abundances, peptide FASTA, CDS)
+    are SHA-256-pinned, and `--verify` rebuilds and diffs the committed bytes and
+    sidecars. Each sidecar also carries a digest of the ranked 300-gene roster, so
+    a third party can prove they reproduced the same reference set.
+  - **Organelle-encoded genes are excluded.** Mitochondria and plastids translate
+    with a different genetic code and their own tRNA pool, and are never a BT4
+    design target, so their codon usage is not evidence about the nuclear
+    translation a design will meet. Both numbers are stamped —
+    `genes_excluded_organelle_encoded` (what this filter removed) and
+    `organelle_records_in_cds_source` (how many were in the annotation at all) —
+    because most organelle CDS are dropped as invalid under the standard code
+    before ever reaching the filter.
+  - **N = 300 is evidence, not taste.** It is the smallest size on a tested grid
+    (50…2000) at which *every* bundled organism observes all 64 codons, so no
+    shipped table needed smoothing — an invented number in a reference table is
+    exactly what BT4 refuses to ship. Below it, yeast alone leaves `CGA`/`CGG`
+    unobserved; far above it the reference set dilutes back into the genome-wide
+    answer (at N=2000 yeast and mouse agree with genome-wide at every amino acid).
+  - **What changed in the output.** The most-used codon moves for 11 amino acids
+    in *C. elegans*, 8 in *E. coli* (`TTT`→`TTC`, `CGC`→`CGT`, `GGC`→`GGT`,
+    `ATT`→`ATC`, `CAT`→`CAC`, `GTG`→`GTT`, `AGC`→`TCT`, `TAT`→`TAC` — the classic
+    *E. coli* optimal codons), 7 in zebrafish, 5 in yeast, and 2 in human
+    (`AGA`→`CGC` for Arg, `AGC`→`TCC` for Ser, plus the preferred stop moving
+    `TGA`→`TAA`). Two golden snapshots moved accordingly; both are regenerated and
+    the reason is recorded beside them.
+  - **External ground truth, not just self-consistency** (§8): the tables
+    reproduce the classic *E. coli* and *S. cerevisiae* optimal codons, and codon
+    bias is **stronger** in the highly-expressed set than genome-wide in all eight
+    organisms — largest in yeast (+0.18) and *Drosophila* (+0.17), smallest in rat
+    (+0.03) and human (+0.05), the ordering dos Reis et al. (2004) predict from
+    translational selection being weak in large vertebrate genomes.
+  - ***A. thaliana* deliberately has none.** PaxDb identifies its proteins by
+    UniProt accession, which the pinned Ensembl Plants annotation does not carry,
+    so a join would need an unpinned external mapping. BT4 ships no table rather
+    than one built on a guess; the genome-wide table stays its only, honestly
+    labeled, option — and asking for `highly_expressed` there **raises** instead of
+    silently substituting the other table.
+  - **Surfaces:** `--reference-set` on `bt4 optimize`, `library`, `validate` and
+    `tracks` (there is no `bt4 frontier` subcommand; the frontier is reached via
+    `api.frontier`); `bt4 organisms` now prints each organism's default and
+    available sets; a **Reference set** picker in BT4 Studio that repopulates from the engine
+    per organism (and disables itself, with a reason, when only one exists);
+    `reference_set` on the service's optimize request and in `/organisms`;
+    `OptimizeConfig.reference_set`; and `api.available_reference_sets` /
+    `api.default_reference_set`.
+  - **Honest scope, unchanged.** A highly-expressed reference set makes CAI a
+    better-founded proxy, not a validated expression predictor — Welch et al.
+    (PLoS ONE 2009) found an *E. coli* variant built by maximizing exactly this
+    quantity expressed at a fraction of alternatives. CAI stays one axis of the
+    objective vector (§10.7).
+
+### Fixed
+- **Second review round: seven more lenses, seven more defects.** A follow-up
+  seven-lens pass (data, plumbing, claims, test quality via source mutation,
+  honesty invariants, behavior-change blast radius, packaging/CI) ran over the
+  fixes above. It hit a usage limit partway, so its own "refuted" tally conflates
+  *disproved* with *never checked* — every finding below was therefore re-verified
+  by hand before being acted on.
+  - **`load_table("homo_sapiens.highly_expressed")` returned the right counts
+    under the wrong label.** The genome-wide suffix is the empty string, so a
+    dotted key resolved straight onto the highly-expressed *file* and came back
+    stamped `reference_set="genome_wide"`. An organism key is now required to be a
+    bare stem, exactly as `available_organisms()` lists it — nothing downstream
+    could have detected that mislabel.
+  - **The non-optimize half of the reference-set axis had no test at all.**
+    Deleting `reference_set=` from `api.library`, `api.candidates`, `api.tracks`
+    and all three comparison scripts left the suite green — so the invariant-#2
+    fix above could have been reverted without CI noticing. New
+    `tests/test_reference_set_reaches_every_surface.py` is shaped as a revert
+    detector: one failing test per dropped call site.
+  - **BT4 Studio's reference set stuck after visiting *A. thaliana*.** Selecting
+    the one organism with a single reference set forced the combo to
+    `genome_wide`; switching back kept it, because a forced value was
+    indistinguishable from a user preference. Two clicks reproduced the same
+    "silently hands out a codon-commonness index" failure the organism default
+    had. The app now remembers the user's explicit pick separately.
+  - **The delivered result was labeled from the live controls.** Runs are
+    asynchronous, so changing the organism mid-run relabeled the result with
+    tables it was not built from. The pair is frozen at run start now.
+  - **The "peptide FASTA must come from the CDS release" rule was prose only.**
+    The two URLs are pinned in different files and both digest checks pass after a
+    divergence, while versioned gene IDs from two releases silently fail to join.
+    It is a structural check now.
+  - **The machine-readable comparison boards carried unlabeled CAI.** Only the
+    human-readable branch named its tables. Both scripts now emit
+    `{organism, codon_reference_set, rows}` — a shape change to `--json` — and
+    `compare_reproducibility.py` gained the `--reference-set` flag it was missing.
+  - **`THIRD_PARTY_DATA.md` did not record PaxDb** (CC BY 4.0 — attribution is a
+    license obligation), and its codon-table row still described the tables as
+    "Kazusa-style representative published frequencies", stale since they were
+    recounted from Ensembl. Both rows are now accurate and split by reference set.
+  - **Three of my own CHANGELOG claims were wrong.** The "abundant enough to reach
+    a top-300 list" rationale survived in the Added section while the Fixed section
+    said it had been removed; the `%MinMax 56.3` figure was not reproducible (the
+    real value is **57.81**, and the entry now names the exact config that shows
+    it); and the Welch "worst-performing" correction was listed as done when an
+    exception had aborted that edit before it landed.
+- **Adversarial-review fixes, before the change shipped.** Three independent
+  reviewers (data/provenance, `reference_set` plumbing, and a numeric audit of
+  every prose claim) found nine real defects; all are fixed here, and the
+  shipped tables are byte-identical before and after, which is what shows none of
+  them silently altered a number.
+  - **The ambiguity guard did not gate the join.** An identifier resolving to two
+    genes was flagged, but only consulted *after* both lookups missed — so a key
+    ambiguous in the exact map yet singular in the version-stripped one was joined
+    anyway and stamped as clean. Ambiguity is now judged across both maps (pooled
+    per key, which is what actually catches the WormBase-style `ZK1010.1.1` /
+    `ZK1010.1` collision the docstring described) and checked *before* either
+    lookup. Latent for the eight shipped tables, provably: their TSVs are
+    unchanged by the fix.
+  - **`filters.cds_counted` was the genome-wide gene count**, shipped beside
+    `cds_count: 300` under a key that means "the number counted into this table"
+    in the genome-wide sidecars — one key name carrying two quantities. The block
+    is now `cds_source_filters` with `genes_with_a_representative_cds`, naming
+    what it actually describes.
+  - **The join tally's key names implied arithmetic that does not close.**
+    `rows_matched_*` and `rows_unmatched_*` now partition the abundance rows
+    exactly, `rows_matched_whose_gene_has_no_counted_cds` is named as the subset
+    it is, and `genes_*` are marked as a different unit.
+  - **`excluded_organelle_encoded: 0` was misreadable** as "no organelle-encoded
+    genes here". Most organelle CDS never reach that filter — under the standard
+    code they read as having internal stops and are dropped as invalid first — so
+    the source's own tally is now stamped alongside it
+    (`organelle_records_in_cds_source`, 13 for human: exactly the human
+    mitochondrial protein-coding gene count).
+  - **The comparison scripts recomputed against the wrong table.**
+    `compare_tools.py`, `compare_reproducibility.py` and `benchmark.py` all
+    dropped `cfg.reference_set` when re-scoring, so every row on the published
+    board was measured with a different table than the one that produced BT4's
+    sequence (invariant #2). Reproducible case: `benchmark.py` on protein
+    `MKTAYIAKQRQISFVKSHFSRQ` under
+    `OptimizeConfig(organism="saccharomyces_cerevisiae", reference_set="genome_wide")`
+    reported a %MinMax mean of **57.81** where the correct value is **100.0**.
+    Only callers passing a non-default `reference_set` could hit it — which is
+    every caller from the moment this same change added the `--reference-set`
+    flag, so it is a defect introduced and fixed in one release, not a latent
+    one that ever shipped.
+  - **`load_provenance` failed open** on a sidecar with no `reference_set` key,
+    validating it as whatever it was loaded as. The field is now required, and
+    `write_table` gained it as a reserved parameter so it can no longer be
+    smuggled through the free-form `extra` dict.
+  - **BT4 Studio launched on the one organism with no highly-expressed table.**
+    The organism combo took the alphabetically first entry, *A. thaliana*, so a
+    freshly opened Studio silently handed out a codon-commonness index. It now
+    starts on the engine's default organism.
+  - **A stale tooltip contradicted the control it sat on**, and renders read the
+    live combos instead of what the delivered run used — so a theme switch after
+    changing the organism would recompute an old result's tracks under a new
+    table. Renders now read the delivered run's own labels.
+  - **Prose claims that outran the data:** "both are GC-richer" (the Ser change
+    `AGC`→`TCC` is GC-neutral; the whole GC rise is the Arg change), "the genome
+    at large does not" (false for three of the thirteen asserted optimal codons),
+    "abundant enough to reach a top-300 list" (the exclusion is justified by the
+    genetic code, not by an unmeasured ranking claim), "BT4 never fetches anything
+    at runtime" (the opt-in ASSP cross-check does), and Welch et al.'s result
+    stated as "worst-performing" rather than what the paper supports.
+- **`bt4 --help` and `bt4 tracks --help` crashed** with
+  `ValueError: unsupported format character 'M'`. argparse %-formats help strings
+  *while rendering help*, and the `tracks` parser wrote a literal percent sign as
+  `%MinMax` instead of `%%MinMax` — in both the subcommand's own `--organism`
+  help and its one-line summary, which the top-level listing reprints. So the
+  first command a new user types has been broken, and every other test passed
+  because nothing in the suite invoked `--help`. Fixed, and every command's
+  `--help` is now a parametrized regression test.
+
 ### Changed
+- **Results now report their CAI reference set.** `result.audit` carries
+  `codon_reference_set`, the CLI prints it beside the CAI, and BT4 Studio shows it
+  as its own metrics row — a CAI of 1.0 against highly-expressed counts and one
+  against genome-wide counts are different claims about the same sequence, and the
+  label travels with the number rather than living in a control the user may have
+  changed since the run. The genome-wide sidecars gained a matching
+  `reference_set` stamp, and a mis-filed sidecar (one claiming a reference set
+  other than the table it sits beside) is now a load error rather than a silent
+  mislabel.
+- **`available_organisms()` now recognizes an organism table by shape, not by a
+  suffix blocklist.** It accepts exactly `<organism>.tsv`; every other TSV in the
+  data directory belongs to another axis of the same organism. The old rule
+  excluded `.trna.tsv` by name and so failed *open* — the new reference-set tables
+  would have appeared as organisms called `homo_sapiens.highly_expressed`.
 - **All nine organism tables are now recounted from release-pinned public CDS
   sets.** Human, *E. coli* and *S. cerevisiae* were the last hand-typed
   "representative published values" with `cds_count: null` — which made BT4's

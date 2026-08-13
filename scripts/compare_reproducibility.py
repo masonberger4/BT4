@@ -131,7 +131,7 @@ def reproducibility(
         ``n_runs``, and a ``{mean, span, std}`` block per metric.
     """
     cfg = config if config is not None else api.OptimizeConfig()
-    table = load_table(cfg.organism)
+    table = load_table(cfg.organism, reference_set=cfg.reference_set)
     tai_table = load_tai_table(cfg.organism)
 
     # protein -> source -> list of per-run metric dicts; protein -> native protein aa.
@@ -169,6 +169,24 @@ def reproducibility(
                 bt4_row[metric] = _aggregate([metrics[metric]])
             rows.append(bt4_row)
     return rows
+
+
+def board(
+    records: Sequence[tuple[str, str]],
+    config: api.OptimizeConfig | None = None,
+) -> dict[str, object]:
+    """The reproducibility rows plus the tables they were scored with.
+
+    Same reason as ``compare_tools.board``: a ``cai`` column without its reference
+    set does not say what it measured.
+    """
+    cfg = config if config is not None else api.OptimizeConfig()
+    reference_set = cfg.reference_set or api.default_reference_set(cfg.organism)
+    return {
+        "organism": cfg.organism,
+        "codon_reference_set": reference_set,
+        "rows": reproducibility(records, cfg),
+    }
 
 
 def _agg(row: Mapping[str, object], metric: str, key: str) -> float:
@@ -216,17 +234,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--panel", default=str(DEFAULT_PANEL_PATH), help="panel FASTA path")
     parser.add_argument("--organism", default="homo_sapiens", help="codon/tRNA table key")
+    parser.add_argument(
+        "--reference-set", default=None, dest="reference_set",
+        choices=list(api.REFERENCE_SETS),
+        help="which of the organism's CAI reference sets to solve against AND "
+             "recompute every row with (default: the organism's own default)",
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     args = parser.parse_args(argv)
 
     records = load_panel(args.panel)
-    rows = reproducibility(records, api.OptimizeConfig(organism=args.organism))
+    config = api.OptimizeConfig(
+        organism=args.organism, reference_set=args.reference_set
+    )
+    payload = board(records, config)
+    rows = payload["rows"]
+    assert isinstance(rows, list)
 
     if args.json:
-        print(json.dumps(rows, indent=2))
+        print(json.dumps(payload, indent=2))
     else:
         print("BT4 vs anonymized optimizers - run-to-run reproducibility (Ranaghan 2021, Tab 4)")
         print("Recomputed metrics; tools anonymized (Algorithm 1/2/3); not a named-tool board.")
+        # Which CAI these rows report is part of the claim, not a detail.
+        print(f"Tables: {payload['organism']} / {payload['codon_reference_set']} reference set")
         print()
         print(_format_table(rows))
     return 0

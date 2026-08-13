@@ -44,21 +44,29 @@ CONFIG: api.OptimizeConfig = api.OptimizeConfig(
 EXPECTED_DNA: dict[str, str] = {
     "short": "ATGGCCGCCCTGTAA",
     "medium": (
-        "ATGAAGACCGCCTACATCGCCAAGCAGAGACAGATCAGCTTCGTGAAGAGCCACTTCAGC"
-        "AGACAGCTGGAGGAGAGACTGGGCCTGATCGAGTAA"
+        "ATGAAGACCGCCTACATCGCCAAGCAGCGCCAGATCTCCTTCGTGAAGTCCCACTTCTCC"
+        "CGCCAGCTGGAGGAGCGCCTGGGCCTGATCGAGTAA"
     ),
     "rare_residues": "ATGTGGTGCTGGATGCACTGGCAGTGGTACTGGATGTGGTAA",
     "hydrophobic": (
         "GCCGTGCTGATCTTCATGGCCGTGCTGATCTTCATGGCCGTGCTGATCTTCTAA"
     ),
     "long": (
-        "ATGAAGACCGCCTACATCGCCAAGCAGAGACAGATCAGCTTCGTGAAGAGCCACTTCAGC"
-        "AGACAGCTGGAGGAGAGACTGGGCCTGATCGAGAAGCAGGCCAACGGCACCTGGCCCGCC"
-        "GACGAGTTCCACCTGATGAACTGCTACGTGGGCAGATAA"
+        "ATGAAGACCGCCTACATCGCCAAGCAGCGCCAGATCTCCTTCGTGAAGTCCCACTTCTCC"
+        "CGCCAGCTGGAGGAGCGCCTGGGCCTGATCGAGAAGCAGGCCAACGGCACCTGGCCCGCC"
+        "GACGAGTTCCACCTGATGAACTGCTACGTGGGCCGCTAA"
     ),
 }
 
-# Pinned CAI (Sharp & Li) of the delivered sequence, rounded to 6 places.
+# Pinned CAI of the delivered sequence, rounded to 6 places. CAI here is against
+# human's DEFAULT reference set -- the highly-expressed one (Sharp & Li's own
+# framing), not the genome-wide counts. That is what moved "medium" and "long"
+# when the reference sets landed: highly-expressed human genes prefer CGC for Arg
+# and TCC for Ser over the genome-wide AGA/AGC.
+#
+# The GC rise below is entirely the Arg change: AGA -> CGC is +2 GC per codon,
+# while AGC -> TCC is GC-NEUTRAL (both carry two strong bases). "medium" has
+# three Arg residues, so +6 GC over 96 nt is exactly 0.541667 -> 0.604167.
 EXPECTED_CAI: dict[str, float] = {
     "short": 1.0,
     "medium": 1.0,
@@ -70,10 +78,10 @@ EXPECTED_CAI: dict[str, float] = {
 # Pinned GC fraction of the delivered sequence, rounded to 6 places.
 EXPECTED_GC: dict[str, float] = {
     "short": 0.6,
-    "medium": 0.541667,
+    "medium": 0.604167,
     "rare_residues": 0.52381,
     "hydrophobic": 0.537037,
-    "long": 0.578616,
+    "long": 0.628931,
 }
 
 _NAMES: list[str] = list(PANEL)

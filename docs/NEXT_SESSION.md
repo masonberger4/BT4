@@ -16,8 +16,9 @@ Every `DONE` below is stamped so a claim can be checked against the tree.
 ## Status board
 
 **Phases:** 0–2 complete · Phase 3 groundwork landed · Phase 4 **app polish
-landed**, learned-expression head still calibration-blocked · Phase 5 opened.
-All merged and green on `main`.
+landed**, learned-expression head still calibration-blocked · Phase 5 open, with
+**declared CAI reference sets** (highly-expressed by default) landed. All merged
+and green on `main`.
 
 **Status vocabulary:** `DONE` · `GROUNDWORK` (contract + baseline shipped,
 calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
@@ -29,7 +30,8 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Rust trellis port (`trellis_solve`, regime-gated) | DONE | n/a | `rust/bt4_core`, `bt4_native` |
 | Objectives: CAI, tAI, GC, ramp, CpG, %MinMax, codon-pair | DONE | n/a | `objectives/` |
 | tAI (real GtRNAdb, 8 organisms) | DONE | n/a | `biomodels/codon/tai.py` |
-| Codon tables: **all 9** recounted from pinned Ensembl CDS | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
+| Codon tables: **all 9** recounted from pinned Ensembl CDS (`genome_wide`) | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
+| **Highly-expressed reference sets** (PaxDb top-300, 8 of 9 organisms, the **default**) | DONE | n/a (a declared reference set, not a model) | `scripts/build_highly_expressed_tables.py`, `biomodels/codon/tables.py` |
 | Constraints: homopolymer, GC-run, max-repeat, tandem/inverted, forbidden+presets, restriction, Kozak-ATG, uORF, splice-motif | DONE | n/a | `constraints/` |
 | Budget backends: CP-SAT, Lagrangian, dinucleotide-count | DONE | n/a | `optimize/{cpsat,lagrangian}.py` |
 | SA refinement + block moves + parallel tempering | DONE | n/a | `optimize/anneal_refine.py` |
@@ -67,25 +69,34 @@ consented, clearly-labeled network control.
 Ordered. Each item is tagged by precondition. **Pick the first `self-contained`
 item unless you have a reason not to.**
 
-1. **[START HERE · self-contained] Phase-5 breadth, continued.** The six
-   organisms that had stranded tRNA tables (mouse, rat, zebrafish, *Drosophila*,
-   *C. elegans*, *Arabidopsis*) now ship **recounted** codon tables built by
-   `scripts/build_organism_tables.py` from release-pinned Ensembl CDS sets, so BT4
-   offers nine organisms and no bundled tRNA table is unreachable. The
-   **restriction-enzyme catalog is likewise now derived, not hand-typed**: 584
+1. **[START HERE · self-contained] Phase-5 breadth, continued.** Nine organisms
+   ship **recounted genome-wide** codon tables (`scripts/build_organism_tables.py`),
+   eight of them also ship a **highly-expressed reference set**
+   (`scripts/build_highly_expressed_tables.py`, PaxDb top-300 — now the default),
+   and the **restriction-enzyme catalog is derived, not hand-typed**: 584
    commercially available Type II enzymes (Type IIS included) from a
    version-pinned REBASE release via `scripts/build_enzyme_catalog.py`, content
    hashed and `--verify`-able. What remains:
-   - **Add further organisms** by extending `SPECS` in the build script (CHO/*P.
-     pastoris*/*B. subtilis* are the obvious industrial gaps). Pair each with
-     GtRNAdb tRNA data where it exists; never fabricate a table.
-   - **Cell-type / tissue-specific tables for human** — the maintainer's next
-     priority, and the unimplemented `build-table --highly-expressed` flag §8
-     already specifies. Note the scientific fork this opens: textbook CAI (Sharp
-     & Li 1987) derives its weights from a reference set of *highly expressed*
-     genes, whereas BT4's tables are genome-wide and unweighted. Decide that
-     deliberately before building, and never present a tissue-specific CAI as a
-     validated expression prediction (§10.5/§10.6).
+   - **Add further organisms** by extending `SPECS` in `build_organism_tables.py`
+     (CHO/*P. pastoris*/*B. subtilis* are the obvious industrial gaps). Pair each
+     with GtRNAdb tRNA data and a PaxDb `SPECS_HE` entry where they exist; never
+     fabricate a table, and never join abundance IDs through an unpinned mapping
+     (that is why *A. thaliana* has no highly-expressed table).
+   - **Bacterial alternative start codons.** Both builders' shared validity filter
+     requires an `ATG` start, dropping 409 of 4,239 *E. coli* CDS (9.6%) —
+     including *tufA* and *hupB*. Measured impact on the shipped table: 16 of the
+     300 selected genes change and **no** amino acid's top codon moves, so this is
+     a quality gap, not a wrong answer. Fixing it means relaxing the filter in
+     *both* builders together (they must stay identical or the two reference sets
+     stop being comparable) and deciding whether an initiator codon is a codon
+     *choice* at all, since the ribosome uses fMet-tRNA regardless.
+   - **Tissue / cell-type-specific tables: dropped** (maintainer decision) — large
+     effort, hard to qualify honestly, small upside over a whole-organism
+     highly-expressed reference. Do not re-open without a new reason.
+   - **tAI reach.** *E. coli* is the one bundled organism with no GtRNAdb tRNA
+     table, so tAI is unavailable exactly where translational selection is
+     strongest and where `tai.py`'s bacterial `sking=1` lysidine path would
+     finally be exercised.
 2. **[self-contained] Remaining BT4 Studio work.** The engine-ready backends are
    now surfaced (RiboNN in the Candidates tab, the opt-in ASSP cross-check on the
    Design tab), library mode has its own tab, and the menu bar / runtime

@@ -21,6 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Rattus norvegicus (Norway rat)",
   "rebuild_command": "python scripts/build_organism_tables.py rattus_norvegicus",
+  "reference_set": "genome_wide",
   "retrieved": "2026-08-13",
   "sha256": "650fa3190e51b2256cf1fb472c538295c63376f621a9565e47ab0fa51921bdbb",
   "source": "Ensembl release 116 -- Rattus norvegicus (Norway rat) CDS set (assembly GRCr8, annotation Ensembl ENS01)",

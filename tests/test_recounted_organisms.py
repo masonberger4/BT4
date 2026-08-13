@@ -1,10 +1,10 @@
-"""Tests for the six codon tables recounted from release-pinned Ensembl CDS sets.
+"""Tests for the **genome-wide** codon tables recounted from pinned Ensembl CDS.
 
-Unlike the three older bundled tables (human / *E. coli* / yeast), which are
-honestly labeled *representative published summaries*, these six are **genome-wide
-recounts**: every number is a codon occurrence count from a public,
-release-pinned CDS FASTA, produced by ``scripts/build_organism_tables.py``. So
-the tests here assert two things the older tables cannot claim:
+Every number in these nine tables is a codon occurrence count from a public,
+release-pinned CDS FASTA, produced by ``scripts/build_organism_tables.py`` --
+none is a hand-typed "representative published summary", which is what BT4 used
+to ship for human, *E. coli* and yeast. So the tests here assert two things a
+summary table cannot claim:
 
 * **A complete re-derivation trail** -- source URL, the source file's own
   SHA-256, assembly, database release, and the filter tally -- so a third party
@@ -14,8 +14,14 @@ the tests here assert two things the older tables cannot claim:
   codon bias. A fabricated or mis-parsed table would fail these; internal
   consistency alone would not catch it.
 
-These six are also why the bundled GtRNAdb tRNA tables became reachable at all:
-tAI needs an organism you can actually select, which needs a codon table.
+They are also why the bundled GtRNAdb tRNA tables became reachable at all: tAI
+needs an organism you can actually select, which needs a codon table.
+
+**Every load here names ``GENOME_WIDE`` explicitly.** It is no longer the
+default -- eight of the nine organisms default to their highly-expressed
+reference set (see ``test_highly_expressed_tables.py``) -- and a test that
+asserted "the top *E. coli* Phe codon is TTT" against whichever table happened to
+be the default would silently start testing a different table.
 """
 
 from __future__ import annotations
@@ -27,8 +33,11 @@ import pytest
 
 from bt4 import api
 from bt4.biomodels.codon.tables import (
+    GENOME_WIDE,
     CodonUsageTable,
+    TableProvenance,
     available_organisms,
+    default_reference_set,
     load_provenance,
     load_table,
     sha256_hex,
@@ -49,6 +58,16 @@ RECOUNTED: tuple[str, ...] = (
 )
 
 _STOPS = ("TAA", "TAG", "TGA")
+
+
+def _gw(name: str) -> CodonUsageTable:
+    """The organism's genome-wide table -- the only one this file is about."""
+    return load_table(name, reference_set=GENOME_WIDE)
+
+
+def _gw_provenance(name: str) -> TableProvenance:
+    """The genome-wide table's provenance sidecar."""
+    return load_provenance(name, reference_set=GENOME_WIDE)
 
 
 def _raw_provenance(name: str) -> dict[str, object]:
@@ -76,7 +95,7 @@ def _gc3(table: CodonUsageTable) -> float:
 
 @pytest.mark.parametrize("name", RECOUNTED)
 def test_table_loads_and_is_advertised(name: str) -> None:
-    table = load_table(name)
+    table = _gw(name)
     assert table.organism == name
     assert name in available_organisms()
     # A genome-scale CDS set observes every codon; the builder refuses to write
@@ -86,7 +105,7 @@ def test_table_loads_and_is_advertised(name: str) -> None:
 
 @pytest.mark.parametrize("name", RECOUNTED)
 def test_counts_are_positive_integers(name: str) -> None:
-    table = load_table(name)
+    table = _gw(name)
     for codon, value in table.frequency.items():
         assert value == int(value), f"{name} {codon} is not a whole count"
         assert value >= 1
@@ -95,7 +114,7 @@ def test_counts_are_positive_integers(name: str) -> None:
 @pytest.mark.parametrize("name", RECOUNTED)
 def test_group_max_codon_has_unit_weight(name: str) -> None:
     # Leucine is a six-box amino acid; its most-used synonym must normalize to 1.
-    assert load_table(name).weight(_top_codon(load_table(name), "L")) == pytest.approx(1.0)
+    assert _gw(name).weight(_top_codon(_gw(name), "L")) == pytest.approx(1.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -106,12 +125,12 @@ def test_group_max_codon_has_unit_weight(name: str) -> None:
 @pytest.mark.parametrize("name", RECOUNTED)
 def test_provenance_sha256_matches_shipped_tsv(name: str) -> None:
     raw = files("bt4.biomodels.codon.data").joinpath(f"{name}.tsv").read_bytes()
-    assert load_provenance(name).sha256 == sha256_hex(raw)
+    assert _gw_provenance(name).sha256 == sha256_hex(raw)
 
 
 @pytest.mark.parametrize("name", RECOUNTED)
 def test_provenance_is_a_real_recount_not_a_summary(name: str) -> None:
-    prov = load_provenance(name)
+    prov = _gw_provenance(name)
     # The load-bearing distinction from the older bundled tables: a real CDS
     # count stands behind these numbers, and the note says so plainly.
     assert prov.cds_count is not None
@@ -154,11 +173,11 @@ def test_provenance_carries_the_rederivation_trail(name: str) -> None:
 @pytest.mark.parametrize("name", RECOUNTED)
 def test_stamped_totals_match_the_shipped_counts(name: str) -> None:
     prov = _raw_provenance(name)
-    table = load_table(name)
+    table = _gw(name)
     assert sum(table.frequency.values()) == prov["total_codons_counted"]
     filters = prov["filters"]
     assert isinstance(filters, dict)
-    assert filters["cds_counted"] == load_provenance(name).cds_count
+    assert filters["cds_counted"] == _gw_provenance(name).cds_count
     assert filters["records_in_source"] >= filters["cds_counted"]
 
 
@@ -189,8 +208,8 @@ def test_gc3_ordering_matches_known_genome_composition() -> None:
     and *Arabidopsis* are AT-rich coding genomes. Getting this ordering right is
     a real constraint on the data -- a mis-parsed or invented table would not.
     """
-    gc3 = {name: _gc3(load_table(name)) for name in RECOUNTED}
-    gc3["homo_sapiens"] = _gc3(load_table("homo_sapiens"))
+    gc3 = {name: _gc3(_gw(name)) for name in RECOUNTED}
+    gc3["homo_sapiens"] = _gc3(_gw("homo_sapiens"))
 
     assert gc3["drosophila_melanogaster"] > gc3["danio_rerio"]
     assert gc3["danio_rerio"] > gc3["arabidopsis_thaliana"]
@@ -209,9 +228,9 @@ def test_mammals_agree_with_each_other() -> None:
     GC3 range is evidence the pipeline measured something real, not an artifact
     of one download.
     """
-    human = _gc3(load_table("homo_sapiens"))
+    human = _gc3(_gw("homo_sapiens"))
     for name in ("mus_musculus", "rattus_norvegicus"):
-        assert abs(_gc3(load_table(name)) - human) < 0.05
+        assert abs(_gc3(_gw(name)) - human) < 0.05
 
 
 @pytest.mark.parametrize(
@@ -228,7 +247,7 @@ def test_mammals_agree_with_each_other() -> None:
     ],
 )
 def test_preferred_leucine_codon(name: str, amino_acid: str, expected: str) -> None:
-    assert _top_codon(load_table(name), amino_acid) == expected
+    assert _top_codon(_gw(name), amino_acid) == expected
 
 
 @pytest.mark.parametrize(
@@ -244,7 +263,7 @@ def test_preferred_leucine_codon(name: str, amino_acid: str, expected: str) -> N
     ],
 )
 def test_preferred_stop_codon(name: str, expected: str) -> None:
-    table = load_table(name)
+    table = _gw(name)
     assert max(_STOPS, key=lambda c: table.frequency[c]) == expected
 
 
@@ -267,7 +286,7 @@ def test_every_trna_table_has_a_selectable_organism() -> None:
 
 @pytest.mark.parametrize("name", RECOUNTED)
 def test_cai_in_unit_interval(name: str) -> None:
-    table = load_table(name)
+    table = _gw(name)
     dna = "ATG" + "GCA" + "CTT" + "CGG" + "AAA" + "TAA"
     assert 0.0 < table.cai(dna) <= 1.0
 
@@ -284,7 +303,11 @@ def test_table_content_hash_reaches_the_run_manifest(name: str) -> None:
         "MAALKHETQW", api.OptimizeConfig(organism=name, max_homopolymer=5)
     )
     manifest = json.loads(api.result_to_json(result))["audit"]["manifest"]
+    # Deliberately the DEFAULT reference set, not the genome-wide one: the stamp
+    # must track the table the run actually read, and which table that is now
+    # varies by organism.
     assert manifest["inputs"]["codon_table_sha256"] == load_provenance(name).sha256
+    assert result.audit["codon_reference_set"] == default_reference_set(name)
 
 
 def test_each_organism_stamps_a_distinct_manifest() -> None:
@@ -307,8 +330,8 @@ def test_expected_strong_biases_in_the_microbial_tables() -> None:
     the numbers are counted from the genome -- old and new agreeing here is what
     shows the recount reproduced the biology rather than merely replacing it.
     """
-    assert load_table("escherichia_coli").weight("CTG") == pytest.approx(1.0)
-    assert load_table("saccharomyces_cerevisiae").weight("AGA") == pytest.approx(1.0)
+    assert _gw("escherichia_coli").weight("CTG") == pytest.approx(1.0)
+    assert _gw("saccharomyces_cerevisiae").weight("AGA") == pytest.approx(1.0)
 
 
 def test_every_bundled_organism_is_recounted() -> None:

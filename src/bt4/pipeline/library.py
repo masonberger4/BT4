@@ -149,7 +149,7 @@ def run_library(
         config = dataclasses.replace(config, seed=effective_seed)
 
     p = validate_protein(protein)
-    table = load_table(config.organism)
+    table = load_table(config.organism, reference_set=config.reference_set)
     terms = [term for term, _ in _active_terms(table, config)]
     constraints = _build_constraints(config)
     global_constraints = _build_global_constraints(config)

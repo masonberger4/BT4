@@ -45,8 +45,26 @@ from bt4.app.worker import (
 
 __all__ = ["StudioWindow", "main"]
 
+#: The engine's default organism (``api.OptimizeConfig().organism``).
+_DEFAULT_ORGANISM = api.OptimizeConfig().organism
+
+# Shown on the reference-set combo and its label. A module constant because
+# _update_reference_sets has to restore it whenever the organism changes.
+_REFERENCE_SET_TOOLTIP = (
+    "Which genes the CAI weights were counted over. 'highly_expressed' uses the "
+    "300 most abundant proteins (PaxDb) -- the reference set CAI was defined on, "
+    "so w = 1 marks the codon translation prefers. 'genome_wide' counts every "
+    "gene, marking the codon that is merely most common. Only the sets bundled "
+    "for the chosen organism are listed; neither is a measured expression "
+    "prediction."
+)
+
 _METRIC_ROWS = (
     "CAI",
+    # CAI is meaningless without the gene set its weights were counted over, so
+    # the reference set is reported directly beneath it rather than left to the
+    # control panel (which the user may have changed since the run).
+    "CAI reference set",
     "GC %",
     "Length (nt)",
     "Scored codons",
@@ -252,6 +270,22 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._dark = _is_dark()
         self._theme_choice = "system"
         self._last: api.FrontierResult | None = None
+        # The organism/reference set the LAST DELIVERED run used. Renders read
+        # these, never the live combos: a render can happen long after the run
+        # (a theme switch re-renders), and by then the user may have changed the
+        # controls -- reading them would relabel or recompute an old result
+        # under a table it was not produced with.
+        self._delivered_tables: tuple[str, str] = ("", "")
+        # The reference set the USER picked, as distinct from one the engine
+        # forced. Selecting an organism that has only genome_wide rewrites the
+        # combo to it; without remembering the real choice separately, switching
+        # back would keep genome_wide and silently opt every later run out of the
+        # default -- the same "quietly hands out a codon-commonness index" failure
+        # the organism default had, reachable in two clicks.
+        self._reference_choice: str = ""
+        # (organism, reference_set) of the run currently in flight; promoted to
+        # _delivered_tables when it finishes.
+        self._running_tables: tuple[str, str] = ("", "")
         self._msgbox: QtWidgets.QMessageBox | None = None
         self._cancel_requested = False
         # Live thread/worker references, kept only so neither is garbage-collected
@@ -324,12 +358,23 @@ class StudioWindow(QtWidgets.QMainWindow):
 
         self.organism_combo = QtWidgets.QComboBox()
         self.organism_combo.addItems(list(api.available_organisms()))
+        # Without this the combo defaults to the alphabetically first organism,
+        # which is A. thaliana -- the ONE organism with no highly-expressed table.
+        # A freshly launched Studio would therefore hand out a codon-commonness
+        # index, silently opting the app out of the default every other surface
+        # uses. The engine's own default organism is the right starting point.
+        if _DEFAULT_ORGANISM in api.available_organisms():
+            self.organism_combo.setCurrentText(_DEFAULT_ORGANISM)
         self.organism_combo.setAccessibleName("Target organism")
         self._add_row(
             form, "Organism", self.organism_combo,
             "Codon-usage table used for CAI and codon choice; it decides which "
             "synonymous codons are preferred for the target organism.",
         )
+
+        self.reference_combo = QtWidgets.QComboBox()
+        self.reference_combo.setAccessibleName("CAI reference gene set")
+        self._add_row(form, "Reference set", self.reference_combo, _REFERENCE_SET_TOOLTIP)
 
         self.jobname_edit = QtWidgets.QLineEdit()
         self.jobname_edit.setPlaceholderText("optional job name")
@@ -565,12 +610,18 @@ class StudioWindow(QtWidgets.QMainWindow):
         buttons.addWidget(self.cancel_btn)
         form.addRow(buttons)
 
-        # tAI is only meaningful for organisms with a bundled tRNA table; keep the
-        # checkbox enabled/disabled in step with the chosen organism.
+        # Both of these depend on the chosen organism: tAI needs a bundled tRNA
+        # table, and the reference sets differ per organism (only A. thaliana
+        # lacks a highly-expressed one). Repopulating from the engine rather than
+        # from a hard-coded list means the app can never offer a table that is
+        # not actually bundled.
         self.organism_combo.currentTextChanged.connect(
-            lambda *_: self._update_tai_availability()
+            lambda *_: self._update_organism_dependent_controls()
         )
-        self._update_tai_availability()
+        # Only a real user edit reaches this slot: _update_reference_sets blocks
+        # signals while it repopulates.
+        self.reference_combo.currentTextChanged.connect(self._on_reference_set_chosen)
+        self._update_organism_dependent_controls()
 
         return box
 
@@ -1301,6 +1352,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         order = (
             self.protein_edit,
             self.organism_combo,
+            self.reference_combo,
             self.jobname_edit,
             self.gc_spin,
             self.homo_spin,
@@ -1345,6 +1397,50 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.setTabOrder(first, second)
 
     # ---- run --------------------------------------------------------------
+
+    def _on_reference_set_chosen(self, name: str) -> None:
+        """Record an explicit user pick of the reference set."""
+        if name:
+            self._reference_choice = name
+
+    def _update_organism_dependent_controls(self) -> None:
+        """Refresh every control whose valid values depend on the organism."""
+        self._update_reference_sets()
+        self._update_tai_availability()
+
+    def _update_reference_sets(self) -> None:
+        """Re-list the reference sets bundled for the chosen organism.
+
+        The engine is the only authority on what is bundled, so the combo is
+        rebuilt from :func:`api.available_reference_sets` on every organism
+        change -- a stale entry would let the user ask for a table that does not
+        exist and get an error at run time instead of an honest, absent option.
+        The previous choice is kept when the new organism also has it.
+        """
+        try:
+            sets = api.available_reference_sets(self.organism_combo.currentText())
+        except ValueError:
+            sets = ()
+        self.reference_combo.blockSignals(True)
+        self.reference_combo.clear()
+        self.reference_combo.addItems(list(sets))
+        # Restore the user's own choice when this organism has it; otherwise fall
+        # to sets[0], which is the organism's default (highly-expressed wherever
+        # it exists). Reading back the combo's current text instead would treat a
+        # forced value as a preference.
+        if self._reference_choice in sets:
+            self.reference_combo.setCurrentText(self._reference_choice)
+        self.reference_combo.blockSignals(False)
+        # One option is not a choice; say why rather than showing a dead control.
+        # BOTH branches set the tooltip: setting it only in the single-set branch
+        # would leave the "only one is bundled" text stuck on afterwards, telling
+        # the user the opposite of what the (now populated) combo offers.
+        self.reference_combo.setEnabled(len(sets) > 1)
+        self.reference_combo.setToolTip(
+            f"Only the {sets[0]} reference set is bundled for this organism."
+            if len(sets) == 1
+            else _REFERENCE_SET_TOOLTIP
+        )
 
     def _update_tai_availability(self) -> None:
         """Enable the tAI axis only for organisms that ship a tRNA table."""
@@ -1496,6 +1592,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         inverted = self.inverted_spin.value()
         config = api.OptimizeConfig(
             organism=self.organism_combo.currentText(),
+            reference_set=self.reference_combo.currentText() or None,
             gc_target=self.gc_spin.value(),
             max_homopolymer=homo if homo > 0 else None,
             max_gc_run=gc_run if gc_run > 0 else None,
@@ -1617,6 +1714,13 @@ class StudioWindow(QtWidgets.QMainWindow):
         if not self._confirm_long_run(protein):
             return
         config, steps = self._build_config(enzymes)
+        # Frozen here, not in _on_finished: the run is asynchronous and the user
+        # can change the combos while it is in flight, so reading them on
+        # completion would label the result with tables it was not built from.
+        self._running_tables = (
+            config.organism,
+            config.reference_set or api.default_reference_set(config.organism),
+        )
 
         self._cancel_requested = False
         self._set_running(True)
@@ -1998,6 +2102,7 @@ class StudioWindow(QtWidgets.QMainWindow):
     def _on_finished(self, result: api.FrontierResult) -> None:
         """Populate the results panel from a finished frontier optimization."""
         self._last = result
+        self._delivered_tables = self._running_tables
         self._set_running(False)
         self._populate(result)
         if self._cancel_requested:
@@ -2120,6 +2225,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         cert = delivered.certificate
         values = {
             "CAI": f"{float(delivered.audit['cai']):.4f}",
+            "CAI reference set": str(delivered.audit.get("codon_reference_set", "unknown")),
             "GC %": f"{metrics.gc * 100.0:.2f}",
             "Length (nt)": str(metrics.length_nt),
             "Scored codons": str(delivered.audit["n_scored_codons"]),
@@ -2204,9 +2310,14 @@ class StudioWindow(QtWidgets.QMainWindow):
         scale) stays available via ``api.tracks`` / ``bt4 tracks``.
         """
         self.tracks_plot.clear()
-        organism = self.organism_combo.currentText()
+        organism, reference_set = self._delivered_tables
         try:
-            tracks = api.tracks(delivered.dna, organism, nt_window=30)
+            tracks = api.tracks(
+                delivered.dna,
+                organism or self.organism_combo.currentText(),
+                reference_set=reference_set or None,
+                nt_window=30,
+            )
         except ValueError:
             return
         gc = tracks.get("gc_fraction")
@@ -2295,6 +2406,20 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.lib_banner.setStyleSheet(theme.badge_qss(""))
         self._set_library_export_enabled(False)
 
+    @staticmethod
+    def _cai_header(results: list[api.Result] | tuple[api.Result, ...]) -> str:
+        """Return the CAI column header, naming the reference set behind it.
+
+        The Design tab spells the reference set out on its own metrics row for
+        the reason given there -- a CAI without it is a number with no question
+        attached. These tables have one number per row and no room for a second
+        column, so the label goes in the header instead. Read from each result's
+        own audit, never from the control panel, so it cannot drift from the
+        numbers beneath it.
+        """
+        labels = {str(r.audit.get("codon_reference_set", "")) for r in results}
+        return f"CAI ({labels.pop()})" if len(labels) == 1 and any(labels | {""}) else "CAI"
+
     def _render_library(self, result: api.LibraryResult) -> None:
         """Fill the library table and banner from a finished draw.
 
@@ -2306,6 +2431,12 @@ class StudioWindow(QtWidgets.QMainWindow):
         in the hard/soft columns and highlighted in the sequence viewer.
         """
         members = result.results
+        self.library_table.setHorizontalHeaderLabels(
+            tuple(
+                self._cai_header(members) if col == "CAI" else col
+                for col in _LIBRARY_COLS
+            )
+        )
         self.library_table.setRowCount(len(members))
         for row, member in enumerate(members):
             values = (
@@ -2378,6 +2509,14 @@ class StudioWindow(QtWidgets.QMainWindow):
         table order is NOT a ranking and the UI says so.
         """
         candidates = cand_set.candidates
+        self.candidates_table.setHorizontalHeaderLabels(
+            tuple(
+                self._cai_header([c.result for c in candidates])
+                if col == "CAI"
+                else col
+                for col in self._CANDIDATE_COLS
+            )
+        )
         self.candidates_table.setRowCount(len(candidates))
         for row, cand in enumerate(candidates):
             result = cand.result
