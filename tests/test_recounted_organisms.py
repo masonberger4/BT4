@@ -320,3 +320,28 @@ def test_every_bundled_organism_is_recounted() -> None:
     what keeps a future addition from reintroducing the old asymmetry.
     """
     assert set(available_organisms()) == set(RECOUNTED)
+
+
+@pytest.mark.parametrize("name", RECOUNTED)
+def test_no_alt_or_patch_region_survived_filtering(name: str) -> None:
+    """No region that looks alternate/patch-like may be counted into a table.
+
+    Ensembl publishes alternate haplotypes and patch scaffolds with their own
+    gene IDs, so per-gene de-duplication does not collapse them and they inflate
+    a table with duplicate copies of real genes. A name blocklist can only
+    exclude conventions someone already knew about, and twice it did not: human's
+    ``HG*_NOVEL_TEST`` patches leaked 12 genes (9 of them second copies of chr11
+    olfactory receptors), and zebrafish's ``ALT_CTG*`` contigs leaked 4,127 genes
+    -- **15.6% of that species' table** -- past a filter that looked complete.
+
+    The builder therefore also counts anything it *kept* whose region name still
+    looks alternate/patch-like, and stamps it. This test requires that count to
+    be zero, so the next unknown naming variant fails here instead of quietly
+    inflating a shipped table. It is checkable offline, with no re-download.
+    """
+    filters = _raw_provenance(name)["filters"]
+    assert isinstance(filters, dict)
+    assert filters["kept_suspicious_region"] == 0, (
+        f"{name}: a region that looks like an alternate/patch locus was counted; "
+        "the filter's naming list has fallen behind the source"
+    )

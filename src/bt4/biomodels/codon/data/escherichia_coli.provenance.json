@@ -13,6 +13,7 @@
     "dropped_non_acgt": 0,
     "dropped_non_representative_isoform": 2,
     "dropped_not_multiple_of_three": 0,
+    "kept_suspicious_region": 0,
     "records_in_source": 4239
   },
   "genebuild": "ENA/INSDC annotation of GCA_000005845",
@@ -20,7 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Escherichia coli K-12 substr. MG1655",
   "rebuild_command": "python scripts/build_organism_tables.py escherichia_coli",
-  "retrieved": "2026-08-12",
+  "retrieved": "2026-08-13",
   "sha256": "96c616e41b80a4d990702af21c41908ced578dc15d400188be22970c5896787d",
   "source": "Ensembl Bacteria release 63 -- Escherichia coli K-12 substr. MG1655 CDS set (assembly ASM584v2, annotation ENA/INSDC annotation of GCA_000005845)",
   "source_sha256": "b5c8ca361b5bead8429f99432792ac16496715e974655c0de8add2479dce162e",

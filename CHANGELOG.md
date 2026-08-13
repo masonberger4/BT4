@@ -23,15 +23,25 @@ its first tagged release.
     rather than a change in behavior. Textbook biases still hold (*E. coli* CTG
     for Leu, yeast AGA for Arg), now as counted facts rather than asserted ones.
   - **Alternate haplotypes and patch scaffolds are excluded.** Ensembl ships
-    human alt loci (seven alternate MHC/HLA haplotypes, the chr19 KIR and LRC
-    haplotypes) and patches alongside the primary assembly, each with its own
-    gene IDs — so per-gene de-duplication does not collapse them. Counting them
-    weighted the most polymorphic immune loci roughly sevenfold; 11,498 such
-    records are now dropped and the count is stamped. Measured to be a **no-op
-    for the other eight organisms** (zero genes dropped), and genuine unplaced
-    contigs are kept. The region-label match also covers `primary_assembly:`,
-    which rat and *Drosophila* use — a naive "chromosomes only" rule would have
-    discarded every record for those two.
+    alternate haplotypes and patch scaffolds alongside the primary assembly, each
+    with its own gene IDs — so per-gene de-duplication does not collapse them and
+    they enter a table as duplicate copies of genes already counted. Two species
+    are affected: **human** (11,513 records — seven alternate MHC/HLA haplotypes,
+    the chr19 KIR and LRC haplotypes, and the patch scaffolds) and **zebrafish**
+    (6,029 records on `ALT_CTG*` contigs, which were **15.6% of that species'
+    genes**; 98% of the symbolled ones duplicate a primary-chromosome gene).
+    Both counts are stamped. Genuine unplaced contigs are kept, and the region
+    label match covers `primary_assembly:`, which rat and *Drosophila* use — a
+    naive "chromosomes only" rule would have discarded every record for those two.
+  - **A blocklist alone was not enough, so the build now audits itself.** An
+    earlier pattern that looked complete missed human's `HG*_NOVEL_TEST` patches
+    (12 genes, 9 of them second copies of chr11 olfactory receptors) and every
+    zebrafish `ALT_CTG*` contig. The builder now separately counts anything it
+    *kept* whose region name still looks alternate/patch-like and stamps it as
+    `kept_suspicious_region`; a test requires it to be zero for every organism.
+    The next unknown naming variant fails in CI instead of quietly inflating a
+    shipped table. Removing the duplicates changed **no** amino acid's preferred
+    codon in any organism, so delivered sequences are unaffected.
   - `test_every_bundled_organism_is_recounted` now fails if any future organism
     reintroduces an undocumented table.
 

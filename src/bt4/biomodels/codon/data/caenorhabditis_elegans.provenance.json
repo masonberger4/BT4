@@ -13,6 +13,7 @@
     "dropped_non_acgt": 0,
     "dropped_non_representative_isoform": 11863,
     "dropped_not_multiple_of_three": 0,
+    "kept_suspicious_region": 0,
     "records_in_source": 31865
   },
   "genebuild": "WormBase WS282",
@@ -20,7 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Caenorhabditis elegans (nematode)",
   "rebuild_command": "python scripts/build_organism_tables.py caenorhabditis_elegans",
-  "retrieved": "2026-08-12",
+  "retrieved": "2026-08-13",
   "sha256": "9db14199b5ee6dc8234ac653fb39b52e6f15334a914a095bbe8bde5ed8745acd",
   "source": "Ensembl release 116 -- Caenorhabditis elegans (nematode) CDS set (assembly WBcel235, annotation WormBase WS282)",
   "source_sha256": "13a3ebf9bd0bfa3097a3565c979ba88a1c9fccd05cb343a7c6ef21841289e05e",

@@ -233,6 +233,7 @@ class FilterStats:
     dropped_internal_stop: int = 0
     dropped_isoform: int = 0
     dropped_alt_locus: int = 0
+    kept_suspicious_region: int = 0
 
     def as_dict(self) -> dict[str, int]:
         """The stats as a provenance-ready mapping."""
@@ -246,6 +247,7 @@ class FilterStats:
             "dropped_internal_stop": self.dropped_internal_stop,
             "dropped_non_representative_isoform": self.dropped_isoform,
             "dropped_alt_locus_or_patch": self.dropped_alt_locus,
+            "kept_suspicious_region": self.kept_suspicious_region,
         }
 
 
@@ -306,18 +308,37 @@ def parse_ids(header: str) -> tuple[str, str]:
 
 
 # Ensembl publishes ALTERNATE HAPLOTYPE loci and assembly PATCHES alongside the
-# primary assembly, and they carry their own gene IDs -- so per-gene de-duplication
-# does not collapse them. In human that is 3,322 extra "genes" (GRCh38/Ensembl
-# 116): seven alternate MHC/HLA haplotypes, the KIR and LRC haplotypes on
-# chromosome 19, and the patch scaffolds. Counting them would weight the most
-# polymorphic immune loci roughly sevenfold against the rest of the genome.
+# primary assembly, and they carry their own gene IDs -- so per-gene
+# de-duplication does not collapse them, and they enter a table as duplicate
+# copies of genes already counted. Two shipped species are affected (Ensembl 116):
 #
-# The pattern is Ensembl's own naming for those regions, and it is a **verified
-# no-op** for the other eight organisms BT4 ships (measured: zero genes dropped),
-# because only human currently has published alt loci. Genuine unplaced contigs
-# (accession-style names such as KI270713.1) are NOT matched and are kept, since
-# they are real unique sequence rather than a second copy of something.
-_ALT_LOCUS = re.compile(r"(_PATCH$|^CHR_|^HSCHR|_alt$)", re.IGNORECASE)
+#   human      11,513 records -- seven alternate MHC/HLA haplotypes, the KIR and
+#              LRC haplotypes on chromosome 19, and the patch scaffolds. Counting
+#              them weights the most polymorphic immune loci ~sevenfold.
+#   zebrafish   6,029 records on ALT_CTG* contigs -- 15.6% of that species' genes,
+#              and 98% of the symbolled ones duplicate a primary-chromosome gene.
+#
+# The other seven drop nothing. Genuine unplaced contigs (accession-style names
+# such as KI270713.1) are NOT matched and are kept: real unique sequence, not a
+# second copy.
+#
+# This list is a blocklist, and a blocklist can only exclude naming conventions
+# someone already knew about. Twice it did not -- human's HG*_NOVEL_TEST patches
+# and every zebrafish ALT_CTG* contig both survived an earlier pattern that looked
+# complete -- which is why _SUSPICIOUS_KEPT below audits the survivors.
+_ALT_LOCUS = re.compile(
+    r"(_PATCH$|_NOVEL_TEST$|^CHR_|^HSCHR|^HG\d|^ALT_|_alt$)", re.IGNORECASE
+)
+
+# An audit net, deliberately BROADER than the filter above. Any region that
+# survives filtering but still looks like an alternate/patch/haplotype region is
+# counted and stamped, and a test requires that count to be zero. A blocklist
+# alone can only exclude naming conventions someone already knew about -- and
+# twice now it did not: human's HG*_NOVEL_TEST patches and zebrafish's ALT_CTG*
+# contigs (15.6% of that species' genes) both leaked past an earlier pattern that
+# looked complete. This makes the NEXT unknown variant fail loudly in CI instead
+# of quietly inflating a shipped table.
+_SUSPICIOUS_KEPT = re.compile(r"(ALT|PATCH|NOVEL|HAP\d|^CHR_|^HSCHR)", re.IGNORECASE)
 
 # Ensembl labels a CDS's home region differently across divisions -- "chromosome"
 # for human/mouse, "primary_assembly" for rat and fly, "scaffold" for unplaced
@@ -333,6 +354,17 @@ def on_alt_locus(header: str) -> bool:
     """Whether a CDS record sits on an alternate haplotype or a patch scaffold."""
     match = _REGION.search(header)
     return bool(match and _ALT_LOCUS.search(match.group(1)))
+
+
+def suspicious_kept_region(header: str) -> bool:
+    """Whether a *kept* record's region still looks alternate/patch-like.
+
+    The safety net behind :data:`_SUSPICIOUS_KEPT`: a non-zero count means the
+    filter's naming list has fallen behind the source and a shipped table is
+    being inflated by duplicate gene copies.
+    """
+    match = _REGION.search(header)
+    return bool(match and _SUSPICIOUS_KEPT.search(match.group(1)))
 
 
 def valid_cds(seq: str, stats: FilterStats) -> bool:
@@ -373,6 +405,10 @@ def representative_cds(path: Path) -> tuple[list[str], FilterStats]:
         if on_alt_locus(header):
             stats.dropped_alt_locus += 1
             continue
+        if suspicious_kept_region(header):
+            # Not filtered, but it looks like one of the region families that
+            # should have been -- surface it rather than counting it silently.
+            stats.kept_suspicious_region += 1
         seq = raw.upper()
         if not valid_cds(seq, stats):
             continue

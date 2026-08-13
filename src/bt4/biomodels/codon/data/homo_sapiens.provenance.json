@@ -1,18 +1,19 @@
 {
   "assembly": "GRCh38",
   "build": "genome-wide codon occurrence counts recounted from the pinned Ensembl CDS FASTA by scripts/build_organism_tables.py: one representative CDS per gene (the longest; ties broken by transcript id for determinism), keeping only ACGT-only sequences that are a multiple of three, start with ATG, end in a stop codon, and contain no internal stop. The terminal stop codon is counted; every other codon is a sense codon.",
-  "cds_count": 19824,
+  "cds_count": 19812,
   "database": "Ensembl",
   "database_release": "116",
   "filters": {
-    "cds_counted": 19824,
-    "dropped_alt_locus_or_patch": 11498,
-    "dropped_internal_stop": 144,
-    "dropped_no_atg_start": 4595,
+    "cds_counted": 19812,
+    "dropped_alt_locus_or_patch": 11513,
+    "dropped_internal_stop": 142,
+    "dropped_no_atg_start": 4594,
     "dropped_no_terminal_stop": 5889,
     "dropped_non_acgt": 8165,
     "dropped_non_representative_isoform": 320513,
     "dropped_not_multiple_of_three": 11800,
+    "kept_suspicious_region": 0,
     "records_in_source": 382428
   },
   "genebuild": "Ensembl/GENCODE (release 116)",
@@ -20,10 +21,10 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Homo sapiens (human)",
   "rebuild_command": "python scripts/build_organism_tables.py homo_sapiens",
-  "retrieved": "2026-08-12",
-  "sha256": "a418653109d8f14f1a62297975f57e4902707d71c29e5628bfebe8ece05562c9",
+  "retrieved": "2026-08-13",
+  "sha256": "9dc0f8b73d591de3750a3e5dd8f9915340fc8fb83ce1221a4a3afee2d0852a31",
   "source": "Ensembl release 116 -- Homo sapiens (human) CDS set (assembly GRCh38, annotation Ensembl/GENCODE (release 116))",
   "source_sha256": "f8c6731e185957e29816a8a38ce21dc61ef6c3fc4963fbb9c0cdd8ebd20f1342",
   "source_url": "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/cds/Homo_sapiens.GRCh38.cds.all.fa.gz",
-  "total_codons_counted": 11703350
+  "total_codons_counted": 11699490
 }

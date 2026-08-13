@@ -13,6 +13,7 @@
     "dropped_non_acgt": 0,
     "dropped_non_representative_isoform": 0,
     "dropped_not_multiple_of_three": 0,
+    "kept_suspicious_region": 0,
     "records_in_source": 6600
   },
   "genebuild": "SGD",
@@ -20,7 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Saccharomyces cerevisiae (baker's yeast)",
   "rebuild_command": "python scripts/build_organism_tables.py saccharomyces_cerevisiae",
-  "retrieved": "2026-08-12",
+  "retrieved": "2026-08-13",
   "sha256": "d507ea3a628adf9bdca4619d7c4380b574564cd00781466c6b71f20b6e947afc",
   "source": "Ensembl release 116 -- Saccharomyces cerevisiae (baker's yeast) CDS set (assembly R64-1-1, annotation SGD)",
   "source_sha256": "159651a0141d5302c0541c33651fce5c067a47731eabc0955911a6fedd5d296d",

@@ -1,18 +1,19 @@
 {
   "assembly": "GRCz11",
   "build": "genome-wide codon occurrence counts recounted from the pinned Ensembl CDS FASTA by scripts/build_organism_tables.py: one representative CDS per gene (the longest; ties broken by transcript id for determinism), keeping only ACGT-only sequences that are a multiple of three, start with ATG, end in a stop codon, and contain no internal stop. The terminal stop codon is counted; every other codon is a sense codon.",
-  "cds_count": 26548,
+  "cds_count": 22421,
   "database": "Ensembl",
   "database_release": "116",
   "filters": {
-    "cds_counted": 26548,
-    "dropped_alt_locus_or_patch": 0,
+    "cds_counted": 22421,
+    "dropped_alt_locus_or_patch": 6029,
     "dropped_internal_stop": 40,
-    "dropped_no_atg_start": 4213,
-    "dropped_no_terminal_stop": 1911,
+    "dropped_no_atg_start": 3073,
+    "dropped_no_terminal_stop": 1899,
     "dropped_non_acgt": 3002,
-    "dropped_non_representative_isoform": 13540,
-    "dropped_not_multiple_of_three": 2835,
+    "dropped_non_representative_isoform": 12796,
+    "dropped_not_multiple_of_three": 2829,
+    "kept_suspicious_region": 0,
     "records_in_source": 52089
   },
   "genebuild": "Ensembl ENS01",
@@ -20,10 +21,10 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Danio rerio (zebrafish)",
   "rebuild_command": "python scripts/build_organism_tables.py danio_rerio",
-  "retrieved": "2026-08-12",
-  "sha256": "62633a8f81650f6dca11056c0dbe589178a7d376034e8c8f77d2e0cb19974336",
+  "retrieved": "2026-08-13",
+  "sha256": "ccfd18b0060152ed697920f8b2118eeb6198a854200939a605bf9dc1d74ab6d8",
   "source": "Ensembl release 116 -- Danio rerio (zebrafish) CDS set (assembly GRCz11, annotation Ensembl ENS01)",
   "source_sha256": "b5ff5b220650e0ad426df3082ed0c2587c3f283c41d8f92490297b8ef08c5fad",
   "source_url": "https://ftp.ensembl.org/pub/release-116/fasta/danio_rerio/cds/Danio_rerio.GRCz11.cds.all.fa.gz",
-  "total_codons_counted": 14429433
+  "total_codons_counted": 12387846
 }
