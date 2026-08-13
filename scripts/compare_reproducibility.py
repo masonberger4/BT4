@@ -131,7 +131,7 @@ def reproducibility(
         ``n_runs``, and a ``{mean, span, std}`` block per metric.
     """
     cfg = config if config is not None else api.OptimizeConfig()
-    table = load_table(cfg.organism)
+    table = load_table(cfg.organism, reference_set=cfg.reference_set)
     tai_table = load_tai_table(cfg.organism)
 
     # protein -> source -> list of per-run metric dicts; protein -> native protein aa.

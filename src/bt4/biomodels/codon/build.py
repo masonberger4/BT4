@@ -27,7 +27,11 @@ import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from bt4.biomodels.codon.tables import CodonUsageTable, sha256_hex
+from bt4.biomodels.codon.tables import (
+    CUSTOM_REFERENCE_SET,
+    CodonUsageTable,
+    sha256_hex,
+)
 from bt4.domain.genetic_code import CODON_TABLE
 from bt4.domain.sequence import validate_dna
 
@@ -114,6 +118,7 @@ def write_table(
     source: str,
     retrieved: str | None = None,
     cds_count: int | None = None,
+    reference_set: str = CUSTOM_REFERENCE_SET,
     pseudocount: float = 0.0,
     build: str | None = None,
     note: str | None = None,
@@ -141,6 +146,14 @@ def write_table(
         source: Human-readable origin of the CDS set behind the counts.
         retrieved: ISO date the counts were produced. Defaults to today's date.
         cds_count: Number of coding sequences behind the counts, if known.
+        reference_set: Which gene set the counts were taken over. Defaults
+            to ``"custom"``, the honest answer for a caller's own CDS set:
+            ``w = f/f_max`` means "the codon this reference set uses most",
+            so the label is what makes the number interpretable. It is a
+            reserved parameter rather than an ``extra`` key precisely because
+            every downstream honesty claim rests on it -- see
+            :func:`~bt4.biomodels.codon.tables.load_provenance`, which now
+            REQUIRES the field and refuses a sidecar that omits it.
         pseudocount: When positive, write all 64 codons Laplace-smoothed by this
             amount; when ``0`` write only observed codons with their raw counts.
         build: Overrides the default ``build`` string, for a caller that applied
@@ -169,7 +182,15 @@ def write_table(
 
     # Validate before writing anything: a rejected call must not leave a TSV on
     # disk with no (or a stale) sidecar beside it.
-    reserved = {"source", "build", "cds_count", "retrieved", "sha256", "note"}
+    reserved = {
+        "source",
+        "build",
+        "cds_count",
+        "reference_set",
+        "retrieved",
+        "sha256",
+        "note",
+    }
     clashes = sorted(set(extra or {}) & reserved)
     if clashes:
         raise ValueError(
@@ -195,6 +216,7 @@ def write_table(
         "source": source,
         "build": build if build is not None else _BUILD_METHOD,
         "cds_count": cds_count,
+        "reference_set": reference_set,
         "retrieved": resolved_retrieved,
         "sha256": sha256_hex(tsv_bytes),
         "note": note if note is not None else _BUILD_NOTE,

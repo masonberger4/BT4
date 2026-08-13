@@ -467,7 +467,16 @@ def load_provenance(organism: str, *, reference_set: str | None = None) -> Table
     if not resource.is_file():
         raise ValueError(f"no provenance for organism {organism!r} ({resolved})")
     data = json.loads(resource.read_text(encoding="utf-8"))
-    stamped = str(data.get("reference_set", resolved))
+    # REQUIRED, not defaulted. Defaulting a missing label to whatever the caller
+    # asked for would make the check fail *open*: a sidecar with no
+    # ``reference_set`` would validate as every reference set in turn, which is
+    # precisely the guarantee this field exists to provide.
+    if "reference_set" not in data:
+        raise ValueError(
+            f"provenance for {organism!r} does not state its reference set; "
+            "a codon table's w = f/f_max is uninterpretable without it"
+        )
+    stamped = str(data["reference_set"])
     if stamped != resolved:
         # The sidecar names a different reference set than the file it sits
         # beside. Something is mis-filed, and every downstream honesty claim

@@ -231,25 +231,34 @@ def test_join_tally_accounts_for_every_abundance_row(name: str) -> None:
     """
     join = _raw_provenance(name)["join"]
     assert isinstance(join, dict)
-    accounted = (
-        join["joined_via_protein_id"]
-        + join["joined_via_unversioned_protein_id"]
-        + join["joined_via_gene_id"]
-        + join["dropped_identifier_ambiguous"]
-        + join["dropped_identifier_not_in_annotation"]
-    )
-    assert accounted == join["paxdb_rows"]
+    matched = sum(v for k, v in join.items() if k.startswith("rows_matched_via_"))
+    unmatched = sum(v for k, v in join.items() if k.startswith("rows_unmatched_"))
+    assert matched + unmatched == join["paxdb_rows"]
+    # A subset of the matched rows, NOT a fourth part of the partition: the
+    # identifier resolved, the gene just has no valid representative CDS.
+    assert join["rows_matched_whose_gene_has_no_counted_cds"] <= matched
     assert join["genes_eligible_for_reference_set"] >= TOP_N
     assert (
-        join["genes_joined"] - join["excluded_organelle_encoded"]
+        join["genes_joined"] - join["genes_excluded_organelle_encoded"]
         == join["genes_eligible_for_reference_set"]
     )
+    # rows_* and genes_* are different units and must not be mixed: several
+    # protein rows can collapse onto one gene, so the two families do not
+    # reconcile by subtraction. Naming them apart is what stops a reader trying.
+    assert all(key.startswith(("rows_", "genes_", "paxdb_", "organelle_")) for key in join)
 
 
 @pytest.mark.parametrize("name", WITH_ABUNDANCE)
 def test_stamped_totals_match_the_shipped_counts(name: str) -> None:
     prov = _raw_provenance(name)
     assert sum(_he(name).frequency.values()) == prov["total_codons_counted"]
+    # The filter tally describes the whole CDS SOURCE, not this table, and its
+    # key names must say so: the genome-wide sidecar's `cds_counted` means "the
+    # number counted into this table", which here would be 300, not ~20,000.
+    filters = prov["cds_source_filters"]
+    assert isinstance(filters, dict)
+    assert "cds_counted" not in filters
+    assert filters["genes_with_a_representative_cds"] > TOP_N
 
 
 def test_organelle_genes_are_actually_excluded_somewhere() -> None:
@@ -257,17 +266,26 @@ def test_organelle_genes_are_actually_excluded_somewhere() -> None:
 
     Mitochondria translate with a different genetic code and their own tRNA
     pool, so their codon usage is not evidence about the nuclear machinery a BT4
-    design will meet -- and mitochondrial proteins are abundant enough to reach a
-    top-300 list even though they are negligible genome-wide. If this total ever
-    drops to zero the filter has stopped matching the region names upstream uses.
+    design will meet. Most organelle CDS never reach this filter -- under the
+    standard code they read as having internal stops and are dropped as invalid
+    first -- so the per-organism counts are small (1 each for mouse, rat and
+    yeast). The assertion is therefore only that the filter still fires at all:
+    if this total drops to zero it has stopped matching the region names
+    upstream uses, and the guarantee is silently gone.
     """
     excluded = {}
     for name in WITH_ABUNDANCE:
         join = _raw_provenance(name)["join"]
         assert isinstance(join, dict)
-        excluded[name] = join["excluded_organelle_encoded"]
+        excluded[name] = join["genes_excluded_organelle_encoded"]
         assert excluded[name] >= 0
+        # The CDS source's own organelle-record tally is stamped beside it, so a
+        # zero above can never be misread as "this organism has no
+        # organelle-encoded genes" -- human's mitochondrial genes are in the
+        # annotation, they just fail the standard-code validity filter first.
+        assert join["organelle_records_in_cds_source"] >= excluded[name]
     assert sum(excluded.values()) > 0, excluded
+    assert _raw_provenance("homo_sapiens")["join"]["organelle_records_in_cds_source"] > 0
 
 
 # --------------------------------------------------------------------------- #
@@ -278,8 +296,12 @@ def test_organelle_genes_are_actually_excluded_somewhere() -> None:
 @pytest.mark.parametrize(
     ("name", "amino_acid", "expected"),
     [
-        # The classic E. coli optimal codons (Ikemura 1981; Sharp & Li 1987) --
-        # the ones highly expressed genes use and the genome at large does not.
+        # The classic E. coli optimal codons (Ikemura 1981; Sharp & Li 1987).
+        # Most of these are ALSO where the genome-wide table disagrees, but not
+        # all: E. coli Leu (CTG) and yeast Arg (AGA) / Leu (TTG) top both tables.
+        # Asserting them anyway is the point -- a highly-expressed reference set
+        # has to reproduce the known optimal codon whether or not it differs from
+        # the genome-wide answer, and the contrast is asserted separately below.
         ("escherichia_coli", "F", "TTC"),
         ("escherichia_coli", "I", "ATC"),
         ("escherichia_coli", "V", "GTT"),
@@ -305,8 +327,10 @@ def test_classic_optimal_codons_come_out_of_the_counts(
 @pytest.mark.parametrize(
     ("name", "amino_acid", "expected"),
     [
-        # Six of these eight E. coli amino acids point the OTHER way genome-wide.
-        # Asserting the contrast (not just the value) is what shows the two
+        # Five E. coli amino acids and two yeast ones, each of which points the
+        # OTHER way genome-wide. (E. coli diverges at eight amino acids in total;
+        # these five are the ones also asserted as classic optimal codons above.)
+        # Asserting the contrast, not just the value, is what shows the two
         # tables were counted over different genes rather than duplicated.
         ("escherichia_coli", "F", "TTT"),
         ("escherichia_coli", "I", "ATT"),

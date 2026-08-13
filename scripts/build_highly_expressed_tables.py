@@ -34,8 +34,15 @@ How the reference set is chosen (all of it stamped into each sidecar):
 * **Organelle-encoded genes are excluded.** Mitochondria and plastids translate
   with a *different genetic code* and their own tRNA pool, and they are never
   the target of a BT4 design (which is a nuclear transgene), so their codon
-  counts are not evidence about nuclear translation. They are abundant enough to
-  matter in a top-N abundance list even though they are negligible genome-wide.
+  counts are not evidence about nuclear translation. The exclusion is justified
+  by that, not by a claim about how many would have ranked highly: most organelle
+  CDS never reach the exclusion step at all, because under the standard code they
+  read as having internal stops and are dropped as invalid first. Both numbers
+  are therefore stamped -- ``genes_excluded_organelle_encoded`` (what this filter
+  removed: 1 each for mouse, rat and yeast, 0 elsewhere) and
+  ``organelle_records_in_cds_source`` (how many were in the annotation at all) --
+  so a zero is never mistaken for "this organism has no organelle-encoded
+  proteins".
 * **Top ``N = 300`` genes by abundance**, ties broken by gene ID. N is not a
   free knob: it was chosen as the smallest size on a tested grid
   (50/100/200/300/500/1000/2000) at which *every* bundled organism observes all
@@ -86,9 +93,9 @@ Usage::
     python scripts/build_highly_expressed_tables.py --verify
     python scripts/build_highly_expressed_tables.py --report        # no writes
 
-This is a maintainer tool: it reaches the network and writes into the package
-data directory. It is not imported by the library, and BT4 never fetches
-anything at runtime.
+It is not imported by the library, and no BT4 *table* is
+ever fetched at runtime -- the only runtime network access BT4 has at all is
+the opt-in, explicitly-consented ASSP splice cross-check (CLAUDE.md §6).
 """
 
 from __future__ import annotations
@@ -290,24 +297,41 @@ class JoinStats:
     no_counted_cds: int = 0
     genes_joined: int = 0
     organelle_excluded: int = 0
+    organelle_records: int = 0
     eligible_genes: int = 0
     by_protein_id: int = 0
     by_unversioned_protein_id: int = 0
     by_gene_id: int = 0
 
     def as_dict(self) -> dict[str, int]:
-        """The stats as a provenance-ready mapping."""
+        """The stats as a provenance-ready mapping.
+
+        Three families, and the key names carry which is which because they do
+        not reconcile by subtraction:
+
+        * ``rows_matched_*`` + ``rows_unmatched_*`` partition ``paxdb_rows``
+          exactly -- every abundance row is one or the other.
+        * ``rows_matched_whose_gene_has_no_counted_cds`` is a **subset** of the
+          matched rows, not a fourth part of the partition: the identifier
+          resolved, the gene just has no valid representative CDS.
+        * ``genes_*`` count genes, after rows collapse onto them (one gene can
+          carry several protein rows), so they are a different unit entirely.
+
+        An earlier ``joined_via_*`` / ``dropped_*`` naming implied a single flat
+        partition and invited arithmetic that does not close.
+        """
         return {
             "paxdb_rows": self.paxdb_rows,
-            "dropped_identifier_not_in_annotation": self.unmatched_id,
-            "dropped_identifier_ambiguous": self.ambiguous_id,
-            "dropped_gene_has_no_counted_cds": self.no_counted_cds,
+            "rows_matched_via_protein_id": self.by_protein_id,
+            "rows_matched_via_unversioned_protein_id": self.by_unversioned_protein_id,
+            "rows_matched_via_gene_id": self.by_gene_id,
+            "rows_unmatched_identifier_ambiguous": self.ambiguous_id,
+            "rows_unmatched_identifier_not_in_annotation": self.unmatched_id,
+            "rows_matched_whose_gene_has_no_counted_cds": self.no_counted_cds,
             "genes_joined": self.genes_joined,
-            "excluded_organelle_encoded": self.organelle_excluded,
+            "genes_excluded_organelle_encoded": self.organelle_excluded,
             "genes_eligible_for_reference_set": self.eligible_genes,
-            "joined_via_protein_id": self.by_protein_id,
-            "joined_via_unversioned_protein_id": self.by_unversioned_protein_id,
-            "joined_via_gene_id": self.by_gene_id,
+            "organelle_records_in_cds_source": self.organelle_records,
         }
 
 
@@ -410,12 +434,17 @@ def build_id_index(path: Path) -> IdIndex:
     kept in separate maps so a join can report *which* kind matched rather than
     leaving the reader to guess.
 
-    A key that resolves to more than one gene is dropped, never guessed at. This
-    matters because the unversioned key is synthesized here rather than read from
-    the source -- for WormBase-style IDs that natively contain dots
-    (``ZK1010.1.1``) stripping the last segment can collide with a real
-    identifier, and this is what makes that collision a dropped row instead of a
-    wrong gene.
+    A key that resolves to more than one gene is dropped, never guessed at.
+
+    **Ambiguity is judged across the maps, not within each one.** The unversioned
+    key is synthesized here rather than read from the source, so for
+    WormBase-style IDs that natively contain dots it can collide with a real
+    identifier: given proteins ``ZK1010.1.1`` (gene B) and ``ZK1010.1`` (gene A),
+    the key ``ZK1010.1`` means gene A in ``exact`` and gene B in ``unversioned``.
+    Neither map alone sees a conflict, so a per-map check would resolve that key
+    to whichever map is consulted first -- a wrong gene, reported as a clean
+    join. Pooling the two maps' genes per key is what makes the collision this
+    docstring describes actually get dropped.
     """
     exact: dict[str, set[str]] = {}
     unversioned: dict[str, set[str]] = {}
@@ -425,20 +454,21 @@ def build_id_index(path: Path) -> IdIndex:
         stem = protein.rsplit(".", 1)[0]
         if stem != protein:
             unversioned.setdefault(stem, set()).add(gene)
-    ambiguous = frozenset(
-        key
-        for source in (exact, unversioned)
-        for key, genes in source.items()
-        if len(genes) > 1
-    )
+    pooled: dict[str, set[str]] = {}
+    for source in (exact, unversioned):
+        for key, genes in source.items():
+            pooled.setdefault(key, set()).update(genes)
+    ambiguous = frozenset(key for key, genes in pooled.items() if len(genes) > 1)
     return IdIndex(
-        exact={k: next(iter(v)) for k, v in exact.items() if len(v) == 1},
-        unversioned={k: next(iter(v)) for k, v in unversioned.items() if len(v) == 1},
+        exact={k: next(iter(v)) for k, v in exact.items() if k not in ambiguous},
+        unversioned={k: next(iter(v)) for k, v in unversioned.items() if k not in ambiguous},
         ambiguous=ambiguous,
     )
 
 
-def representative_cds_by_gene(path: Path) -> tuple[dict[str, tuple[str, str]], FilterStats]:
+def representative_cds_by_gene(
+    path: Path,
+) -> tuple[dict[str, tuple[str, str]], FilterStats, int]:
     """Select one valid CDS per gene, keeping each gene's assembly region.
 
     Identical selection to ``build_organism_tables.representative_cds`` -- the
@@ -446,13 +476,25 @@ def representative_cds_by_gene(path: Path) -> tuple[dict[str, tuple[str, str]], 
     reference sets differ only in *which* genes they count. The region comes
     along because organelle-encoded genes have to be excluded downstream.
 
+    Organelle-encoded **records** are tallied here, before the validity filter,
+    and reported separately from the genes excluded at selection time. Without
+    that, most organelle CDS never reach the exclusion step at all: they are
+    translated with a different genetic code, so under the standard code they
+    show internal stops and get dropped as invalid first. The exclusion count
+    alone would then read ``0`` for human -- whose mitochondrial proteins are
+    among the most abundant in any proteomics consensus -- and be mistaken for
+    "this organism's abundance data contained no organelle-encoded genes".
+
     Returns:
-        ``(gene -> (sequence, region), stats)``.
+        ``(gene -> (sequence, region), stats, organelle_records)``.
     """
     stats = FilterStats()
+    organelle_records = 0
     best: dict[str, tuple[int, str, str, str]] = {}
     for header, raw in iter_fasta(path):
         stats.records += 1
+        if is_organelle_region(cds_region(header)):
+            organelle_records += 1
         if on_alt_locus(header):
             stats.dropped_alt_locus += 1
             continue
@@ -473,7 +515,11 @@ def representative_cds_by_gene(path: Path) -> tuple[dict[str, tuple[str, str]], 
         if longer or tie_break:
             best[gene] = candidate
     stats.kept = len(best)
-    return {gene: (entry[2], entry[3]) for gene, entry in best.items()}, stats
+    return (
+        {gene: (entry[2], entry[3]) for gene, entry in best.items()},
+        stats,
+        organelle_records,
+    )
 
 
 def select_reference_set(
@@ -481,6 +527,7 @@ def select_reference_set(
     index: IdIndex,
     cds: dict[str, tuple[str, str]],
     filters: FilterStats,
+    organelle_records: int,
     top_n: int,
 ) -> ReferenceSet:
     """Rank the joined genes by abundance and keep the top ``top_n``.
@@ -493,9 +540,16 @@ def select_reference_set(
     way on every machine and the roster digest is reproducible (invariant #7
     reaching the data).
     """
-    stats = JoinStats(paxdb_rows=len(rows))
+    stats = JoinStats(paxdb_rows=len(rows), organelle_records=organelle_records)
     best: dict[str, tuple[float, str]] = {}
     for gene_name, identifier, abundance in rows:
+        # Ambiguity is checked FIRST, before either lookup. Checking it only
+        # after both maps miss would let an identifier that is ambiguous overall
+        # -- but singular in whichever map answers -- through as a clean join,
+        # which is exactly the guess this builder claims never to make.
+        if identifier in index.ambiguous:
+            stats.ambiguous_id += 1
+            continue
         gene = index.exact.get(identifier)
         if gene is not None:
             stats.by_protein_id += 1 if identifier != gene else 0
@@ -503,13 +557,10 @@ def select_reference_set(
         else:
             gene = index.unversioned.get(identifier)
             if gene is None:
-                # Two distinct failures, reported separately: an identifier the
-                # annotation resolves ambiguously is a mapping the builder
-                # refused to guess, not one the annotation lacks.
-                if identifier in index.ambiguous:
-                    stats.ambiguous_id += 1
-                else:
-                    stats.unmatched_id += 1
+                # Reported separately from the ambiguous case above: an
+                # identifier the annotation does not contain is a different
+                # failure from one it resolves two ways.
+                stats.unmatched_id += 1
                 continue
             stats.by_unversioned_protein_id += 1
         if gene not in cds:
@@ -550,14 +601,17 @@ def _fetch_pinned(url: str, dest: Path, expected_sha: str, label: str) -> str:
 def gather(spec: AbundanceSpec, cache_dir: Path, top_n: int) -> tuple[ReferenceSet, dict[str, str]]:
     """Download every pinned source for one organism and select its genes."""
     cds_spec = _cds_spec(spec.key)
-    root = cache_dir / f"paxdb-{PAXDB_RELEASE}"
-    paxdb_path = root / spec.paxdb_filename
-    pep_path = root / Path(spec.pep_url).name
-    cds_path = (
-        cache_dir
-        / f"{cds_spec.database.replace(' ', '_')}-{cds_spec.release}"
-        / Path(cds_spec.url).name
+    paxdb_path = cache_dir / f"paxdb-{PAXDB_RELEASE}" / spec.paxdb_filename
+    # The peptide FASTA and the CDS FASTA come from the SAME Ensembl release, so
+    # they share that release's cache namespace. Ensembl reuses filenames across
+    # releases, so caching the peptide file under the PaxDb release number would
+    # make a warm cache serve the old release's file after an ENSEMBL_RELEASE
+    # bump -- the digest pin catches it, but namespacing means it cannot arise.
+    ensembl_root = (
+        cache_dir / f"{cds_spec.database.replace(' ', '_')}-{cds_spec.release}"
     )
+    pep_path = ensembl_root / Path(spec.pep_url).name
+    cds_path = ensembl_root / Path(cds_spec.url).name
 
     digests = {
         "paxdb": _fetch_pinned(spec.paxdb_url, paxdb_path, spec.paxdb_sha256, spec.key),
@@ -567,8 +621,9 @@ def gather(spec: AbundanceSpec, cache_dir: Path, top_n: int) -> tuple[ReferenceS
 
     rows = parse_paxdb(paxdb_path)
     index = build_id_index(pep_path)
-    cds, filters = representative_cds_by_gene(cds_path)
-    return select_reference_set(rows, index, cds, filters, top_n), digests
+    cds, filters, organelle_records = representative_cds_by_gene(cds_path)
+    selected = select_reference_set(rows, index, cds, filters, organelle_records, top_n)
+    return selected, digests
 
 
 def _cds_spec(key: str) -> OrganismSpec:
@@ -658,8 +713,8 @@ def build_one(spec: AbundanceSpec, cache_dir: Path, out_dir: Path, top_n: int) -
             "axis of an objective vector. Re-derivable from the pinned source URLs "
             "and digests by rerunning scripts/build_highly_expressed_tables.py."
         ),
+        reference_set=HIGHLY_EXPRESSED,
         extra={
-            "reference_set": HIGHLY_EXPRESSED,
             "organism": spec.key,
             "organism_common_name": cds_spec.common_name,
             "assembly": cds_spec.assembly,
@@ -682,7 +737,22 @@ def build_one(spec: AbundanceSpec, cache_dir: Path, out_dir: Path, top_n: int) -
             "most_abundant_genes": reference.names[:20],
             "total_codons_counted": total,
             "join": stats.as_dict(),
-            "filters": reference.filters.as_dict(),
+            # Named for what it is. This tally describes the whole CDS source --
+            # it is byte-identical to the genome-wide sidecar's, because both
+            # tables read the same FASTA through the same filters -- so its
+            # "kept" number is every gene in the annotation with a valid
+            # representative CDS, NOT the 300 counted here. Under the
+            # genome-wide sidecar's key name (`cds_counted`) that same number
+            # IS the count, so reusing the name would have shipped one key
+            # meaning two different things across the two sidecar families.
+            "cds_source_filters": {
+                **{
+                    key: value
+                    for key, value in reference.filters.as_dict().items()
+                    if key != "cds_counted"
+                },
+                "genes_with_a_representative_cds": reference.filters.kept,
+            },
             "rebuild_command": (
                 f"python scripts/build_highly_expressed_tables.py {spec.key}"
             ),

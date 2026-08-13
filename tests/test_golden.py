@@ -62,8 +62,11 @@ EXPECTED_DNA: dict[str, str] = {
 # human's DEFAULT reference set -- the highly-expressed one (Sharp & Li's own
 # framing), not the genome-wide counts. That is what moved "medium" and "long"
 # when the reference sets landed: highly-expressed human genes prefer CGC for Arg
-# and TCC for Ser over the genome-wide AGA/AGC, and both are GC-richer, which is
-# why the pinned GC fractions below rose with them.
+# and TCC for Ser over the genome-wide AGA/AGC.
+#
+# The GC rise below is entirely the Arg change: AGA -> CGC is +2 GC per codon,
+# while AGC -> TCC is GC-NEUTRAL (both carry two strong bases). "medium" has
+# three Arg residues, so +6 GC over 96 nt is exactly 0.541667 -> 0.604167.
 EXPECTED_CAI: dict[str, float] = {
     "short": 1.0,
     "medium": 1.0,

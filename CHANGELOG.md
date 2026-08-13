@@ -72,6 +72,59 @@ its first tagged release.
     objective vector (§10.7).
 
 ### Fixed
+- **Adversarial-review fixes, before the change shipped.** Three independent
+  reviewers (data/provenance, `reference_set` plumbing, and a numeric audit of
+  every prose claim) found nine real defects; all are fixed here, and the
+  shipped tables are byte-identical before and after, which is what shows none of
+  them silently altered a number.
+  - **The ambiguity guard did not gate the join.** An identifier resolving to two
+    genes was flagged, but only consulted *after* both lookups missed — so a key
+    ambiguous in the exact map yet singular in the version-stripped one was joined
+    anyway and stamped as clean. Ambiguity is now judged across both maps (pooled
+    per key, which is what actually catches the WormBase-style `ZK1010.1.1` /
+    `ZK1010.1` collision the docstring described) and checked *before* either
+    lookup. Latent for the eight shipped tables, provably: their TSVs are
+    unchanged by the fix.
+  - **`filters.cds_counted` was the genome-wide gene count**, shipped beside
+    `cds_count: 300` under a key that means "the number counted into this table"
+    in the genome-wide sidecars — one key name carrying two quantities. The block
+    is now `cds_source_filters` with `genes_with_a_representative_cds`, naming
+    what it actually describes.
+  - **The join tally's key names implied arithmetic that does not close.**
+    `rows_matched_*` and `rows_unmatched_*` now partition the abundance rows
+    exactly, `rows_matched_whose_gene_has_no_counted_cds` is named as the subset
+    it is, and `genes_*` are marked as a different unit.
+  - **`excluded_organelle_encoded: 0` was misreadable** as "no organelle-encoded
+    genes here". Most organelle CDS never reach that filter — under the standard
+    code they read as having internal stops and are dropped as invalid first — so
+    the source's own tally is now stamped alongside it
+    (`organelle_records_in_cds_source`, 13 for human: exactly the human
+    mitochondrial protein-coding gene count).
+  - **The comparison scripts recomputed against the wrong table.**
+    `compare_tools.py`, `compare_reproducibility.py` and `benchmark.py` all
+    dropped `cfg.reference_set` when re-scoring, so every row on the published
+    board was measured with a different table than the one that produced BT4's
+    sequence (invariant #2). Under a genome-wide config, `benchmark.py` reported
+    a %MinMax mean of 56.3 where the true value was 100.0.
+  - **`load_provenance` failed open** on a sidecar with no `reference_set` key,
+    validating it as whatever it was loaded as. The field is now required, and
+    `write_table` gained it as a reserved parameter so it can no longer be
+    smuggled through the free-form `extra` dict.
+  - **BT4 Studio launched on the one organism with no highly-expressed table.**
+    The organism combo took the alphabetically first entry, *A. thaliana*, so a
+    freshly opened Studio silently handed out a codon-commonness index. It now
+    starts on the engine's default organism.
+  - **A stale tooltip contradicted the control it sat on**, and renders read the
+    live combos instead of what the delivered run used — so a theme switch after
+    changing the organism would recompute an old result's tracks under a new
+    table. Renders now read the delivered run's own labels.
+  - **Prose claims that outran the data:** "both are GC-richer" (the Ser change
+    `AGC`→`TCC` is GC-neutral; the whole GC rise is the Arg change), "the genome
+    at large does not" (false for three of the thirteen asserted optimal codons),
+    "abundant enough to reach a top-300 list" (the exclusion is justified by the
+    genetic code, not by an unmeasured ranking claim), "BT4 never fetches anything
+    at runtime" (the opt-in ASSP cross-check does), and Welch et al.'s result
+    stated as "worst-performing" rather than what the paper supports.
 - **`bt4 --help` and `bt4 tracks --help` crashed** with
   `ValueError: unsupported format character 'M'`. argparse %-formats help strings
   *while rendering help*, and the `tracks` parser wrote a literal percent sign as

@@ -51,8 +51,9 @@ Why these choices (all of them recorded in each table's provenance sidecar):
   in the table is a sense codon, exactly as CAI expects.
 
 This script is a maintainer tool: it reaches the network and writes into the
-package data directory. It is not imported by the library, and BT4 never fetches
-anything at runtime.
+package data directory. It is not imported by the library, and no BT4 *table* is
+ever fetched at runtime -- the only runtime network access BT4 has at all is
+the opt-in, explicitly-consented ASSP splice cross-check (CLAUDE.md §6).
 """
 
 from __future__ import annotations
@@ -530,8 +531,8 @@ def build_one(spec: OrganismSpec, cache_dir: Path, out_dir: Path) -> Path:
             "source_url + source_sha256 by rerunning "
             "scripts/build_organism_tables.py."
         ),
+        reference_set=GENOME_WIDE,
         extra={
-            "reference_set": GENOME_WIDE,
             "organism_common_name": spec.common_name,
             "assembly": spec.assembly,
             "genebuild": spec.genebuild,
@@ -582,9 +583,11 @@ def _verify_against_committed(spec: OrganismSpec, rebuilt_tsv: Path) -> list[str
         return [*problems, f"{spec.key}: no committed provenance sidecar"]
     committed = json.loads(committed_side.read_text(encoding="utf-8"))
     rebuilt = json.loads(rebuilt_side.read_text(encoding="utf-8"))
-    for key in sorted(set(committed) | set(rebuilt) - {"retrieved"}):
-        if key == "retrieved":
-            continue
+    # Parenthesized: "-" binds tighter than "|", so the unparenthesized form is
+    # `committed | (rebuilt - {...})` -- which happens to be neutralized only by
+    # a redundant guard. Keep this identical in shape to the highly-expressed
+    # builder's twin; the two drifting apart is how one of them starts lying.
+    for key in sorted((set(committed) | set(rebuilt)) - {"retrieved"}):
         if committed.get(key) != rebuilt.get(key):
             problems.append(f"{spec.key}: provenance field {key!r} differs from rebuild")
     return problems

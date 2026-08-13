@@ -58,10 +58,25 @@ class Track:
 
 @dataclass(frozen=True, slots=True)
 class TracksResult:
-    """A bundle of per-site tracks recomputed from one coding sequence."""
+    """A bundle of per-site tracks recomputed from one coding sequence.
+
+    Attributes:
+        dna: The sequence the tracks were computed from.
+        tracks: The named profiles.
+        organism: The codon table's organism, or ``""`` when no table was read
+            (the %MinMax track is omitted for a non-codon-aligned sequence).
+        reference_set: Which of that organism's reference sets supplied the
+            %MinMax frequencies, or ``""`` when no table was read. %MinMax is a
+            *codon-commonness* profile, so the same sequence yields a different
+            track under each reference set -- a result that did not carry the
+            label would be a plot with no stated question, which is the failure
+            this whole axis exists to prevent.
+    """
 
     dna: str
     tracks: tuple[Track, ...]
+    organism: str = ""
+    reference_set: str = ""
 
     def get(self, name: str) -> Track | None:
         """Return the track named ``name``, or ``None`` if absent."""
@@ -135,8 +150,13 @@ def run_tracks(
             values=tuple(dinucleotide_profile(d, "CG", nt_window, density=True)),
         ),
     ]
+    resolved_organism = ""
+    resolved_reference_set = ""
     if len(d) % 3 == 0:
-        frequencies = load_table(organism, reference_set=reference_set).frequency
+        table = load_table(organism, reference_set=reference_set)
+        resolved_organism = table.organism
+        resolved_reference_set = table.reference_set
+        frequencies = table.frequency
         tracks.append(
             Track(
                 name="minmax",
@@ -146,7 +166,12 @@ def run_tracks(
                 values=tuple(min_max_profile(d, frequencies, codon_window)),
             )
         )
-    return TracksResult(dna=d, tracks=tuple(tracks))
+    return TracksResult(
+        dna=d,
+        tracks=tuple(tracks),
+        organism=resolved_organism,
+        reference_set=resolved_reference_set,
+    )
 
 
 def summarize(tracks: Sequence[Track]) -> list[dict[str, object]]:

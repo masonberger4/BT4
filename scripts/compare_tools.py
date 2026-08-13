@@ -219,7 +219,7 @@ def compare(
     if not records:
         raise ValueError("panel has no records")
     cfg = config if config is not None else api.OptimizeConfig()
-    table = load_table(cfg.organism)
+    table = load_table(cfg.organism, reference_set=cfg.reference_set)
     tai_table = load_tai_table(cfg.organism)
 
     native = next((seq for header, seq in records if header == _NATIVE_HEADER), records[0][1])
@@ -312,6 +312,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Codon/tRNA table key for BT4 and for recomputing every row (default: homo_sapiens).",
     )
     parser.add_argument(
+        "--reference-set",
+        default=None,
+        dest="reference_set",
+        choices=list(api.REFERENCE_SETS),
+        help="Which of the organism's CAI reference sets to solve against AND "
+             "recompute every row with (default: the organism's own default).",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit the rows as JSON instead of a formatted table.",
@@ -319,13 +327,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     records = load_panel(args.panel)
-    config = api.OptimizeConfig(organism=args.organism)
+    config = api.OptimizeConfig(
+        organism=args.organism, reference_set=args.reference_set
+    )
     rows = compare(records, config)
 
     if args.json:
         print(json.dumps(rows, indent=2))
     else:
         print(_BANNER)
+        print()
+        # Which CAI this board reports is not a detail: the same sequence
+        # scores differently against each reference set.
+        reference_set = config.reference_set or api.default_reference_set(config.organism)
+        print(f"Tables: {config.organism} / {reference_set} reference set")
         print()
         print(_format_table(rows))
     return 0

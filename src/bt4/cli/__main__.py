@@ -355,6 +355,8 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
     if args.json:
         payload = {
             "dna": result.dna,
+            "organism": result.organism,
+            "codon_reference_set": result.reference_set,
             "tracks": [
                 {
                     "name": t.name,
@@ -369,6 +371,10 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         sys.stdout.write(json.dumps(payload) + "\n")
         return 0
     print(f"dna     {len(result.dna)} nt")
+    if result.reference_set:
+        # %MinMax is reference-set-dependent, so the track table is not
+        # self-describing without this line.
+        print(f"tables  {result.organism} / {result.reference_set}")
     print(f"{'track':14} {'window':>8} {'n':>5} {'min':>8} {'max':>8} {'mean':>8}")
     for row in api.summarize(result.tracks):
         win = f"{row['window']} {row['window_unit']}"

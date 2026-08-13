@@ -5,11 +5,7 @@
   "build": "codon occurrence counts over the 300 most abundant proteins in PaxDb's whole-organism integrated dataset, by scripts/build_highly_expressed_tables.py. PaxDb protein identifiers were resolved to Ensembl genes against the pinned peptide FASTA of the same release (identifiers resolving to more than one gene were dropped, not guessed); each gene took the highest abundance among its proteins; organelle-encoded genes were excluded (different genetic code and tRNA pool); genes were ranked by abundance with ties broken by gene ID. The counted sequence is the same representative CDS the genome-wide table uses -- longest valid CDS per gene, ACGT-only, in-frame, ATG start, terminal stop, no internal stop, no alternate-haplotype or patch loci -- so the two tables differ only in which genes they count.",
   "cds_count": 300,
   "cds_sha256": "b5ff5b220650e0ad426df3082ed0c2587c3f283c41d8f92490297b8ef08c5fad",
-  "cds_url": "https://ftp.ensembl.org/pub/release-116/fasta/danio_rerio/cds/Danio_rerio.GRCz11.cds.all.fa.gz",
-  "database": "Ensembl",
-  "database_release": "116",
-  "filters": {
-    "cds_counted": 22421,
+  "cds_source_filters": {
     "dropped_alt_locus_or_patch": 6029,
     "dropped_internal_stop": 40,
     "dropped_no_atg_start": 3073,
@@ -17,22 +13,27 @@
     "dropped_non_acgt": 3002,
     "dropped_non_representative_isoform": 12796,
     "dropped_not_multiple_of_three": 2829,
+    "genes_with_a_representative_cds": 22421,
     "kept_suspicious_region": 0,
     "records_in_source": 52089
   },
+  "cds_url": "https://ftp.ensembl.org/pub/release-116/fasta/danio_rerio/cds/Danio_rerio.GRCz11.cds.all.fa.gz",
+  "database": "Ensembl",
+  "database_release": "116",
   "gene_roster_sha256": "5b1e741d6b50b63b82c8b8ae91919d783379f38d999bfd813af070cf9ce6335f",
   "genebuild": "Ensembl ENS01",
   "join": {
-    "dropped_gene_has_no_counted_cds": 1057,
-    "dropped_identifier_ambiguous": 0,
-    "dropped_identifier_not_in_annotation": 0,
-    "excluded_organelle_encoded": 0,
     "genes_eligible_for_reference_set": 13353,
+    "genes_excluded_organelle_encoded": 0,
     "genes_joined": 13353,
-    "joined_via_gene_id": 0,
-    "joined_via_protein_id": 0,
-    "joined_via_unversioned_protein_id": 14410,
-    "paxdb_rows": 14410
+    "organelle_records_in_cds_source": 13,
+    "paxdb_rows": 14410,
+    "rows_matched_via_gene_id": 0,
+    "rows_matched_via_protein_id": 0,
+    "rows_matched_via_unversioned_protein_id": 14410,
+    "rows_matched_whose_gene_has_no_counted_cds": 1057,
+    "rows_unmatched_identifier_ambiguous": 0,
+    "rows_unmatched_identifier_not_in_annotation": 0
   },
   "license_note": "Protein abundances are from PaxDb (von Mering Lab, SIB / University of Zurich), released under CC BY 4.0; cite Huang et al., Mol Cell Proteomics 2023, doi:10.1016/j.mcpro.2023.100640. Coding sequences and the protein-to-gene mapping are from Ensembl, made freely available by EMBL-EBI (https://www.ebi.ac.uk/about/terms-of-use); cite Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049.",
   "most_abundant_genes": [
