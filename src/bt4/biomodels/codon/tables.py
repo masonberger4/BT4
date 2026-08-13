@@ -358,7 +358,13 @@ def available_reference_sets(organism: str) -> tuple[str, ...]:
         ValueError: If no bundled table matches ``organism`` at all.
     """
     key = _canonical(organism)
-    found = tuple(name for name in REFERENCE_SETS if _has(key, name))
+    # An organism key is a bare stem, exactly as available_organisms() lists it.
+    # Without this, "homo_sapiens.highly_expressed" resolves through the
+    # GENOME_WIDE suffix (which is "") straight onto the highly-expressed file and
+    # returns its counts stamped `reference_set="genome_wide"` -- the right numbers
+    # under the wrong label, which is worse than an error because nothing downstream
+    # can tell.
+    found = () if "." in key else tuple(name for name in REFERENCE_SETS if _has(key, name))
     if not found:
         raise ValueError(
             f"unknown organism {organism!r}; available: {', '.join(available_organisms())}"

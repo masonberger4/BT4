@@ -257,6 +257,27 @@ def compare(
     return rows
 
 
+def board(
+    records: Sequence[tuple[str, str]],
+    config: api.OptimizeConfig | None = None,
+) -> dict[str, object]:
+    """Return the comparison rows **plus the tables they were scored with**.
+
+    ``compare`` returns bare rows, and a bare ``cai`` is a number with no question
+    attached: the same sequence scores differently against each reference set. The
+    human-readable output states the tables in its header, so the machine-readable
+    one -- the artifact most likely to be re-published downstream -- has to as
+    well, or the two disagree about what they are reporting.
+    """
+    cfg = config if config is not None else api.OptimizeConfig()
+    reference_set = cfg.reference_set or api.default_reference_set(cfg.organism)
+    return {
+        "organism": cfg.organism,
+        "codon_reference_set": reference_set,
+        "rows": compare(records, cfg),
+    }
+
+
 def _render_cell(value: object) -> str:
     """Format one table cell: floats to three decimals, everything else as text."""
     if value is None:
@@ -333,7 +354,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     rows = compare(records, config)
 
     if args.json:
-        print(json.dumps(rows, indent=2))
+        print(json.dumps(board(records, config), indent=2))
     else:
         print(_BANNER)
         print()

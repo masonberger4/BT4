@@ -1036,8 +1036,9 @@ control.
   predicts. Eight of nine organisms have one; *A. thaliana* does not, because
   PaxDb identifies its proteins by UniProt accession that the pinned Ensembl
   Plants annotation does not carry, so BT4 ships none for it rather than one built
-  on a guess. Still ahead: further organisms (the industrial gaps — CHO, *P.
-  pastoris*, *B. subtilis*) and a larger restriction-enzyme catalog.
+  on a guess. What remains in this phase is enumerated in
+  [`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md), not here — a "still ahead" list
+  in two documents is exactly the pair of status facts §10.11 forbids.
   **Tissue/cell-type-specific tables are deliberately out of scope** (maintainer
   decision): the work is large, the resulting number is hard to qualify honestly,
   and the upside over a whole-organism highly-expressed reference is small.

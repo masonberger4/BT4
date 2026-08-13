@@ -997,3 +997,82 @@ def test_tai_axis_tracks_organism_availability() -> None:
     window._update_tai_availability()
     assert not window.tai_check.isEnabled()
     assert not window.tai_check.isChecked()  # auto-unchecked when unavailable
+
+
+def test_app_starts_on_the_engines_default_organism() -> None:
+    """A freshly opened Studio must not default to a codon-commonness index.
+
+    The combo is filled from ``available_organisms()``, which is sorted -- so
+    without an explicit default it lands on *A. thaliana*, the one organism with
+    no highly-expressed table. That silently opts the app out of the reference set
+    every other surface defaults to.
+    """
+    window = StudioWindow()
+    assert window.organism_combo.currentText() == api.OptimizeConfig().organism
+    assert window.reference_combo.currentText() == api.default_reference_set(
+        api.OptimizeConfig().organism
+    )
+
+
+def test_reference_set_survives_a_round_trip_through_a_one_set_organism() -> None:
+    """Visiting an organism with only one reference set must not stick.
+
+    Selecting *A. thaliana* forces the combo to ``genome_wide``. If that forced
+    value were mistaken for a user preference, every later run on every other
+    organism would quietly use codon commonness -- the same failure as the
+    alphabetical default, two clicks away.
+    """
+    window = StudioWindow()
+    window.organism_combo.setCurrentText("arabidopsis_thaliana")
+    assert window.reference_combo.currentText() == "genome_wide"
+    assert not window.reference_combo.isEnabled()
+
+    window.organism_combo.setCurrentText("homo_sapiens")
+    assert window.reference_combo.currentText() == "highly_expressed"
+    assert window.reference_combo.isEnabled()
+
+
+def test_an_explicit_reference_set_choice_is_remembered() -> None:
+    """A real user pick, unlike a forced one, must carry across organisms."""
+    window = StudioWindow()
+    window.reference_combo.setCurrentText("genome_wide")
+    window.organism_combo.setCurrentText("escherichia_coli")
+    assert window.reference_combo.currentText() == "genome_wide"
+    # ...and still survives a detour through the one-set organism.
+    window.organism_combo.setCurrentText("arabidopsis_thaliana")
+    window.organism_combo.setCurrentText("homo_sapiens")
+    assert window.reference_combo.currentText() == "genome_wide"
+
+
+def test_the_reference_set_tooltip_is_restored_not_stamped_once() -> None:
+    """The one-set message must not outlive the organism it describes."""
+    window = StudioWindow()
+    explanatory = window.reference_combo.toolTip()
+    window.organism_combo.setCurrentText("arabidopsis_thaliana")
+    assert "Only the genome_wide" in window.reference_combo.toolTip()
+    window.organism_combo.setCurrentText("homo_sapiens")
+    assert window.reference_combo.toolTip() == explanatory
+
+
+def test_delivered_tables_are_frozen_at_run_start() -> None:
+    """Renders must label a result with the tables it was actually built from.
+
+    The run is asynchronous; reading the combos when it finishes would attribute
+    it to whatever the user happened to select in the meantime.
+    """
+    window = StudioWindow()
+    window.protein_edit.setPlainText("MAALKHETQW")
+    window.organism_combo.setCurrentText("escherichia_coli")
+    window.reference_combo.setCurrentText("genome_wide")
+    window._start_optimize()
+    try:
+        frozen = window._running_tables
+        assert frozen == ("escherichia_coli", "genome_wide")
+
+        # The user fiddles while the (already-launched) run is in flight...
+        window.organism_combo.setCurrentText("homo_sapiens")
+        assert window._running_tables == frozen
+    finally:
+        # closeEvent cancels the worker and joins the thread; letting a live
+        # QThread be garbage-collected aborts the process.
+        window.close()

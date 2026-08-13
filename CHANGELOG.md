@@ -30,8 +30,12 @@ its first tagged release.
     a third party can prove they reproduced the same reference set.
   - **Organelle-encoded genes are excluded.** Mitochondria and plastids translate
     with a different genetic code and their own tRNA pool, and are never a BT4
-    design target; they are negligible genome-wide but abundant enough to reach a
-    top-300 list.
+    design target, so their codon usage is not evidence about the nuclear
+    translation a design will meet. Both numbers are stamped —
+    `genes_excluded_organelle_encoded` (what this filter removed) and
+    `organelle_records_in_cds_source` (how many were in the annotation at all) —
+    because most organelle CDS are dropped as invalid under the standard code
+    before ever reaching the filter.
   - **N = 300 is evidence, not taste.** It is the smallest size on a tested grid
     (50…2000) at which *every* bundled organism observes all 64 codons, so no
     shipped table needed smoothing — an invented number in a reference table is
@@ -72,6 +76,51 @@ its first tagged release.
     objective vector (§10.7).
 
 ### Fixed
+- **Second review round: seven more lenses, seven more defects.** A follow-up
+  seven-lens pass (data, plumbing, claims, test quality via source mutation,
+  honesty invariants, behavior-change blast radius, packaging/CI) ran over the
+  fixes above. It hit a usage limit partway, so its own "refuted" tally conflates
+  *disproved* with *never checked* — every finding below was therefore re-verified
+  by hand before being acted on.
+  - **`load_table("homo_sapiens.highly_expressed")` returned the right counts
+    under the wrong label.** The genome-wide suffix is the empty string, so a
+    dotted key resolved straight onto the highly-expressed *file* and came back
+    stamped `reference_set="genome_wide"`. An organism key is now required to be a
+    bare stem, exactly as `available_organisms()` lists it — nothing downstream
+    could have detected that mislabel.
+  - **The non-optimize half of the reference-set axis had no test at all.**
+    Deleting `reference_set=` from `api.library`, `api.candidates`, `api.tracks`
+    and all three comparison scripts left the suite green — so the invariant-#2
+    fix above could have been reverted without CI noticing. New
+    `tests/test_reference_set_reaches_every_surface.py` is shaped as a revert
+    detector: one failing test per dropped call site.
+  - **BT4 Studio's reference set stuck after visiting *A. thaliana*.** Selecting
+    the one organism with a single reference set forced the combo to
+    `genome_wide`; switching back kept it, because a forced value was
+    indistinguishable from a user preference. Two clicks reproduced the same
+    "silently hands out a codon-commonness index" failure the organism default
+    had. The app now remembers the user's explicit pick separately.
+  - **The delivered result was labeled from the live controls.** Runs are
+    asynchronous, so changing the organism mid-run relabeled the result with
+    tables it was not built from. The pair is frozen at run start now.
+  - **The "peptide FASTA must come from the CDS release" rule was prose only.**
+    The two URLs are pinned in different files and both digest checks pass after a
+    divergence, while versioned gene IDs from two releases silently fail to join.
+    It is a structural check now.
+  - **The machine-readable comparison boards carried unlabeled CAI.** Only the
+    human-readable branch named its tables. Both scripts now emit
+    `{organism, codon_reference_set, rows}` — a shape change to `--json` — and
+    `compare_reproducibility.py` gained the `--reference-set` flag it was missing.
+  - **`THIRD_PARTY_DATA.md` did not record PaxDb** (CC BY 4.0 — attribution is a
+    license obligation), and its codon-table row still described the tables as
+    "Kazusa-style representative published frequencies", stale since they were
+    recounted from Ensembl. Both rows are now accurate and split by reference set.
+  - **Three of my own CHANGELOG claims were wrong.** The "abundant enough to reach
+    a top-300 list" rationale survived in the Added section while the Fixed section
+    said it had been removed; the `%MinMax 56.3` figure was not reproducible (the
+    real value is **57.81**, and the entry now names the exact config that shows
+    it); and the Welch "worst-performing" correction was listed as done when an
+    exception had aborted that edit before it landed.
 - **Adversarial-review fixes, before the change shipped.** Three independent
   reviewers (data/provenance, `reference_set` plumbing, and a numeric audit of
   every prose claim) found nine real defects; all are fixed here, and the
@@ -104,8 +153,14 @@ its first tagged release.
     `compare_tools.py`, `compare_reproducibility.py` and `benchmark.py` all
     dropped `cfg.reference_set` when re-scoring, so every row on the published
     board was measured with a different table than the one that produced BT4's
-    sequence (invariant #2). Under a genome-wide config, `benchmark.py` reported
-    a %MinMax mean of 56.3 where the true value was 100.0.
+    sequence (invariant #2). Reproducible case: `benchmark.py` on protein
+    `MKTAYIAKQRQISFVKSHFSRQ` under
+    `OptimizeConfig(organism="saccharomyces_cerevisiae", reference_set="genome_wide")`
+    reported a %MinMax mean of **57.81** where the correct value is **100.0**.
+    Only callers passing a non-default `reference_set` could hit it — which is
+    every caller from the moment this same change added the `--reference-set`
+    flag, so it is a defect introduced and fixed in one release, not a latent
+    one that ever shipped.
   - **`load_provenance` failed open** on a sidecar with no `reference_set` key,
     validating it as whatever it was loaded as. The field is now required, and
     `write_table` gained it as a reserved parameter so it can no longer be

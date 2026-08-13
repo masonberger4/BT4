@@ -276,6 +276,16 @@ class StudioWindow(QtWidgets.QMainWindow):
         # controls -- reading them would relabel or recompute an old result
         # under a table it was not produced with.
         self._delivered_tables: tuple[str, str] = ("", "")
+        # The reference set the USER picked, as distinct from one the engine
+        # forced. Selecting an organism that has only genome_wide rewrites the
+        # combo to it; without remembering the real choice separately, switching
+        # back would keep genome_wide and silently opt every later run out of the
+        # default -- the same "quietly hands out a codon-commonness index" failure
+        # the organism default had, reachable in two clicks.
+        self._reference_choice: str = ""
+        # (organism, reference_set) of the run currently in flight; promoted to
+        # _delivered_tables when it finishes.
+        self._running_tables: tuple[str, str] = ("", "")
         self._msgbox: QtWidgets.QMessageBox | None = None
         self._cancel_requested = False
         # Live thread/worker references, kept only so neither is garbage-collected
@@ -608,6 +618,9 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.organism_combo.currentTextChanged.connect(
             lambda *_: self._update_organism_dependent_controls()
         )
+        # Only a real user edit reaches this slot: _update_reference_sets blocks
+        # signals while it repopulates.
+        self.reference_combo.currentTextChanged.connect(self._on_reference_set_chosen)
         self._update_organism_dependent_controls()
 
         return box
@@ -1385,6 +1398,11 @@ class StudioWindow(QtWidgets.QMainWindow):
 
     # ---- run --------------------------------------------------------------
 
+    def _on_reference_set_chosen(self, name: str) -> None:
+        """Record an explicit user pick of the reference set."""
+        if name:
+            self._reference_choice = name
+
     def _update_organism_dependent_controls(self) -> None:
         """Refresh every control whose valid values depend on the organism."""
         self._update_reference_sets()
@@ -1399,7 +1417,6 @@ class StudioWindow(QtWidgets.QMainWindow):
         exist and get an error at run time instead of an honest, absent option.
         The previous choice is kept when the new organism also has it.
         """
-        previous = self.reference_combo.currentText()
         try:
             sets = api.available_reference_sets(self.organism_combo.currentText())
         except ValueError:
@@ -1407,8 +1424,12 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.reference_combo.blockSignals(True)
         self.reference_combo.clear()
         self.reference_combo.addItems(list(sets))
-        if previous in sets:
-            self.reference_combo.setCurrentText(previous)
+        # Restore the user's own choice when this organism has it; otherwise fall
+        # to sets[0], which is the organism's default (highly-expressed wherever
+        # it exists). Reading back the combo's current text instead would treat a
+        # forced value as a preference.
+        if self._reference_choice in sets:
+            self.reference_combo.setCurrentText(self._reference_choice)
         self.reference_combo.blockSignals(False)
         # One option is not a choice; say why rather than showing a dead control.
         # BOTH branches set the tooltip: setting it only in the single-set branch
@@ -1693,6 +1714,13 @@ class StudioWindow(QtWidgets.QMainWindow):
         if not self._confirm_long_run(protein):
             return
         config, steps = self._build_config(enzymes)
+        # Frozen here, not in _on_finished: the run is asynchronous and the user
+        # can change the combos while it is in flight, so reading them on
+        # completion would label the result with tables it was not built from.
+        self._running_tables = (
+            config.organism,
+            config.reference_set or api.default_reference_set(config.organism),
+        )
 
         self._cancel_requested = False
         self._set_running(True)
@@ -2074,11 +2102,7 @@ class StudioWindow(QtWidgets.QMainWindow):
     def _on_finished(self, result: api.FrontierResult) -> None:
         """Populate the results panel from a finished frontier optimization."""
         self._last = result
-        delivered = result.delivered()
-        self._delivered_tables = (
-            self.organism_combo.currentText(),
-            str(delivered.audit.get("codon_reference_set", "")) if delivered else "",
-        )
+        self._delivered_tables = self._running_tables
         self._set_running(False)
         self._populate(result)
         if self._cancel_requested:

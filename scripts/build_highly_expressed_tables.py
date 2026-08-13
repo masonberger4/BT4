@@ -93,9 +93,10 @@ Usage::
     python scripts/build_highly_expressed_tables.py --verify
     python scripts/build_highly_expressed_tables.py --report        # no writes
 
-It is not imported by the library, and no BT4 *table* is
-ever fetched at runtime -- the only runtime network access BT4 has at all is
-the opt-in, explicitly-consented ASSP splice cross-check (CLAUDE.md §6).
+This is a maintainer tool: it reaches the network and writes into the package
+data directory. It is not imported by the library, and no BT4 *table* is ever
+fetched at runtime -- the only runtime network access BT4 has at all is the
+opt-in, explicitly-consented ASSP splice cross-check (CLAUDE.md §6).
 """
 
 from __future__ import annotations
@@ -601,6 +602,7 @@ def _fetch_pinned(url: str, dest: Path, expected_sha: str, label: str) -> str:
 def gather(spec: AbundanceSpec, cache_dir: Path, top_n: int) -> tuple[ReferenceSet, dict[str, str]]:
     """Download every pinned source for one organism and select its genes."""
     cds_spec = _cds_spec(spec.key)
+    check_pep_matches_cds_release(spec, cds_spec)
     paxdb_path = cache_dir / f"paxdb-{PAXDB_RELEASE}" / spec.paxdb_filename
     # The peptide FASTA and the CDS FASTA come from the SAME Ensembl release, so
     # they share that release's cache namespace. Ensembl reuses filenames across
@@ -624,6 +626,32 @@ def gather(spec: AbundanceSpec, cache_dir: Path, top_n: int) -> tuple[ReferenceS
     cds, filters, organelle_records = representative_cds_by_gene(cds_path)
     selected = select_reference_set(rows, index, cds, filters, organelle_records, top_n)
     return selected, digests
+
+
+def check_pep_matches_cds_release(spec: AbundanceSpec, cds_spec: OrganismSpec) -> None:
+    """Abort unless the peptide FASTA comes from the CDS set's own release.
+
+    ``AbundanceSpec.pep_url`` documents this as a requirement, but the URLs are
+    built from literals here while the CDS release lives in the sibling builder --
+    so a maintainer bumping ``ENSEMBL_RELEASE`` there would leave these peptide
+    URLs behind, and **both digest pins would still pass** because each file
+    matches its own pin. The failure that produces is silent and severe: versioned
+    gene IDs from two releases do not join, so most rows land in
+    ``rows_matched_whose_gene_has_no_counted_cds`` and the reference set is drawn
+    from whatever biased remnant survives. Checking the release is in the URL is
+    the cheap structural guard the prose alone was not.
+
+    Raises:
+        SystemExit: If the peptide URL is not from ``cds_spec``'s release.
+    """
+    marker = f"release-{cds_spec.release}/"
+    if marker not in spec.pep_url:
+        raise SystemExit(
+            f"{spec.key}: peptide FASTA {spec.pep_url} is not from "
+            f"{cds_spec.database} release {cds_spec.release}. The two must come "
+            "from the same release or their gene IDs will not join; update the "
+            "peptide URL (and its pinned digest) alongside the CDS release."
+        )
 
 
 def _cds_spec(key: str) -> OrganismSpec:

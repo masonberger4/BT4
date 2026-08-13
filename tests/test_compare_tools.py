@@ -131,15 +131,23 @@ def test_metrics_recomputed_from_sequence() -> None:
 
 
 def test_main_json_emits_valid_json(capsys: pytest.CaptureFixture[str]) -> None:
-    """``main(["--json"])`` returns 0 and emits parseable JSON with the expected keys."""
+    """``main(["--json"])`` emits the rows **and the tables they were scored with**.
+
+    The payload is an object rather than a bare list because a ``cai`` column
+    without its reference set does not say what it measured, and the JSON board is
+    the artifact most likely to be re-published away from the banner that says so.
+    """
     code = compare_tools.main(["--json"])
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert isinstance(payload, list)
-    assert len(payload) == 11
-    for row in payload:
+    assert payload["organism"] == "homo_sapiens"
+    assert payload["codon_reference_set"] == "highly_expressed"
+    rows = payload["rows"]
+    assert isinstance(rows, list)
+    assert len(rows) == 11
+    for row in rows:
         assert frozenset(row) == _EXPECTED_KEYS
-    assert payload[-1]["name"] == "BT4"
+    assert rows[-1]["name"] == "BT4"
 
 
 def test_main_table_prints_banner_and_headers(capsys: pytest.CaptureFixture[str]) -> None:
