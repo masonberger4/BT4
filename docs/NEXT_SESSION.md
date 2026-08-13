@@ -64,6 +64,22 @@ consented, clearly-labeled network control.
 
 ---
 
+## Strategic direction (read before picking large new work)
+
+A grounded 2026 survey of state-of-the-art codon / mRNA design lives in
+[`RESEARCH_codon_optimization_SOTA.md`](RESEARCH_codon_optimization_SOTA.md). Its
+top finding for BT4: the strongest *validated in-vivo* result in the field
+(**LinearDesign**, *Nature* 2023 — joint codon + mRNA-structure exact
+optimization, up to 128× antibody titre) is the **same class of algorithm as
+BT4's codon trellis**, and BT4 already has both ingredients (the trellis and a
+ViennaRNA model) but keeps folding in a refinement layer rather than jointly in
+the DP. Closing that — **position-aware joint codon + secondary-structure
+optimization** — is the highest-impact architectural opportunity; an
+mRNA-therapeutic mode (uridine depletion, m1Ψ slippery-sequence avoidance) and a
+codon-optimality/CSC term are the cheap additive follow-ons. These are
+*proposals to weigh*, not committed tasks; promote one into the queue below only
+by deliberate decision.
+
 ## Next-task queue
 
 Ordered. Each item is tagged by precondition. **Pick the first `self-contained`
