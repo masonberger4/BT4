@@ -6,7 +6,7 @@ Subcommands:
 * ``bt4 library PROTEIN --n N`` -- sample a library from the codon distribution
   (stochastic; SAMPLED certificate, not an optimum).
 * ``bt4 validate DNA`` -- audit a coding sequence against the constraints.
-* ``bt4 organisms`` -- list bundled codon-usage tables.
+* ``bt4 organisms`` -- list bundled codon-usage tables and their reference sets.
 * ``bt4 enzymes`` -- list known restriction enzymes.
 * ``bt4 build-table CDS.fasta`` -- build a codon table from a CDS FASTA.
 * ``bt4 --version`` -- print the single-sourced BT4 version.
@@ -112,6 +112,7 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         cpb_cds = tuple(seq for _header, seq in api.read_fasta(args.cpb_cds))
     return api.OptimizeConfig(
         organism=args.organism,
+        reference_set=args.reference_set,
         gc_target=args.gc_target,
         cai_weight=args.cai_weight,
         tai_weight=args.tai_weight,
@@ -153,6 +154,14 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--organism", default="homo_sapiens", help="codon-usage table (alias ok)")
+    parser.add_argument(
+        "--reference-set", default=None, dest="reference_set",
+        choices=list(api.REFERENCE_SETS),
+        help="which gene set the CAI weights come from: highly_expressed (the "
+             "reference set CAI is defined on; the default wherever bundled) or "
+             "genome_wide (codon commonness). Omit to use the organism's default; "
+             "see `bt4 organisms`",
+    )
     parser.add_argument("--gc-target", type=float, default=0.55, dest="gc_target")
     parser.add_argument("--cai-weight", type=float, default=1.0, dest="cai_weight")
     parser.add_argument("--tai-weight", type=float, default=0.0, dest="tai_weight",
@@ -244,7 +253,11 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
     print(f"protein   {result.protein}")
     print(f"dna       {result.dna}")
     print(f"length    {result.metrics.length_nt} nt")
-    print(f"CAI       {cai:.4f}")
+    # Name the reference set on the same line as the number: a CAI of 1.0 against
+    # highly-expressed counts and one against genome-wide counts are different
+    # claims, and the caller may not have passed --reference-set at all.
+    reference_set = result.audit.get("codon_reference_set", "")
+    print(f"CAI       {cai:.4f}" + (f"  (vs {reference_set})" if reference_set else ""))
     if "tai" in result.audit:
         print(f"tAI       {float(result.audit['tai']):.4f}")  # type: ignore[arg-type]
     print(f"GC        {result.metrics.gc * 100:.1f}%")
@@ -333,7 +346,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_tracks(args: argparse.Namespace) -> int:
     result = api.tracks(
-        args.dna, args.organism, nt_window=args.nt_window, codon_window=args.codon_window
+        args.dna,
+        args.organism,
+        reference_set=args.reference_set,
+        nt_window=args.nt_window,
+        codon_window=args.codon_window,
     )
     if args.json:
         payload = {
@@ -363,8 +380,10 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
 
 
 def _cmd_organisms(_args: argparse.Namespace) -> int:
+    print(f"{'organism':26} {'default':17} reference sets")
     for name in api.available_organisms():
-        print(name)
+        sets = api.available_reference_sets(name)
+        print(f"{name:26} {sets[0]:17} {', '.join(sets)}")
     return 0
 
 
@@ -456,7 +475,9 @@ def _parser() -> argparse.ArgumentParser:
     _add_common(p_val)
     p_val.set_defaults(func=_cmd_validate)
 
-    p_org = sub.add_parser("organisms", help="list bundled codon-usage tables")
+    p_org = sub.add_parser(
+        "organisms", help="list bundled codon-usage tables and their reference sets"
+    )
     p_org.set_defaults(func=_cmd_organisms)
 
     p_enz = sub.add_parser("enzymes", help="list known restriction enzymes")
@@ -468,6 +489,12 @@ def _parser() -> argparse.ArgumentParser:
     p_trk = sub.add_parser("tracks", help="per-site composition tracks (GC/CpG/%MinMax)")
     p_trk.add_argument("dna", help="ACGT coding sequence")
     p_trk.add_argument("--organism", default="homo_sapiens", help="table for the %MinMax track")
+    p_trk.add_argument(
+        "--reference-set", default=None, dest="reference_set",
+        choices=list(api.REFERENCE_SETS),
+        help="that organism's reference set for the %%MinMax frequencies "
+             "(default: the organism's own default)",
+    )
     p_trk.add_argument("--nt-window", type=int, default=50, dest="nt_window",
                        help="nucleotide window for the GC/CpG tracks")
     p_trk.add_argument("--codon-window", type=int, default=18, dest="codon_window",

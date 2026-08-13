@@ -57,15 +57,32 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
   **584-enzyme restriction catalog** derived from a version-pinned **REBASE**
   release (IUPAC-aware, auto reverse-complement, Type IIS included — BsaI,
   BsmBI, BbsI, SapI), content-hashed and re-derivable rather than hand-typed.
-- **Nine organisms:** human, mouse, rat, zebrafish, *Drosophila*, *C. elegans*,
-  *Arabidopsis*, *E. coli*, and *S. cerevisiae* — **all nine** are genome-wide
-  recounts from release-pinned Ensembl CDS sets. Every number is a real codon
-  count, stamped with the source URL, the source file's own SHA-256, the assembly,
-  the gene annotation, and the filter tally, so anyone can rebuild the exact
-  shipped bytes
-  (`python scripts/build_organism_tables.py --verify`). Real **tAI** tables from
-  GtRNAdb tRNA counts cover eight of the nine, and `bt4 build-table` builds an
-  authentic codon table from your own CDS FASTA.
+- **Nine organisms, two declared reference sets.** Human, mouse, rat, zebrafish,
+  *Drosophila*, *C. elegans*, *Arabidopsis*, *E. coli*, and *S. cerevisiae* — and
+  for eight of them BT4 ships CAI weights counted **two different ways**, because
+  `w = f/f_max` only means something relative to a set of genes:
+  - `highly_expressed` (**the default**) counts the **300 most abundant proteins**
+    per organism, ranked by **PaxDb** integrated proteomics — the reference set
+    Sharp & Li defined CAI on, so `w = 1` marks the codon translation *prefers*,
+    derived from measured abundance rather than a hand-picked 1987 gene list.
+  - `genome_wide` counts one representative CDS per gene across the whole
+    annotation, marking the codon that is merely most *common*.
+
+  They disagree exactly where translational selection is strong: eight amino acids
+  change their top codon in *E. coli* (`TTT`→`TTC`, `CGC`→`CGT`, `GGC`→`GGT`, …,
+  recovering the classic *E. coli* optimal codons), eleven in *C. elegans*, two in
+  human. Pick one with `--reference-set`; every result reports which it used.
+  *Arabidopsis* has only the genome-wide table — PaxDb identifies its proteins by
+  UniProt accession, which the pinned annotation does not carry, so BT4 ships no
+  highly-expressed table for it rather than one built on a guess.
+
+  Every number in every table is a real codon count, stamped with source URLs,
+  each source file's own SHA-256, the assembly, the annotation, and the join and
+  filter tallies, so anyone can rebuild the exact shipped bytes
+  (`python scripts/build_organism_tables.py --verify` and
+  `python scripts/build_highly_expressed_tables.py --verify`). Real **tAI** tables
+  from GtRNAdb tRNA counts cover eight of the nine, and `bt4 build-table` builds
+  an authentic codon table from your own CDS FASTA.
 - **Benchmarked against real tools:** `scripts/compare_tools.py` places BT4 next
   to GeneOptimizer / IDT / Twist / GenScript on a cited, CC BY 4.0 panel — every
   metric recomputed from the sequence, and BT4 never claimed "better", just placed.
@@ -191,7 +208,8 @@ pipx install "bt4[app] @ git+https://github.com/masonberger4/BT4"
 
 ### Desktop app
 
-`bt4-studio` (or `python -m bt4.app`): paste a protein, pick the organism, set a
+`bt4-studio` (or `python -m bt4.app`): paste a protein, pick the organism and
+its CAI **reference set** (highly-expressed by default), set a
 GC target / max-homopolymer / max GC length / max repeat length / forbidden
 motifs (and tick any forbidden-sequence presets), and click **Optimize**. **Hover
 any control for a tooltip explaining what it does.** Every run happens on a
@@ -237,7 +255,9 @@ bt4 validate ATGGCC...TAA --max-homopolymer 6                 # audit a sequence
 bt4 validate ATGGCC...TAA --splice-backend assp              # opt-in online ASSP cross-check (advisory, to stderr)
 bt4 optimize MAALKHETQW --check-splice assp                  # cross-check the delivered sequence with ASSP
 bt4 tracks ATGGCC...TAA --nt-window 50                        # per-site GC/CpG/%MinMax tracks
-bt4 organisms   # codon tables    bt4 enzymes   # enzymes    bt4 presets   # forbidden presets
+bt4 optimize MAALKHETQW --reference-set genome_wide            # codon commonness instead of the
+                                                              #   default highly-expressed weights
+bt4 organisms   # tables + reference sets    bt4 enzymes   # enzymes    bt4 presets   # forbidden presets
 bt4 build-table my_cds.fasta --organism my_species --out .    # table from real CDS
 ```
 

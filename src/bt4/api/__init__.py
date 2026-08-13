@@ -13,7 +13,16 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 from bt4.biomodels.codon.build import build_table, count_codons, write_table
-from bt4.biomodels.codon.tables import available_organisms
+from bt4.biomodels.codon.tables import (
+    GENOME_WIDE,
+    HIGHLY_EXPRESSED,
+    REFERENCE_SETS,
+    TableProvenance,
+    available_organisms,
+    available_reference_sets,
+    default_reference_set,
+    load_provenance,
+)
 from bt4.biomodels.codon.tai import available_tai_organisms
 from bt4.biomodels.expression import ExpressionPredictor, ExpressionResult
 from bt4.biomodels.expression import available_backends as available_expression_backends
@@ -59,6 +68,9 @@ from bt4.pipeline import (
 
 __all__ = [
     "AMINO_ACIDS",
+    "GENOME_WIDE",
+    "HIGHLY_EXPRESSED",
+    "REFERENCE_SETS",
     "Candidate",
     "CandidateSet",
     "CrossCheckSite",
@@ -74,6 +86,7 @@ __all__ = [
     "SpliceAuditReport",
     "SpliceCrossCheck",
     "SpliceFlag",
+    "TableProvenance",
     "Track",
     "TracksResult",
     "ValidationReport",
@@ -84,16 +97,19 @@ __all__ = [
     "available_expression_backends",
     "available_forbidden_presets",
     "available_organisms",
+    "available_reference_sets",
     "available_splice_backends",
     "available_tai_organisms",
     "build_table",
     "candidates",
     "count_codons",
+    "default_reference_set",
     "enzyme_provenance",
     "enzyme_suggestions",
     "expression_model",
     "frontier",
     "library",
+    "load_provenance",
     "optimize",
     "parse_fasta",
     "read_fasta",
@@ -194,6 +210,7 @@ def tracks(
     dna: str,
     organism: str = "homo_sapiens",
     *,
+    reference_set: str | None = None,
     nt_window: int = 50,
     codon_window: int = 18,
 ) -> TracksResult:
@@ -206,6 +223,8 @@ def tracks(
     Args:
         dna: An ACGT coding sequence (case-insensitive).
         organism: Codon-usage table key/alias for the %MinMax reference.
+        reference_set: That organism's reference set for the %MinMax
+            frequencies (``None`` = its default).
         nt_window: Window (nucleotides) for the GC and CpG tracks.
         codon_window: Window (codons) for the %MinMax track.
 
@@ -215,7 +234,13 @@ def tracks(
     Raises:
         ValueError: On non-ACGT input, a non-positive window, or unknown organism.
     """
-    return run_tracks(dna, organism, nt_window=nt_window, codon_window=codon_window)
+    return run_tracks(
+        dna,
+        organism,
+        reference_set=reference_set,
+        nt_window=nt_window,
+        codon_window=codon_window,
+    )
 
 
 def library(

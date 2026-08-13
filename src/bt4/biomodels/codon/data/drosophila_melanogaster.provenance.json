@@ -21,6 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Drosophila melanogaster (fruit fly)",
   "rebuild_command": "python scripts/build_organism_tables.py drosophila_melanogaster",
+  "reference_set": "genome_wide",
   "retrieved": "2026-08-13",
   "sha256": "2143d94ec40a0469759eff42b301634f954171436e5235817d5c7b58520295c4",
   "source": "Ensembl release 116 -- Drosophila melanogaster (fruit fly) CDS set (assembly BDGP6.54, annotation FlyBase dmel_r6.54_FB2023_05)",

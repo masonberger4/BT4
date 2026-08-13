@@ -36,6 +36,7 @@ class ConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     organism: str = "homo_sapiens"
+    reference_set: str | None = None
     gc_target: float = 0.55
     cai_weight: float = 1.0
     tai_weight: float = 0.0
@@ -82,6 +83,7 @@ class ConfigModel(BaseModel):
         """
         return api.OptimizeConfig(
             organism=self.organism,
+            reference_set=self.reference_set,
             gc_target=self.gc_target,
             cai_weight=self.cai_weight,
             tai_weight=self.tai_weight,
@@ -164,9 +166,21 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": __version__}
 
     @app.get("/organisms")
-    def organisms() -> dict[str, list[str]]:
-        """List the codon-usage organisms the engine can target."""
-        return {"organisms": list(api.available_organisms())}
+    def organisms() -> dict[str, object]:
+        """List the codon-usage organisms the engine can target.
+
+        Each entry names the reference sets bundled for that organism, in
+        preference order -- so a caller can see which ``reference_set`` values
+        are valid for it, and which one it will get by default, without having to
+        probe for a 400.
+        """
+        names = list(api.available_organisms())
+        return {
+            "organisms": names,
+            "reference_sets": {
+                name: list(api.available_reference_sets(name)) for name in names
+            },
+        }
 
     @app.post("/optimize")
     def optimize(request: OptimizeRequest) -> dict[str, object]:

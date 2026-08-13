@@ -276,7 +276,7 @@ def assemble_and_rank_candidates(
     config = config or OptimizeConfig()
     backend = predictor or expression_default()
     p = validate_protein(protein)
-    table = load_table(config.organism)
+    table = load_table(config.organism, reference_set=config.reference_set)
 
     fr = run_frontier(
         protein, config, steps, on_progress=on_progress, should_cancel=should_cancel

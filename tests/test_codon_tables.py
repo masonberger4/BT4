@@ -9,8 +9,12 @@ from pathlib import Path
 import pytest
 
 from bt4.biomodels.codon.tables import (
+    GENOME_WIDE,
+    HIGHLY_EXPRESSED,
+    REFERENCE_SET_SUFFIX,
     CodonUsageTable,
     available_organisms,
+    available_reference_sets,
     load_provenance,
     load_table,
     load_table_from_file,
@@ -135,10 +139,20 @@ def test_load_table_from_file_roundtrip(tmp_path: Path) -> None:
     assert table.organism == "toy"
 
 
-def test_provenance_sha256_matches_shipped_tsv() -> None:
-    prov = load_provenance("homo_sapiens")
-    raw = files("bt4.biomodels.codon.data").joinpath("homo_sapiens.tsv").read_bytes()
+@pytest.mark.parametrize("reference_set", [GENOME_WIDE, HIGHLY_EXPRESSED])
+def test_provenance_sha256_matches_shipped_tsv(reference_set: str) -> None:
+    prov = load_provenance("homo_sapiens", reference_set=reference_set)
+    stem = f"homo_sapiens{REFERENCE_SET_SUFFIX[reference_set]}"
+    raw = files("bt4.biomodels.codon.data").joinpath(f"{stem}.tsv").read_bytes()
     assert prov.sha256 == sha256_hex(raw)
+    assert prov.reference_set == reference_set
+
+
+def test_provenance_alias_respects_the_reference_set() -> None:
+    for reference_set in available_reference_sets("human"):
+        by_alias = load_provenance("human", reference_set=reference_set)
+        by_key = load_provenance("homo_sapiens", reference_set=reference_set)
+        assert by_alias == by_key
 
 
 def test_provenance_alias() -> None:

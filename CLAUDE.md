@@ -19,14 +19,16 @@ before writing code, and keep it current as the architecture evolves.
 >
 > **Current phase (one line):** Phases 0–2 complete · Phase 3 groundwork landed ·
 > Phase 4 **app polish landed**, learned head still calibration-blocked · Phase 5
-> opened. The honest exact-DP + Pareto core, the Rust trellis port, the
+> open, with **declared CAI reference sets** (highly-expressed by default) landed.
+> The honest exact-DP + Pareto core, the Rust trellis port, the
 > wrapped-but-**uncalibrated** RiboNN/SpliceAI/Pangolin models, the opt-in
 > out-of-loop **ASSP** cross-check, and the full expression/splice design flow are
 > all on `main` — and all of them now have a first-class BT4 Studio surface
-> (*Design* with the consented ASSP cross-check, *Candidates & splice audit* with
-> the opt-in RiboNN head, *Library (sampled)*, plus menus, shortcuts and runtime
-> theming); what remains is data/human-gated calibration, packaged installers, and
-> autonomous polish/breadth — see NEXT_SESSION.md.
+> (*Design* with the consented ASSP cross-check and the reference-set picker,
+> *Candidates & splice audit* with the opt-in RiboNN head, *Library (sampled)*,
+> plus menus, shortcuts and runtime theming); what remains is data/human-gated
+> calibration, packaged installers, and autonomous polish/breadth — see
+> NEXT_SESSION.md.
 >
 > This document was written after a full review of the BT3 codebase and *every*
 > BT3 branch (`master`, `almost-there`, `gemini`, `streamlit`, and the merged
@@ -268,7 +270,7 @@ optimality**.
 
 | Term | Nature | Solved where |
 |---|---|---|
-| CAI (Sharp & Li) | additive per-site | exact DP |
+| CAI (Sharp & Li), against a **declared reference set** (§8) | additive per-site | exact DP |
 | tAI (dos Reis) | additive per-site | exact DP |
 | Codon-pair bias (CPS) | pairwise (prev codon) | DP, state extended by prev codon |
 | 5′ ramp / %MinMax | positional, first ~30–50 codons | DP, position-aware weights |
@@ -565,10 +567,31 @@ control.
 - Codon / tAI / CPB tables are **provenanced datasets** with sidecar manifests
   (source DB, accession, genome build, CDS count, extraction date, SHA-256); the
   table's *content hash* enters the provenance stamp.
-- Reproducible **table-build pipeline**: `bt4 build-table --cds genes.fasta
-  --organism X [--highly-expressed ref]` recomputes fractions from a declared CDS
-  set. A test asserts a bundled table reproduces a *published* CAI for a
-  benchmark gene set. *(BT3 asserted "representative" with no such check.)*
+- **A codon table must declare its reference set, and the default is
+  highly-expressed.** `w = f/f_max` is meaningless without saying *which genes it
+  was counted over*, so every table carries a `reference_set` label that travels
+  with it into the result's audit, the CLI/app output, and the manifest — a
+  number and the question it answers are never separated. BT4 ships two, both
+  counted from public pinned sources by the same filtering rules so they differ
+  only in *which genes*: `highly_expressed` (the top-N most abundant proteins by
+  measured proteomics — CAI in Sharp & Li's original sense, `w = 1` marking the
+  codon translation *prefers*) and `genome_wide` (every gene, marking the codon
+  that is merely most *common*). Highly-expressed is the default wherever it
+  exists, because codon optimization targets a highly-expressed protein and a
+  genome-wide count is dominated by genes under no translational selection.
+  Requesting a reference set an organism lacks **raises**; it never silently
+  substitutes the other, and an organism whose abundance data cannot be joined to
+  the pinned annotation gets **no** highly-expressed table rather than a guessed
+  one. Neither table is a validated expression predictor — a highly-expressed
+  reference makes CAI a better-founded proxy, not a true one (§10.7).
+- Reproducible **table-build pipeline**: `scripts/build_organism_tables.py`
+  (genome-wide) and `scripts/build_highly_expressed_tables.py` (highly-expressed)
+  recount every bundled table from release-pinned public sources, each with a
+  `--verify` mode that rebuilds and diffs against the committed bytes *and*
+  sidecars; `bt4 build-table --cds genes.fasta --organism X` recomputes a table
+  from a user's own declared CDS set. A test asserts a bundled table reproduces a
+  *published* CAI for a benchmark gene set. *(BT3 asserted "representative" with
+  no such check.)*
 - **External ground truth, not just self-consistency.** Beyond round-trip and
   reported==computed, add a held-out set of real highly-expressed genes and test
   that BT4's output distributions (codon/GC/CpG) fall within the natural range
@@ -987,16 +1010,37 @@ control.
   smoothing in an invented number. The tables are checked against **external
   ground truth** (§8), not just self-consistency — GC3 ordering across species,
   mouse/rat independently landing within 1.5 points of human, and the known
-  preferred Leu/stop codons per species. Still ahead: further organisms (the
-  industrial gaps — CHO, *P. pastoris*, *B. subtilis*), a larger
-  restriction-enzyme catalog, tissue/condition-specific tables, and tissue/cell-type-specific
-  tables. **The three legacy hand-curated tables are done:** human, *E. coli* and
-  *S. cerevisiae* are now recounted through the same pinned-Ensembl pipeline as
-  the other six, so **all nine** bundled tables are re-derivable counts and no
-  organism — least of all the default — rests on undocumented numbers. The
-  rebuild changed no delivered sequence (byte-identical across a four-protein ×
-  three-organism panel; CAI moved ≤ 0.0003), because CAI normalizes within each
-  synonymous group and the most-preferred codon per amino acid was unchanged.
+  preferred Leu/stop codons per species. **The three legacy hand-curated tables
+  are done:** human, *E. coli* and *S. cerevisiae* are now recounted through the
+  same pinned-Ensembl pipeline as the other six, so **all nine** bundled tables
+  are re-derivable counts and no organism — least of all the default — rests on
+  undocumented numbers. That rebuild changed no delivered sequence (byte-identical
+  across a four-protein × three-organism panel; CAI moved ≤ 0.0003), because CAI
+  normalizes within each synonymous group and the most-preferred codon per amino
+  acid was unchanged.
+  **Declared CAI reference sets have now landed, and highly-expressed is the
+  default** (§8) — the change that moves BT4 off codon *commonness* as its
+  headline readout. `scripts/build_highly_expressed_tables.py` counts each
+  organism's 300 most abundant proteins, ranked by **PaxDb v6.1** whole-organism
+  integrated proteomics (CC BY 4.0) and joined to the *same* release-pinned
+  Ensembl CDS the genome-wide tables use, through that release's own peptide
+  FASTA — no third-party mapping layer, ambiguous identifiers dropped rather than
+  guessed, organelle-encoded genes excluded (different genetic code and tRNA
+  pool), and all three sources hash-pinned with a `--verify` rebuild. **N = 300 is
+  evidence, not taste:** it is the smallest size on a tested grid at which every
+  bundled organism observes all 64 codons, so no shipped table needed smoothing —
+  and far above it the reference set dilutes back into the genome-wide answer.
+  The tables reproduce the classic *E. coli* and yeast optimal codons and show
+  **stronger codon bias than genome-wide in all eight** organisms, with the gap
+  largest in yeast/fly and smallest in human/rat — the ordering dos Reis (2004)
+  predicts. Eight of nine organisms have one; *A. thaliana* does not, because
+  PaxDb identifies its proteins by UniProt accession that the pinned Ensembl
+  Plants annotation does not carry, so BT4 ships none for it rather than one built
+  on a guess. Still ahead: further organisms (the industrial gaps — CHO, *P.
+  pastoris*, *B. subtilis*) and a larger restriction-enzyme catalog.
+  **Tissue/cell-type-specific tables are deliberately out of scope** (maintainer
+  decision): the work is large, the resulting number is hard to qualify honestly,
+  and the upside over a whole-organism highly-expressed reference is small.
 
 ---
 

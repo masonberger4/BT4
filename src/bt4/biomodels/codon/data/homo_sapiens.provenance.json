@@ -21,6 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Homo sapiens (human)",
   "rebuild_command": "python scripts/build_organism_tables.py homo_sapiens",
+  "reference_set": "genome_wide",
   "retrieved": "2026-08-13",
   "sha256": "9dc0f8b73d591de3750a3e5dd8f9915340fc8fb83ce1221a4a3afee2d0852a31",
   "source": "Ensembl release 116 -- Homo sapiens (human) CDS set (assembly GRCh38, annotation Ensembl/GENCODE (release 116))",

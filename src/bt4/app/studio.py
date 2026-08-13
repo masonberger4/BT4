@@ -47,6 +47,10 @@ __all__ = ["StudioWindow", "main"]
 
 _METRIC_ROWS = (
     "CAI",
+    # CAI is meaningless without the gene set its weights were counted over, so
+    # the reference set is reported directly beneath it rather than left to the
+    # control panel (which the user may have changed since the run).
+    "CAI reference set",
     "GC %",
     "Length (nt)",
     "Scored codons",
@@ -331,6 +335,18 @@ class StudioWindow(QtWidgets.QMainWindow):
             "synonymous codons are preferred for the target organism.",
         )
 
+        self.reference_combo = QtWidgets.QComboBox()
+        self.reference_combo.setAccessibleName("CAI reference gene set")
+        self._add_row(
+            form, "Reference set", self.reference_combo,
+            "Which genes the CAI weights were counted over. 'highly_expressed' "
+            "uses the 300 most abundant proteins (PaxDb) -- the reference set "
+            "CAI was defined on, so w = 1 marks the codon translation prefers. "
+            "'genome_wide' counts every gene, marking the codon that is merely "
+            "most common. Only the sets bundled for the chosen organism are "
+            "listed; neither is a measured expression prediction.",
+        )
+
         self.jobname_edit = QtWidgets.QLineEdit()
         self.jobname_edit.setPlaceholderText("optional job name")
         self.jobname_edit.setAccessibleName("Job name")
@@ -565,12 +581,15 @@ class StudioWindow(QtWidgets.QMainWindow):
         buttons.addWidget(self.cancel_btn)
         form.addRow(buttons)
 
-        # tAI is only meaningful for organisms with a bundled tRNA table; keep the
-        # checkbox enabled/disabled in step with the chosen organism.
+        # Both of these depend on the chosen organism: tAI needs a bundled tRNA
+        # table, and the reference sets differ per organism (only A. thaliana
+        # lacks a highly-expressed one). Repopulating from the engine rather than
+        # from a hard-coded list means the app can never offer a table that is
+        # not actually bundled.
         self.organism_combo.currentTextChanged.connect(
-            lambda *_: self._update_tai_availability()
+            lambda *_: self._update_organism_dependent_controls()
         )
-        self._update_tai_availability()
+        self._update_organism_dependent_controls()
 
         return box
 
@@ -1301,6 +1320,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         order = (
             self.protein_edit,
             self.organism_combo,
+            self.reference_combo,
             self.jobname_edit,
             self.gc_spin,
             self.homo_spin,
@@ -1345,6 +1365,38 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.setTabOrder(first, second)
 
     # ---- run --------------------------------------------------------------
+
+    def _update_organism_dependent_controls(self) -> None:
+        """Refresh every control whose valid values depend on the organism."""
+        self._update_reference_sets()
+        self._update_tai_availability()
+
+    def _update_reference_sets(self) -> None:
+        """Re-list the reference sets bundled for the chosen organism.
+
+        The engine is the only authority on what is bundled, so the combo is
+        rebuilt from :func:`api.available_reference_sets` on every organism
+        change -- a stale entry would let the user ask for a table that does not
+        exist and get an error at run time instead of an honest, absent option.
+        The previous choice is kept when the new organism also has it.
+        """
+        previous = self.reference_combo.currentText()
+        try:
+            sets = api.available_reference_sets(self.organism_combo.currentText())
+        except ValueError:
+            sets = ()
+        self.reference_combo.blockSignals(True)
+        self.reference_combo.clear()
+        self.reference_combo.addItems(list(sets))
+        if previous in sets:
+            self.reference_combo.setCurrentText(previous)
+        self.reference_combo.blockSignals(False)
+        # One option is not a choice; say why rather than showing a dead control.
+        self.reference_combo.setEnabled(len(sets) > 1)
+        if len(sets) == 1:
+            self.reference_combo.setToolTip(
+                f"Only the {sets[0]} reference set is bundled for this organism."
+            )
 
     def _update_tai_availability(self) -> None:
         """Enable the tAI axis only for organisms that ship a tRNA table."""
@@ -1496,6 +1548,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         inverted = self.inverted_spin.value()
         config = api.OptimizeConfig(
             organism=self.organism_combo.currentText(),
+            reference_set=self.reference_combo.currentText() or None,
             gc_target=self.gc_spin.value(),
             max_homopolymer=homo if homo > 0 else None,
             max_gc_run=gc_run if gc_run > 0 else None,
@@ -2120,6 +2173,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         cert = delivered.certificate
         values = {
             "CAI": f"{float(delivered.audit['cai']):.4f}",
+            "CAI reference set": str(delivered.audit.get("codon_reference_set", "unknown")),
             "GC %": f"{metrics.gc * 100.0:.2f}",
             "Length (nt)": str(metrics.length_nt),
             "Scored codons": str(delivered.audit["n_scored_codons"]),
@@ -2206,7 +2260,12 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.tracks_plot.clear()
         organism = self.organism_combo.currentText()
         try:
-            tracks = api.tracks(delivered.dna, organism, nt_window=30)
+            tracks = api.tracks(
+                delivered.dna,
+                organism,
+                reference_set=self.reference_combo.currentText() or None,
+                nt_window=30,
+            )
         except ValueError:
             return
         gc = tracks.get("gc_fraction")
