@@ -201,7 +201,7 @@ trellis_solve: Callable[
 ]
 
 try:  # pragma: no cover - exercised only when the extension is built
-    import bt4_native as _native  # type: ignore[import-not-found]
+    import bt4_native as _native
 
     reverse_complement = _native.reverse_complement
     gc_count = _native.gc_count

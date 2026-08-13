@@ -41,8 +41,11 @@ RECOUNTED: tuple[str, ...] = (
     "caenorhabditis_elegans",
     "danio_rerio",
     "drosophila_melanogaster",
+    "escherichia_coli",
+    "homo_sapiens",
     "mus_musculus",
     "rattus_norvegicus",
+    "saccharomyces_cerevisiae",
 )
 
 _STOPS = ("TAA", "TAG", "TGA")
@@ -112,7 +115,10 @@ def test_provenance_is_a_real_recount_not_a_summary(name: str) -> None:
     # The load-bearing distinction from the older bundled tables: a real CDS
     # count stands behind these numbers, and the note says so plainly.
     assert prov.cds_count is not None
-    assert prov.cds_count > 5_000, "a genome-wide CDS set, not a sample"
+    # A genome-wide set, not a sample. The bound accommodates the smallest
+    # genome BT4 ships -- E. coli has only ~3,800 counted genes in total, which
+    # IS its whole genome, so a mammal-sized floor would wrongly reject it.
+    assert prov.cds_count > 3_000, "a genome-wide CDS set, not a sample"
     assert "Real genome-wide codon counts" in prov.note
     assert "REPRESENTATIVE" not in prov.note
 
@@ -291,3 +297,51 @@ def test_each_organism_stamps_a_distinct_manifest() -> None:
         manifest = json.loads(api.result_to_json(result))["audit"]["manifest"]
         stamps.add(json.dumps(manifest, sort_keys=True))
     assert len(stamps) == len(RECOUNTED)
+
+
+def test_expected_strong_biases_in_the_microbial_tables() -> None:
+    """Textbook biases must survive the switch from published values to recounts.
+
+    *E. coli* strongly prefers CTG for Leu and *S. cerevisiae* prefers AGA for
+    Arg. These held in the older hand-curated tables and must still hold now that
+    the numbers are counted from the genome -- old and new agreeing here is what
+    shows the recount reproduced the biology rather than merely replacing it.
+    """
+    assert load_table("escherichia_coli").weight("CTG") == pytest.approx(1.0)
+    assert load_table("saccharomyces_cerevisiae").weight("AGA") == pytest.approx(1.0)
+
+
+def test_every_bundled_organism_is_recounted() -> None:
+    """No organism may quietly fall back to an undocumented table.
+
+    BT4 used to ship three hand-typed "representative" tables, including the one
+    for its DEFAULT organism -- so the most-used numbers were the least checkable.
+    Every bundled organism is now a counted, re-derivable table, and this test is
+    what keeps a future addition from reintroducing the old asymmetry.
+    """
+    assert set(available_organisms()) == set(RECOUNTED)
+
+
+@pytest.mark.parametrize("name", RECOUNTED)
+def test_no_alt_or_patch_region_survived_filtering(name: str) -> None:
+    """No region that looks alternate/patch-like may be counted into a table.
+
+    Ensembl publishes alternate haplotypes and patch scaffolds with their own
+    gene IDs, so per-gene de-duplication does not collapse them and they inflate
+    a table with duplicate copies of real genes. A name blocklist can only
+    exclude conventions someone already knew about, and twice it did not: human's
+    ``HG*_NOVEL_TEST`` patches leaked 12 genes (9 of them second copies of chr11
+    olfactory receptors), and zebrafish's ``ALT_CTG*`` contigs leaked 4,127 genes
+    -- **15.6% of that species' table** -- past a filter that looked complete.
+
+    The builder therefore also counts anything it *kept* whose region name still
+    looks alternate/patch-like, and stamps it. This test requires that count to
+    be zero, so the next unknown naming variant fails here instead of quietly
+    inflating a shipped table. It is checkable offline, with no re-download.
+    """
+    filters = _raw_provenance(name)["filters"]
+    assert isinstance(filters, dict)
+    assert filters["kept_suspicious_region"] == 0, (
+        f"{name}: a region that looks like an alternate/patch locus was counted; "
+        "the filter's naming list has fallen behind the source"
+    )

@@ -379,7 +379,7 @@ def _import_httpx() -> Any:
             cross-check wrapper degrades gracefully.
     """
     try:
-        import httpx  # type: ignore[import-not-found]
+        import httpx
 
         return httpx
     except ImportError as exc:

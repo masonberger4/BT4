@@ -57,11 +57,23 @@ def test_alias_resolution() -> None:
 
 
 def test_weight_is_freq_over_group_max() -> None:
+    """w(codon) is its frequency divided by its synonymous group's maximum.
+
+    Derived from the table under test rather than pinned to literal frequencies:
+    the numbers belong to the *data*, which is rebuilt from source, while this
+    test is about the *formula*. Hard-coding one table's values made it fail on
+    any recount for a reason that had nothing to do with the code.
+    """
     table = load_table("homo_sapiens")
-    # Leucine's max-frequency codon in the shipped table is CTG (39.6).
-    assert table.weight("CTG") == pytest.approx(1.0)
-    assert table.weight("CTT") == pytest.approx(13.2 / 39.6)
-    # A single-box amino acid (Met) has weight 1.
+    leucines = [c for c, aa in CODON_TABLE.items() if aa == "L"]
+    group_max = max(table.frequency[c] for c in leucines)
+    for codon in leucines:
+        assert table.weight(codon) == pytest.approx(
+            table.frequency[codon] / group_max
+        )
+    # The most-used synonym normalizes to exactly 1...
+    assert max(table.weight(c) for c in leucines) == pytest.approx(1.0)
+    # ...as does a single-box amino acid (Met), trivially.
     assert table.weight("ATG") == pytest.approx(1.0)
 
 

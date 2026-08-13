@@ -6,12 +6,14 @@
   "database_release": "63",
   "filters": {
     "cds_counted": 27527,
+    "dropped_alt_locus_or_patch": 0,
     "dropped_internal_stop": 0,
     "dropped_no_atg_start": 81,
     "dropped_no_terminal_stop": 34,
     "dropped_non_acgt": 5,
     "dropped_non_representative_isoform": 20667,
     "dropped_not_multiple_of_three": 7,
+    "kept_suspicious_region": 0,
     "records_in_source": 48321
   },
   "genebuild": "Araport11",
@@ -19,7 +21,7 @@
   "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
   "organism_common_name": "Arabidopsis thaliana (thale cress)",
   "rebuild_command": "python scripts/build_organism_tables.py arabidopsis_thaliana",
-  "retrieved": "2026-08-12",
+  "retrieved": "2026-08-13",
   "sha256": "a9f3bba92bf8d8d7654f3bd61e64fec2262fae95a1dad58fe111b935e2287609",
   "source": "Ensembl Plants release 63 -- Arabidopsis thaliana (thale cress) CDS set (assembly TAIR10, annotation Araport11)",
   "source_sha256": "3580fd49dc079892359c1e5b7ffe76b7c2aa13718daa4daa6f397882ad41795d",

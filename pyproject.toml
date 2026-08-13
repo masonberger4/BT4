@@ -110,8 +110,30 @@ mypy_path = "src"
 # Both call only bt4.api -- the engine behind that surface stays fully strict.
 exclude = ['(^|/)bt4/app/', '(^|/)bt4/service/']
 
+# Third-party modules BT4 imports lazily behind a contract. None is a hard
+# dependency, so mypy must type-check the same whether or not the matching extra
+# happens to be installed. Declaring them here does that once, centrally --
+# rather than an inline `type: ignore[import-not-found]` per import, which is
+# *itself* flagged as an unused ignore in any environment where the module IS
+# present (numpy arrives transitively via pyqtgraph, so `[app]` alone used to
+# make `mypy` dirty).
 [[tool.mypy.overrides]]
-module = ["PySide6.*", "pyqtgraph.*", "fastapi.*", "pydantic.*", "ortools.*"]
+module = [
+  "PySide6.*",
+  "pyqtgraph.*",
+  "fastapi.*",
+  "pydantic.*",
+  "ortools.*",
+  "numpy.*",
+  "pandas.*",
+  "torch.*",
+  "tensorflow.*",
+  "httpx.*",
+  "pangolin.*",
+  "RNA.*",
+  "ViennaRNA.*",
+  "bt4_native.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

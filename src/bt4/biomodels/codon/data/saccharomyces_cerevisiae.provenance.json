@@ -1,8 +1,30 @@
 {
-  "source": "Kazusa Codon Usage Database (representative published Saccharomyces cerevisiae values)",
-  "build": "hand-curated representative table, per-thousand codon frequencies",
-  "cds_count": null,
-  "retrieved": "2026-07-31",
-  "sha256": "136a1ec0b3c45c04562c01db89e257da76d01f93ce17010d295d019a0ec7219f",
-  "note": "These are REPRESENTATIVE published Saccharomyces cerevisiae codon-usage values (Kazusa-style, per-thousand), NOT an authoritative per-genome recount from a specific CDS set. They reflect well-known yeast biases (e.g. strong preference for AGA at Arg and TTG/TTA at Leu). Frequencies are relative usage on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Do not present these as an exact genome-wide count."
+  "assembly": "R64-1-1",
+  "build": "genome-wide codon occurrence counts recounted from the pinned Ensembl CDS FASTA by scripts/build_organism_tables.py: one representative CDS per gene (the longest; ties broken by transcript id for determinism), keeping only ACGT-only sequences that are a multiple of three, start with ATG, end in a stop codon, and contain no internal stop. The terminal stop codon is counted; every other codon is a sense codon.",
+  "cds_count": 6574,
+  "database": "Ensembl",
+  "database_release": "116",
+  "filters": {
+    "cds_counted": 6574,
+    "dropped_alt_locus_or_patch": 0,
+    "dropped_internal_stop": 16,
+    "dropped_no_atg_start": 10,
+    "dropped_no_terminal_stop": 0,
+    "dropped_non_acgt": 0,
+    "dropped_non_representative_isoform": 0,
+    "dropped_not_multiple_of_three": 0,
+    "kept_suspicious_region": 0,
+    "records_in_source": 6600
+  },
+  "genebuild": "SGD",
+  "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049).",
+  "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
+  "organism_common_name": "Saccharomyces cerevisiae (baker's yeast)",
+  "rebuild_command": "python scripts/build_organism_tables.py saccharomyces_cerevisiae",
+  "retrieved": "2026-08-13",
+  "sha256": "d507ea3a628adf9bdca4619d7c4380b574564cd00781466c6b71f20b6e947afc",
+  "source": "Ensembl release 116 -- Saccharomyces cerevisiae (baker's yeast) CDS set (assembly R64-1-1, annotation SGD)",
+  "source_sha256": "159651a0141d5302c0541c33651fce5c067a47731eabc0955911a6fedd5d296d",
+  "source_url": "https://ftp.ensembl.org/pub/release-116/fasta/saccharomyces_cerevisiae/cds/Saccharomyces_cerevisiae.R64-1-1.cds.all.fa.gz",
+  "total_codons_counted": 2910790
 }

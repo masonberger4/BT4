@@ -989,10 +989,14 @@ control.
   mouse/rat independently landing within 1.5 points of human, and the known
   preferred Leu/stop codons per species. Still ahead: further organisms (the
   industrial gaps — CHO, *P. pastoris*, *B. subtilis*), a larger
-  restriction-enzyme catalog, tissue/condition-specific tables, and recounting the
-  three legacy hand-curated tables (human / *E. coli* / yeast — which would shift
-  CAI and therefore needs its own PR with the golden panel regenerated
-  deliberately).
+  restriction-enzyme catalog, tissue/condition-specific tables, and tissue/cell-type-specific
+  tables. **The three legacy hand-curated tables are done:** human, *E. coli* and
+  *S. cerevisiae* are now recounted through the same pinned-Ensembl pipeline as
+  the other six, so **all nine** bundled tables are re-derivable counts and no
+  organism — least of all the default — rests on undocumented numbers. The
+  rebuild changed no delivered sequence (byte-identical across a four-protein ×
+  three-organism panel; CAI moved ≤ 0.0003), because CAI normalizes within each
+  synonymous group and the most-preferred codon per amino acid was unchanged.
 
 ---
 
