@@ -7,6 +7,54 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **A measured product review, and a re-pointed queue**
+  (`docs/REVIEW_2026-08_expression_and_context.md`). BT4 was audited against what
+  it is *supposed* to be — a codon optimizer for **protein expression**, aware of
+  the **5′UTR** and the **vector backbone**, honouring user-specified
+  manufacturability rules, in a **simple honest UI**. Every number in the review
+  was produced by running the code in this tree, not read from a docstring, and
+  §10 carries the reproduction commands. **No source file changed; this is
+  documentation and a queue re-point.** Headline findings:
+  - **Verdict.** BT4 is an unusually well-engineered, unusually honest **CAI
+    optimizer with manufacturability constraints** — not yet an expression
+    optimizer, because **the optimizer only ever sees the CDS**. Folding is scored
+    on `CDS[0:48]` with no leader; the splice CNNs are scored on the CDS floating
+    in 5,000 literal `N` bases; RiboNN can take UTRs but sits where it is
+    structurally forbidden from influencing delivery. `OptimizeConfig` has 40
+    fields and not one is sequence outside the CDS.
+  - **Four defects, measured.** (1) `run_frontier` — the path **BT4 Studio's
+    Optimize button runs** — only *reports* GLOBAL rules, so setting *Max repeat
+    length* returns a green `proven_optimal` badge on a sequence with a 58-nt
+    repeat and 96 violations. (2) `run_validate` / `POST /validate` silently drop
+    every GLOBAL constraint, reporting zero violations on a sequence with a 31-nt
+    exact repeat; no test covers it. (3) `folding_dg` is computed whole-sequence
+    but labelled `5' dG` (optimized `-39.0`, reported `-138.0` on a 156-nt CDS) —
+    reported ≠ computed, invariant #2. (4) `avoid_internal_start` is infeasible on
+    82–100% of 400–700 aa proteins (Met is single-codon; `MAAMG` reproduces it),
+    and `InfeasibleError` names every *active* constraint rather than the culprit;
+    the `relax()` promised by §4.2 does not exist and `OptimalityStatus.RELAXED` is
+    defined but never used.
+  - **The default operating point is out of family.** BT4's own
+    `scripts/compare_tools.py` puts nine shipping tools at CAI 0.63–0.83 / GC
+    42–54% and BT4 alone at **CAI 1.000 / GC 62.4%**. Relatedly, **no GC-content
+    constraint exists at all**: the soft term is separable and saturates at weight
+    2 without reaching its target, and the hard count budget cannot control
+    clustering (74% worst 50-nt window at 50% total GC). A windowed-GC rule is
+    listed in CLAUDE.md §6 and was never built, though `bt4 tracks` already
+    computes the window.
+  - **The engine is strong; nothing leads the user to it.** CpG 47 → 0 costs 0.077
+    CAI and keeps a proven-optimal certificate, and a nine-flag AAV/LVV profile
+    produces a clean 700-aa design (CAI 0.882, GC 53.0%, 50-nt window 42–64%, CpG
+    5, zero hard violations) in 20.7 s — a combination no user will ever find.
+    Hence named application presets.
+- **Constitutional wording corrected to match the code** (§10.6 applied to BT4's
+  own framing): §1 now claims "optimized for **expression-relevant objectives**"
+  rather than "for real expression outcome", and states the CDS-in-isolation scope
+  explicitly; the `io/` architecture diagram and the BT4 Studio export bullet no
+  longer list **GenBank**, which is a design target that was never built (the
+  README was already accurate on both counts).
+
 ### Fixed
 - **Three confirmed-open findings from the completed verification workflow.** The
   exhaustive multi-lens review (seven lenses × three refuters per finding) was

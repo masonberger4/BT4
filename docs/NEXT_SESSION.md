@@ -24,6 +24,16 @@ and green on `main`.
 calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 `BLOCKED-human` (needs licensed weights / a maintainer machine) · `NOT-STARTED`.
 
+> ⚠️ **Four open defects, measured 2026-08** — read
+> [`REVIEW_2026-08_expression_and_context.md`](REVIEW_2026-08_expression_and_context.md)
+> §4 before trusting a `DONE` row below. Three of them break a §5 invariant on
+> `main` today: `run_frontier` reports but does not **enforce** GLOBAL rules (so
+> the GUI's Optimize button can badge a 58-nt repeat `proven_optimal`);
+> `run_validate` / `POST /validate` silently drop GLOBAL constraints entirely;
+> `folding_dg` is computed whole-sequence but labelled `5' dG`; and
+> `avoid_internal_start` is infeasible on 82–100% of 400–700 aa proteins with an
+> error that names the wrong constraints. They are queue item 1.
+
 | Component | State | Calibrated? | Primary file(s) |
 |---|---|---|---|
 | Exact-DP codon trellis + certificate | DONE | n/a | `optimize/exact_dp.py` |
@@ -66,33 +76,105 @@ consented, clearly-labeled network control.
 
 ## Strategic direction (read before picking large new work)
 
-A grounded 2026 survey of state-of-the-art codon / mRNA design lives in
-[`RESEARCH_codon_optimization_SOTA.md`](RESEARCH_codon_optimization_SOTA.md). Its
-top finding for BT4: the strongest *validated in-vivo* result in the field
-(**LinearDesign**, *Nature* 2023 — joint codon + mRNA-structure exact
-optimization, up to 128× antibody titre) is the **same class of algorithm as
-BT4's codon trellis**, and BT4 already has both ingredients (the trellis and a
-ViennaRNA model) but keeps folding in a refinement layer rather than jointly in
-the DP. Closing that — **position-aware joint codon + secondary-structure
-optimization** — is the highest-impact architectural opportunity; an
-mRNA-therapeutic mode (uridine depletion, m1Ψ slippery-sequence avoidance) and a
-codon-optimality/CSC term are the cheap additive follow-ons. These are
-*proposals to weigh*, not committed tasks; promote one into the queue below only
-by deliberate decision.
+Two documents set direction, and they now agree on the same conclusion from
+different ends.
+
+[`RESEARCH_codon_optimization_SOTA.md`](RESEARCH_codon_optimization_SOTA.md) is a
+grounded 2026 survey of the field. Its top finding: the strongest *validated
+in-vivo* result (**LinearDesign**, *Nature* 2023 — joint codon + mRNA-structure
+exact optimization) is the **same class of algorithm as BT4's codon trellis**, and
+BT4 already has both ingredients but keeps folding in a refinement layer rather
+than jointly in the DP.
+
+[`REVIEW_2026-08_expression_and_context.md`](REVIEW_2026-08_expression_and_context.md)
+is a measured audit of this tree against what BT4 is *supposed* to be. Its verdict:
+BT4 is an unusually well-engineered, unusually honest **CAI optimizer with
+manufacturability constraints**, not yet an expression optimizer — because **the
+optimizer only ever sees the CDS**. Folding is scored on `CDS[0:48]` with no
+leader; the splice CNNs are scored on the CDS floating in 5,000 literal `N` bases;
+RiboNN can take UTRs but sits where it cannot influence delivery. It also found
+**four defects measured by running the code**, three of which break a §5 invariant
+that is shipping today.
+
+The review's roadmap is the queue below. Note the dependency the two documents
+share: joint codon+structure optimization that knows the real 5′UTR is strictly
+better than joint folding that does not — so **construct context comes first**, and
+LinearDesign-class joint design stays a separate track with its own design doc.
 
 ## Next-task queue
 
 Ordered. Each item is tagged by precondition. **Pick the first `self-contained`
-item unless you have a reason not to.**
+item unless you have a reason not to.** Full evidence and file:line anchors for
+items 1–3 are in
+[`REVIEW_2026-08_expression_and_context.md`](REVIEW_2026-08_expression_and_context.md)
+§4 and §9.
 
-1. **[START HERE · self-contained] Phase-5 breadth, continued.** Nine organisms
-   ship **recounted genome-wide** codon tables (`scripts/build_organism_tables.py`),
-   eight of them also ship a **highly-expressed reference set**
-   (`scripts/build_highly_expressed_tables.py`, PaxDb top-300 — now the default),
-   and the **restriction-enzyme catalog is derived, not hand-typed**: 584
-   commercially available Type II enzymes (Type IIS included) from a
-   version-pinned REBASE release via `scripts/build_enzyme_catalog.py`, content
-   hashed and `--verify`-able. What remains:
+1. **[START HERE · self-contained] Tier 0 — the four measured defects.** Each is
+   small, each violates a §5 invariant, and each is reproducible by a command in
+   the review's §10.
+   - **`run_frontier` does not enforce GLOBAL rules** — it only reports them
+     (`pipeline/optimize.py:1026-1029`). This is the path **BT4 Studio's Optimize
+     button runs**, so a user who sets *Max repeat length* gets a green
+     `proven_optimal` badge on a sequence with a 58-nt repeat and 96 violations.
+     Suggested shape: refine the *delivered* point (degrading that point's
+     certificate to `HEURISTIC`) while other frontier points stay exact and
+     honestly labelled — the badge becomes per-point. **No frontier point may
+     claim `proven_optimal` while violating a GLOBAL rule.**
+   - **`run_validate` / `POST /validate` silently drop every GLOBAL constraint**
+     (`pipeline/optimize.py:1105` omits `_build_global_constraints`), so
+     `bt4 validate --max-repeat-length 8` reports zero violations on a sequence
+     with a 31-nt exact repeat. No test covers this.
+   - **`folding_dg` is whole-sequence but labelled `5' dG`**
+     (`pipeline/optimize.py:827` omits `window`; the SA optimized the 48-nt
+     window). Measured: optimized `-39.0`, reported `-138.0`. Fix it *structurally*
+     — one shared window function used by both objective and audit.
+   - **`avoid_internal_start` is infeasible on 82–100% of 400–700 aa proteins**
+     (Met is single-codon; `MAAMG` is a minimal reproducer), and `InfeasibleError`
+     names every *active* constraint rather than the culprit, with no residue
+     position. `relax()` (§4.2 of the constitution) does not exist, and
+     `OptimalityStatus.RELAXED` is defined but never used. **Blocks item 2.**
+2. **[self-contained · blocked by #1's `relax()`] Tier 1 — make the default
+   defensible.** BT4's own `scripts/compare_tools.py` shows nine shipping tools
+   clustered at CAI 0.63–0.83 / GC 42–54% while BT4's default sits alone at
+   **CAI 1.000 / GC 62.4%**. The engine is not wrong; the operating point is.
+   - **Windowed-GC constraint** — LOCAL, `context_len = window − 1`, exact in the
+     trellis. It is listed in CLAUDE.md §6 and was never built; there is **no
+     GC-content constraint of any kind** today. The soft term saturates at weight 2
+     without reaching its target (it is separable, `context_len() == 0`) and the
+     hard count budget cannot control clustering (74% window at 50% total GC). The
+     windowed computation already exists in `pipeline/tracks.py`.
+   - **Application presets** (`mammalian_plasmid`, `aav`, `lentiviral`, `mrna_ivt`,
+     `ecoli`) in a new `pipeline/presets.py`, mirroring the
+     `constraints/forbidden.py` catalog pattern. The manifest must carry the
+     **resolved field values**, never the preset name alone, and explicit user
+     knobs must win with the override reported. A preset is a design profile, never
+     a validated expression claim.
+   - **Frontier-point picker** in Studio — the plot already shows better-balanced
+     designs the user has no way to select.
+3. **[self-contained, then architectural] Tier 2 — construct context.** The actual
+   product gap: `OptimizeConfig` has 40 fields and not one is sequence outside the
+   CDS; the DP seeds from an empty prefix (`optimize/exact_dp.py:161`). Strictly
+   serial. See the review §9 Tier 2 for the full design, including why the right
+   move is to **wrap the constraints (`SeededConstraint`) rather than seed the DP
+   layer**, why objectives must stay CDS-local (invariant #4), the `cds_offset`
+   trap in `kozak.py`/`uorf.py`, the `masked_spans` requirement for AAV ITRs and
+   LVV LTRs, the whole-construct repeat **performance gate** (§10.8), and the fact
+   that giving the splice CNNs real flanks **invalidates the queued N-padded
+   fidelity attestation** rather than inheriting it.
+4. **[self-contained] Tier 3 — GenBank I/O.** A stdlib reader + writer in `io/`.
+   Already named three times in CLAUDE.md (`:105`, `:148`, `:463`) for a module
+   that was never built. The writer emitting **residual GLOBAL violations as
+   `misc_feature` annotations** is the highest value-per-line item in the roadmap.
+   SnapGene `.dna` stays out of scope with a precise "export GenBank instead" error.
+5. **[self-contained] Tier 4 — per-system biology.** Independent of Tier 2, so it
+   can land early: a *functional* poly(A) constraint (hexamer **plus** downstream
+   GU/U-rich element — still LOCAL at `context_len ≈ 36`), donor×acceptor splice
+   pairing as a report, AAV packaging-size accounting (reporting only — BT4
+   controls no lever), uridine depletion, m1Ψ slippery motifs, and a codon
+   optimality/CSC term.
+6. **[self-contained] Phase-5 breadth, continued.** Nine organisms ship recounted
+   genome-wide tables and eight also ship a highly-expressed reference set. What
+   remains:
    - **Add further organisms** by extending `SPECS` in `build_organism_tables.py`
      (CHO/*P. pastoris*/*B. subtilis* are the obvious industrial gaps). Pair each
      with GtRNAdb tRNA data and a PaxDb `SPECS_HE` entry where they exist; never
@@ -113,33 +195,41 @@ item unless you have a reason not to.**
      table, so tAI is unavailable exactly where translational selection is
      strongest and where `tai.py`'s bacterial `sking=1` lysidine path would
      finally be exercised.
-2. **[self-contained] Remaining BT4 Studio work.** The engine-ready backends are
-   now surfaced (RiboNN in the Candidates tab, the opt-in ASSP cross-check on the
-   Design tab), library mode has its own tab, and the menu bar / runtime
-   light-dark theming / tab-order-and-tooltip pass have landed. What is left is
-   smaller and optional: a **frontier-point picker** (click a point to deliver it),
-   **saving/restoring the control panel** between sessions, richer per-site risk
-   tracks (splice/folding beside GC/CpG), and a screenshot refresh for the README.
-3. **[self-contained] External-validation report** — compare BT4 output
+7. **[self-contained] Remaining BT4 Studio work.** Beyond the frontier-point picker
+   in item 2: a **basic/advanced split** (27 undifferentiated controls, of which
+   only 2 are ones a bench scientist must set), **protein file open + drag-drop**
+   (there is no `getOpenFileName` anywhere in the app today), driving the metrics
+   table from the audit dict instead of a hard-coded 9 rows (so
+   `max_repeat_enforced` / `uorf_residual` / tAI / CpG counts stop being CLI-only),
+   surfacing the **seven engine capabilities the GUI hides** (CpG/UpA budget, GC
+   budget, ramp axis, `--refine`, negative `cpb_weight`, `tandem_copies` /
+   `inverted_loop`, `seed`), saving/restoring the control panel, richer per-site
+   risk tracks, and a screenshot refresh.
+8. **[self-contained] External-validation report** — compare BT4 output
    codon/GC/CpG distributions against real highly-expressed gene panels (§8), using
    public data and BT4's own recompute functions.
-4. **[self-contained → then human] Packaged installers** — PyInstaller/Briefcase
+9. **[self-contained → then human] Packaged installers** — PyInstaller/Briefcase
    for macOS/Windows/Linux. Advance up to the point where signing / tag-pushing /
    release-cutting is needed; those steps are human-only (HTTP 403 in the sandbox).
-5. **[BLOCKED-human] Promote the splice CNNs to `calibrated=True`** — capture
-   reference panels and run `verify_pangolin_fidelity` / `verify_spliceai_fidelity`,
-   then commit a `FidelityAttestation`. Needs the licensed weights on a maintainer
-   machine. Never assign `calibrated=True` by hand — it is earned on data
-   (§10.5/§10.6).
-6. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — assemble a
-   license-clean, regime-matched **CDS-variant** TE panel and run
-   `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
-   split). Reproducing RiboNN faithfully is **not** calibration for BT4's
-   CDS-variant regime (its ablation puts only ~31% of per-nt signal in the CDS). Do
-   not relabel a hand-weighted composite as "calibrated".
-7. **[BLOCKED until #5/#6] Design-flow step 6** — targeted synonymous splice
-   **auto-edit** and RiboNN **auto-select**, each unlocked only once its backend
-   passes its gate.
+10. **[BLOCKED-human] Promote the splice CNNs to `calibrated=True`** — capture
+    reference panels and run `verify_pangolin_fidelity` / `verify_spliceai_fidelity`,
+    then commit a `FidelityAttestation`. Needs the licensed weights on a maintainer
+    machine. Never assign `calibrated=True` by hand — it is earned on data
+    (§10.5/§10.6). **Note the ordering hazard:** an attestation captured on the
+    N-padded path does not transfer to the flanked path of item 3.
+11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — assemble a
+    license-clean, regime-matched **CDS-variant** TE panel and run
+    `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
+    split). Reproducing RiboNN faithfully is **not** calibration for BT4's
+    CDS-variant regime (its ablation puts only ~31% of per-nt signal in the CDS). Do
+    not relabel a hand-weighted composite as "calibrated".
+12. **[BLOCKED until #10/#11] Design-flow step 6** — targeted synonymous splice
+    **auto-edit** and RiboNN **auto-select**, each unlocked only once its backend
+    passes its gate.
+13. **[separate track, needs its own design doc] Tier 5 — LinearDesign-class joint
+    codon + secondary-structure optimization.** The field's strongest validated
+    in-vivo result and architecturally native to the trellis. Depends on item 3
+    rather than competing with it.
 
 ---
 

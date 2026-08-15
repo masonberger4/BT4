@@ -26,8 +26,13 @@ before writing code, and keep it current as the architecture evolves.
 > all on `main` — and all of them now have a first-class BT4 Studio surface
 > (*Design* with the consented ASSP cross-check and the reference-set picker,
 > *Candidates & splice audit* with the opt-in RiboNN head, *Library (sampled)*,
-> plus menus, shortcuts and runtime theming); what remains is data/human-gated
-> calibration, packaged installers, and autonomous polish/breadth — see
+> plus menus, shortcuts and runtime theming). **A measured 2026-08 audit
+> ([`docs/REVIEW_2026-08_expression_and_context.md`](docs/REVIEW_2026-08_expression_and_context.md))
+> re-pointed what remains**: four defects reproducible by running the code — three
+> of which break a §5 invariant on `main` today — then a defensible default
+> operating point (BT4 ships CAI = 1.000 where nine other tools cluster at
+> 0.63–0.83), then **construct context**, the standing architectural gap. Data and
+> human-gated calibration, packaged installers, and breadth follow those — see
 > NEXT_SESSION.md.
 >
 > This document was written after a full review of the BT3 codebase and *every*
@@ -45,10 +50,22 @@ before writing code, and keep it current as the architecture evolves.
 ## 1. What BT4 is
 
 BT4 back-translates a **protein** into a **coding DNA / mRNA** sequence that is
-**optimized for real expression outcome** in a target organism (default *Homo
+**optimized for expression-relevant objectives** in a target organism (default *Homo
 sapiens*) **subject to biological constraints** (GC content, homopolymers,
 tandem/inverted repeats, forbidden & restriction motifs, internal ATG / Kozak /
 uORF, CpG budget, cryptic splice sites, 5′ mRNA folding).
+
+**Scope, stated honestly (§10.6 applied to BT4's own framing).** BT4 optimizes a
+**coding sequence**, and today it optimizes it **in isolation**: no field carries
+the 5′UTR, the vector backbone, or any sequence outside the CDS, so folding sees
+only `CDS[0:48]`, the splice CNNs see the CDS padded with literal `N`, and the
+initiator Kozak context is unreachable. "Expression-relevant objectives" is
+therefore the accurate claim — a validated *expression outcome* is not one BT4 can
+make, and must not be written as though it were. Making the design
+**construct-aware** is the standing architectural gap; see
+[`docs/REVIEW_2026-08_expression_and_context.md`](docs/REVIEW_2026-08_expression_and_context.md)
+for the measured evidence and
+[`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md) for the queue.
 
 The load-bearing idea BT4 inherits from BT3 and keeps as bedrock:
 
@@ -145,8 +162,9 @@ bt4/
   pipeline/      composes biomodels + objectives + constraints + solver into a
                  run. Owns the two-stage (exact core → non-local refinement)
                  orchestration and the Pareto sweep.
-  io/            fasta, genbank, json_out (versioned self-describing schema),
-                 run_manifest.
+  io/            fasta, json_out (versioned self-describing schema), run_manifest.
+                 (genbank is INTENDED, not built — see docs/NEXT_SESSION.md item 4;
+                 do not cite it as shipped.)
   provenance/    config_hash + full manifest (git SHA, table content hashes,
                  model SHAs, seed, tool version). Deterministic, no timestamp.
   api/           stable, print-free: optimize(), frontier(), validate(),
@@ -460,9 +478,13 @@ What the app does (design targets):
   a per-member table, and a multi-record FASTA export — banner-led with
   **sampled, not optimized**, its badge coloured directly from the `SAMPLED`
   certificate so the label cannot drift from the engine's claim.
-- **Export:** FASTA / GenBank / JSON **plus the run manifest**, so anything the
-  app shows is reproducible from its stamp (except explicitly network-derived
-  ASSP numbers, which never reach an export — regression-tested).
+- **Export:** FASTA / JSON (the run manifest rides inside the JSON's `audit`), so
+  anything the app shows is reproducible from its stamp (except explicitly
+  network-derived ASSP numbers, which never reach an export — regression-tested).
+  **GenBank export and a standalone manifest file are design targets, not shipped**
+  — and the annotated-construct writer (residual GLOBAL violations emitted as
+  `misc_feature`s, so honest residuals reach the map the user opens) is the highest
+  value-per-line item in the current queue.
 
 Accessibility, light/dark theming, and responsive layout are in scope — "nice"
 is a requirement, not a nice-to-have. **Landed:** a File/Run/View/Help menu bar
