@@ -380,8 +380,9 @@ See **[`docs/COMPARISON.md`](docs/COMPARISON.md)** for an honest, sourced
 positioning — including where BT4 genuinely differs (exact multi-objective
 optimization, optimality certificates, reproducible provenance, validated ML with
 honest calibration) **and where it does not** (empirical expression grounding,
-synthesis-manufacturability), plus the peer-reviewed caveat that the CDS is only a
-minority of the expression signal.
+synthesis-manufacturability), plus the peer-reviewed caveat that promoter,
+integration site and UTR design dominate any CDS-level result — integration site
+alone spans ~1,000×.
 
 ## Contributing
 

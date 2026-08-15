@@ -7,7 +7,96 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Changed
+- **Two load-bearing claims in the docs did not survive a fact-checking sweep, and
+  are corrected everywhere they appeared.** A six-lens literature review (joint
+  codon+structure design, 5'UTR-aware expression models, vector/AAV/LVV sequence
+  hazards, synthesis-vendor thresholds, the tool landscape, expression
+  determinants), each lens followed by an adversarial verification pass, re-checked
+  every claim in `docs/RESEARCH_codon_optimization_SOTA.md`. **No source behaviour
+  changed** -- the only file under `src/` touched is a module docstring.
+  - **"The CDS is a minority of the expression signal (~31%)" was a misreading of
+    RiboNN**, and it was repeated in seven places (`CLAUDE.md`, `README.md`,
+    `COMPARISON.md`, `DESIGN_expression_splice_flow.md`, `NEXT_SESSION.md`, the
+    survey, and `biomodels/expression/ribonn.py`). RiboNN reports **two**
+    attributions: per-nucleotide information density 67 / 31 / 2 and
+    **length-integrated total attribution 22 / 73 / 5** (5'UTR / CDS / 3'UTR,
+    human; mouse 23 / 73 / 4). Per base the 5'UTR is denser; **integrated over
+    length the CDS carries ~73% of the attributed translation-efficiency signal**.
+    Quoting only the first pair argued against BT4's own existence. The honest
+    ceiling is a different fact and is now stated as such: mRNA *abundance* rather
+    than translation rate is the majority channel for protein abundance (Li, Bickel
+    & Biggin 2014, >=56%), integration site alone spans ~1,000x (Akhtar 2013), and
+    Kozak context alone spans ~100x (Shukla 2026). The sharper reason RiboNN is not
+    calibrated for BT4 is now stated too: it has **never been shown to discriminate
+    synonymous CDS variants of the same protein under a fixed UTR**.
+  - **LinearDesign's "up to 128x" is not an expression result and has not
+    replicated.** The 57-128x is anti-spike IgG in n = 6 mice against a *vendor
+    codon optimizer's* output; HEK293 protein was **2.9x**, and the durable claim is
+    stability. Against it: an independent 2026 mammalian bake-off in which
+    "strategies prioritizing RNA stability consistently reduced expression" and
+    LinearDesign gave the lowest yields; monosome-dominated polysome profiles from
+    MFE-optimized mRNA (Leppek 2022); "folding free energy shows only a weak
+    correlation with in-cell lifetime and protein expression" (Jin 2025); and the
+    observation that MFE minimization is substantially a **GC-maximization proxy**,
+    so folding dG and GC are **not** independent Pareto axes. Joint codon+structure
+    optimization is therefore **demoted** from the survey's #1 recommendation and
+    from Tier 5 of the review; the part with uncontested evidence (position-
+    dependent structure, which needs a real cap distance) moves into the context
+    work instead.
+
 ### Added
+- **The construct-context gap is now evidence-backed, not just architectural.**
+  - **N-padding the splice CNNs is an artifact generator, not a neutral default.**
+    OpenSpliceAI documents that SpliceAI predicts donors and acceptors at N-padded
+    boundaries "with an extremely high signal that disappears when the sequence is
+    padded with the actual genomic sequence" -- so BT4 hallucinates sites at exactly
+    the two positions a designer cares about. Its re-benchmark shows accuracy rises
+    steeply only through ~400 nt of context, so **+/-400 nt of real flank beats
+    +/-5 kb of N**.
+  - **Every documented cassette-splicing failure has the acceptor in the vector**:
+    Cheng 2022 (13/17 genes at their own retained exon-exon junction, 17/17 at a V5
+    tag, acceptors from the mPGK-PuroR linker / SV40 / Neo-KanR), Kowarz 2022
+    (codon optimization *created* donors; acceptor was adenoviral pIX past the
+    poly(A)), De Ravin 2022 (a cHS4-insulator acceptor drove clonal expansion in a
+    clinical trial; fixed by a 2-bp AG->TG change).
+  - **oORF pairing is now the highest value-per-cost item in the roadmap.** An
+    out-of-frame AUG in the user's 5'UTR whose in-frame stop lands *inside* the CDS
+    represses significantly more than a non-overlapping uORF (Johnstone 2016,
+    P = 1.23e-3) -- and the stop position is a function of BT4's synonymous choices,
+    so BT4 can move it. Deterministic, no ML, no calibration gate, and no shipping
+    optimizer does it.
+  - **`RampTerm` implements a falsified mechanism.** It rewards *lower* codon
+    adaptiveness over the first ~35 codons; Goodman, Church & Kosuri (*Science* 342,
+    >14,000 reporters) found "reduced RNA structure and not codon rarity itself is
+    responsible." The 5' effect is real; the lever is wrong.
+  - **The highly-expressed reference premise is falsified in *E. coli***: Welch 2009
+    found the favourable codons were those read by tRNAs most charged under
+    starvation, *explicitly not* the codons abundant in highly expressed genes.
+    Keeping highly-expressed as the default stays defensible, but no tooltip may
+    imply it makes CAI predictive.
+  - **Radrizzani 2024 (*Nat Rev Genet*) is good news for BT4's direction**: human
+    synonymous-site selection is not translational selection but avoidance of
+    spurious transcripts, mis-splicing and cryptic splice sites, plus a
+    high-GC / low-CpG "self" signature -- which promotes things BT4 already ships to
+    first class while demoting CAI.
+  - **Prior art recorded so BT4 does not overclaim**: TIsigner already takes
+    `-u/--UTR` with mammalian accessibility windows, and DNA Chisel (MIT) already
+    evaluates constraints over an entire plasmid record. Context-as-constraint-scope
+    is not novel; context-as-optimization-substrate is.
+- **Vendor manufacturability rules BT4 lacks, exactly as published**: windowed GC
+  **range** (max - min across 50 bp windows <= 50 points, Twist DOC-001081 REV4), a
+  **Tm-based repeat trigger** (any repeat with Tm >= 60 C regardless of length --
+  length-only rules miss GC-rich short repeats), and **per-base homopolymer limits**
+  (IDT: A/T >= 10, G/C >= 6). Report a profile, not pass/fail, and do not hard-code
+  a threshold BT4 cannot cite.
+- **An expected-effect-size table** the app and CLI should render beside every
+  result, with each range cited and the vendor-authorship caveat attached.
+- **A "what NOT to do" section** in the survey -- fourteen plausible-sounding moves
+  the evidence refuses, including not building a single global MFE objective, not
+  asserting ensemble-free-energy design is NP-hard (it is explicitly open), not
+  flipping a model to `calibrated=True` because its *input* improved, and not
+  transmitting a user's vector backbone anywhere.
 - **A measured product review, and a re-pointed queue**
   (`docs/REVIEW_2026-08_expression_and_context.md`). BT4 was audited against what
   it is *supposed* to be — a codon optimizer for **protein expression**, aware of

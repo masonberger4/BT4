@@ -128,8 +128,20 @@ ethos requires stating it plainly:
   translational ramp, GC, CpG/UpA content, cryptic splicing, and — above all — 5′
   UTR and initiation-region folding all contribute (Tuller 2010; Coleman 2008;
   Hanson & Coller 2018).
-- **The CDS is a minority of the signal.** RiboNN's own analysis attributes
-  ~**67% of per-nucleotide signal to the 5′UTR and only ~31% to the CDS**.
+- **The CDS is a *dense* minority per nucleotide and the *majority* in total —
+  quote both or neither.** RiboNN reports **per-nucleotide** information density
+  of ~67% 5′UTR / 31% CDS / 2% 3′UTR, **and** a **length-integrated total
+  attribution of 22% / 73% / 5%** (human). Per base the 5′UTR is far denser; over
+  the whole transcript the CDS carries ~73% of the attributed
+  translation-efficiency signal. Citing only the first pair is the common misread
+  (see [`RESEARCH_codon_optimization_SOTA.md`](RESEARCH_codon_optimization_SOTA.md) §0).
+- **The real ceiling is upstream of translation efficiency entirely.** mRNA
+  *abundance*, not translation rate, is the majority channel for protein abundance
+  (Li, Bickel & Biggin, *PeerJ* 2:e270 (2014): mRNA levels explain ≥56%), and
+  **integration site alone spans ~1,000×** (Akhtar et al., *Cell* 154:914 (2013),
+  >27,000 random integrations) while **Kozak context alone spans ~100×** (Shukla
+  et al., *NAR* 54(14):gkag728 (2026)). Promoter, integration site and UTR design
+  will dominate any CDS-level result BT4 produces.
 - **Optimization can be harmful.** Maximizing yield can disrupt co-translational
   folding, causing misfolding, altered function, or cryptic immunogenic epitopes
   (Mauro & Chappell 2014). Harmonization is often preferable to maximization
@@ -183,8 +195,13 @@ peer-reviewed / primary sources, current as of this writing:
 - Mignon et al. 2018, *FEBS Letters* — codon harmonization vs maximization. <https://febs.onlinelibrary.wiley.com/doi/10.1002/1873-3468.13046>
 - Raab et al. 2010 — the GeneOptimizer sliding-window algorithm. <https://link.springer.com/article/10.1007/s11693-010-9062-3>
 - Zulkower & Rosser 2020, *Bioinformatics* — DNA Chisel. <https://academic.oup.com/bioinformatics/article/36/16/4508/5869515>
-- RiboNN (Zheng et al. 2024) — translation-efficiency CNN; ~31% of per-nt signal
-  in the CDS. <https://pubmed.ncbi.nlm.nih.gov/39149337/>
+- RiboNN (Zheng et al., *Nat Biotechnol* 44(5):783) — translation-efficiency CNN;
+  per-nt 67/31/2 **and** length-integrated 22/73/5 (5′UTR / CDS / 3′UTR).
+  <https://pubmed.ncbi.nlm.nih.gov/39149337/>
+- Li, Bickel & Biggin 2014, *PeerJ* 2:e270 — mRNA level explains ≥56% of protein
+  abundance. <https://peerj.com/articles/270/>
+- Akhtar et al. 2013, *Cell* 154:914 — TRIP; ~1,000× integration-site range.
+- Shukla et al. 2026, *NAR* 54(14):gkag728 — ~100× from the 6 nt before the AUG.
 - Independent multi-tool benchmark (2025). <https://pmc.ncbi.nlm.nih.gov/articles/PMC12010093/>
 
 > This document is a positioning and research-integrity statement, not a

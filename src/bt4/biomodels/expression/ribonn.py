@@ -37,7 +37,12 @@ not trip the §10.5 magic-scalar trap. Nonetheless ``calibrated`` starts **False
 and mirrors :attr:`fidelity_verified`: reproducing upstream RiboNN faithfully is
 necessary but not sufficient, because RiboNN was validated on *natural-transcript*
 TE while BT4 optimizes *CDS variants with fixed UTRs* (RiboNN's own ablation puts
-only ~31% of per-nucleotide signal in the CDS). Promotion to ``calibrated=True``
+only ~31% of per-*nucleotide* signal in the CDS -- though note its
+length-integrated total attribution is 22/73/5 for 5'UTR/CDS/3'UTR, so the CDS is
+the majority of the total signal; both numbers are real and quoting only one
+misleads). The load-bearing gap is different and sharper: RiboNN has never been
+shown to discriminate *synonymous CDS variants of the same protein under a fixed
+UTR*, which is exactly BT4's regime. Promotion to ``calibrated=True``
 is earned only by passing the acceptance gate
 (:func:`bt4.biomodels.expression.verify_expression_gate`) on a CDS-variant panel
 from the deployment regime — a maintainer step, never assigned here.

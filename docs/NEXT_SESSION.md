@@ -142,7 +142,15 @@ items 1–3 are in
      GC-content constraint of any kind** today. The soft term saturates at weight 2
      without reaching its target (it is separable, `context_len() == 0`) and the
      hard count budget cannot control clustering (74% window at 50% total GC). The
-     windowed computation already exists in `pipeline/tracks.py`.
+     windowed computation already exists in `pipeline/tracks.py`. Build the rule
+     vendors actually publish: **GC *range*** — max − min across 50 bp windows
+     ≤ 50 percentage points (Twist DOC-001081 REV4). Two cheap siblings, also
+     published and also absent: a **Tm-based repeat trigger** (flag any repeat with
+     Tm ≥ 60 °C regardless of length — length-only rules miss GC-rich short
+     repeats) and **per-base homopolymer limits** (IDT: A/T ≥ 10, G/C ≥ 6, the only
+     published asymmetry). Report a *profile*, not pass/fail — Twist's own docs say
+     "there is no single reason for the rejection of a sequence" — and do not
+     hard-code a threshold BT4 cannot cite.
    - **Application presets** (`mammalian_plasmid`, `aav`, `lentiviral`, `mrna_ivt`,
      `ecoli`) in a new `pipeline/presets.py`, mirroring the
      `constraints/forbidden.py` catalog pattern. The manifest must carry the
@@ -161,6 +169,29 @@ items 1–3 are in
    LVV LTRs, the whole-construct repeat **performance gate** (§10.8), and the fact
    that giving the splice CNNs real flanks **invalidates the queued N-padded
    fidelity attestation** rather than inheriting it.
+
+   **Do the sub-items in this order — the cheapest one is also the best-evidenced:**
+   - **oORF pairing across the junction** *(no ML, no gate, nothing else does it)*.
+     An out-of-frame AUG in the user's 5′UTR whose in-frame stop lands **inside the
+     CDS** is an oORF, which represses significantly more than a non-overlapping
+     uORF (Johnstone et al., *EMBO J* 35:706 (2016), P = 1.23e−3). The stop position
+     is a function of BT4's synonymous choices, so BT4 can **move** it. This is a
+     prefix-seed on the existing GLOBAL `avoid_uorf` constraint.
+   - **Junction-correct evaluation of every existing LOCAL constraint** (GC window,
+     GC-run, homopolymer, restriction sites, forbidden motifs) — mechanical once the
+     prefix is seeded.
+   - **Real flanks for the splice CNNs, never N-padding.** ±400 nt of real sequence
+     beats ±5 kb of N (OpenSpliceAI re-benchmark: +62%/+74% donor/acceptor from
+     80→400 nt, marginal thereafter), and N-padding is a *documented artifact
+     generator* at transcript boundaries. Fall back to the PWM baseline when real
+     flanks are unavailable, and say why.
+   - **Cap-distance-aware two-region folding** (§4c of the survey), which is where
+     the uncontested positional evidence lives.
+   - **Whole-construct audit + restriction-site uniqueness.** Note the prior art:
+     DNA Chisel (MIT) already evaluates `EnforceGCContent(window=50)` and
+     `AvoidPattern` over an entire plasmid record, and TIsigner already takes
+     `-u/--UTR`. Context-as-*constraint-scope* is not novel; context-as-
+     *optimization-substrate* is. Do not claim more than that.
 4. **[self-contained] Tier 3 — GenBank I/O.** A stdlib reader + writer in `io/`.
    Already named three times in CLAUDE.md (`:105`, `:148`, `:463`) for a module
    that was never built. The writer emitting **residual GLOBAL violations as
@@ -221,15 +252,42 @@ items 1–3 are in
     license-clean, regime-matched **CDS-variant** TE panel and run
     `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
     split). Reproducing RiboNN faithfully is **not** calibration for BT4's
-    CDS-variant regime (its ablation puts only ~31% of per-nt signal in the CDS). Do
+    CDS-variant regime — RiboNN **has never been shown to discriminate synonymous
+    CDS variants of the same protein under a fixed UTR**, which is exactly the
+    regime BT4 operates in. (Do *not* justify this with "only ~31% of signal is in
+    the CDS" — that is the per-nucleotide density; the length-integrated
+    attribution is 22/73/5, so the CDS is the majority. See the survey's §0.) Do
     not relabel a hand-weighted composite as "calibrated".
 12. **[BLOCKED until #10/#11] Design-flow step 6** — targeted synonymous splice
     **auto-edit** and RiboNN **auto-select**, each unlocked only once its backend
     passes its gate.
-13. **[separate track, needs its own design doc] Tier 5 — LinearDesign-class joint
-    codon + secondary-structure optimization.** The field's strongest validated
-    in-vivo result and architecturally native to the trellis. Depends on item 3
-    rather than competing with it.
+13. **[long-horizon, demoted] Tier 5 — LinearDesign-class joint codon +
+    secondary-structure optimization.** Previously ranked first; the 2026
+    verification sweep does not support that. Its headline number is antibody titre
+    in n = 6 mice against a vendor optimizer (HEK293 protein was **2.9×**), it has
+    never replicated, an independent 2026 mammalian bake-off found
+    stability-prioritizing strategies **reduced** expression, and MFE minimization
+    is substantially a **GC-maximization proxy** — so folding ΔG and GC are not
+    independent frontier axes. The part with uncontested evidence (position-
+    dependent structure) is cheap and belongs in item 3. Keep this as an option,
+    with the counter-evidence attached; never claim an MFE-minimized design
+    improves *expression*, only stability. See the survey §4.
+
+**Two open questions that block sequencing and are the maintainer's to answer:**
+
+- **Does the supplied 5′UTR / backbone enter the run manifest?** Hashing it makes a
+  context-dependent result reproducible from its stamp (invariant #9). But the
+  backbone is the user's IP, a hash is a fingerprint, and manifests are meant to be
+  shareable. This is a genuine conflict between two of BT4's own principles —
+  provenance completeness vs. nothing leaves the machine — and needs a deliberate
+  call, not a default. (Related and non-negotiable: the ASSP cross-check must be
+  hard-blocked from ever transmitting backbone bytes; the simplest honest answer is
+  to disable it whenever a backbone is loaded.)
+- **What is BT4's regime — IVT mRNA therapeutic, vector transgene, or both?** It is
+  upstream of almost everything: the 5′-structure sign, the CpG direction (deplete
+  for durable AAV, elevate for a vaccine), the length ceilings, and whether
+  "expression" means titre, half-life or immunogenicity all differ. A tool that
+  silently serves both will give one of them wrong advice.
 
 ---
 
