@@ -942,9 +942,16 @@ control.
   sequences* framing (a negative Δ flags a CDS change predicted to reduce
   expression), analogous to Pangolin's `delta_splicing`. It ships **`calibrated=False`**
   (`default()` still returns the neutral placeholder): reproducing RiboNN faithfully
-  is not calibration *for BT4's regime* (RiboNN's own ablation puts only ~31% of
-  per-nt signal in the CDS), so promotion needs a passing `verify_expression_gate`
-  on a CDS-variant panel — human-only, data-gated. New `bt4[expression-ribonn]`
+  is not calibration *for BT4's regime* — **and the reason is not the one this
+  document used to give.** RiboNN's ablation reports ~31% of per-*nucleotide*
+  signal in the CDS, but its **length-integrated** attribution is 22/73/5
+  (5′UTR/CDS/3′UTR), so the CDS is the *majority* of the total attributed signal;
+  quoting only the per-nt figure is a misread (see
+  [`docs/RESEARCH_codon_optimization_SOTA.md`](docs/RESEARCH_codon_optimization_SOTA.md)
+  §0). The load-bearing gap is sharper: RiboNN has never been shown to
+  **discriminate synonymous CDS variants of the same protein under a fixed UTR**,
+  which is exactly BT4's regime. So promotion needs a passing
+  `verify_expression_gate` on a CDS-variant panel — human-only, data-gated. New `bt4[expression-ribonn]`
   extra (torch + pandas, lazily imported so `import bt4` stays light). **First real
   end-to-end runs against the licensed weights have now happened** (on a
   maintainer's machine, human-run — the weights are non-commercial and never

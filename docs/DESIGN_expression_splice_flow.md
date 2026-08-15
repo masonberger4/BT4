@@ -136,9 +136,14 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
 
 ## Honest caveats (must survive into the UI and exports)
 
-- The CDS is a **minority of the expression signal** (~31% per RiboNN's ablation;
-  5′UTR/initiation folding dominates — see [`COMPARISON.md`](COMPARISON.md)). A
-  CDS-only optimizer, however exact, optimizes a minority of the signal.
+- **The CDS is a dense minority per nucleotide and the majority in total.** RiboNN
+  reports per-nt 67/31/2 **and** length-integrated 22/**73**/5 for
+  5′UTR/CDS/3′UTR; quoting only the first pair is the common misread (see
+  [`RESEARCH_codon_optimization_SOTA.md`](RESEARCH_codon_optimization_SOTA.md) §0).
+  The honest ceiling on a CDS-only optimizer is a different fact: mRNA *abundance*
+  rather than translation rate is the majority channel for protein abundance, and
+  promoter/integration site dominate (~1,000× range) — see
+  [`COMPARISON.md`](COMPARISON.md).
 - The in-loop splice-motif constraint reduces *obvious* risk only; it is **not** a
   CNN-equivalent guarantee.
 - SpliceAI/Pangolin/RiboNN are `calibrated=False` today; their contributions are

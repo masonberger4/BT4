@@ -405,6 +405,52 @@ Seven verified consequences:
 (`biomodels/splice/base.py:200`) — there is no place to pass flanking context at
 all. Making the models context-aware is a **contract change**, not a parameter.
 
+### The literature settled this while the review was running
+
+A six-lens verification sweep (see
+[`RESEARCH_codon_optimization_SOTA.md`](RESEARCH_codon_optimization_SOTA.md), revised
+2026-08) turned the context gap from an architectural preference into an
+evidence-backed defect:
+
+- **N-padding is not neutral — it is an artifact generator.** OpenSpliceAI (Chao et
+  al., *eLife* reviewed preprint 107454) documents that SpliceAI *"exhibits an
+  inherent bias near the starts and ends of transcripts which are padded with
+  flanking N's … predicting donor and acceptor sites in these boundaries with an
+  extremely high signal **that disappears when the sequence is padded with the
+  actual genomic sequence**."* BT4 hallucinates splice sites precisely at the two
+  positions a designer cares about most. The same re-benchmark shows accuracy rises
+  steeply only through ~400 nt (+62%/+74% donor/acceptor from 80→400 nt, marginal
+  thereafter) — so **±400 nt of real flank beats ±5 kb of N**, a strictly-better fix
+  costing one input field.
+- **Every documented cassette-splicing failure has the acceptor in the vector.**
+  Cheng et al. (*Int J Biol Sci* 18:4914, 2022): 13/17 genes spliced at their own
+  retained exon–exon junction and 17/17 at a V5 tag, with acceptors supplied by the
+  mPGK–PuroR linker, SV40 and Neo/KanR. De Ravin et al. (*Nat Commun* 2022): a
+  cryptic acceptor in a **cHS4 insulator** drove clonal expansion in a clinical
+  trial, fixed by a **2-bp `AG`→`TG`** change. **The CDS supplies one half; the
+  vector supplies the other.**
+- **The strongest uORF class cannot be computed from either half alone.** An
+  out-of-frame AUG in the user's 5′UTR whose stop lies *inside* the CDS is an
+  **oORF**, which represses significantly more than a non-overlapping uORF
+  (Johnstone et al., *EMBO J* 35:706, 2016; Wilcoxon P = 1.23e−3). The stop
+  position is set by BT4's synonymous choices — so BT4 could **move** it. This is
+  deterministic, needs no ML and no calibration gate, and **no shipping optimizer
+  does it.** It is the single highest value-per-cost item in the roadmap.
+- **Kudla's causal folding window is nt −4 to +37** — it *spans the junction*, and
+  explains 44–59% of expression variance in *E. coli*. BT4 cannot compute it.
+- **BT4's `RampTerm` implements a falsified mechanism.** It rewards *lower* codon
+  adaptiveness over the first ~35 codons. Goodman, Church & Kosuri (*Science*
+  342:475, 2013), >14,000 reporters: *"reduced RNA structure and not codon rarity
+  itself is responsible."* The 5′ effect is real; the lever is wrong.
+- **Two claims the repo carried did not survive**, and are corrected in this PR:
+  the "CDS is ~31% / a minority of the expression signal" framing (that is the
+  *per-nucleotide density*; the length-integrated attribution is 22/**73**/5), and
+  LinearDesign's "up to 128×" (that is anti-spike IgG in n = 6 mice versus a vendor
+  optimizer; HEK293 protein was 2.9×, it has never replicated, and an independent
+  2026 mammalian bake-off found *"strategies prioritizing RNA stability
+  consistently reduced expression"*). The second **demotes Tier 5** below the
+  context work.
+
 The project's own design-of-record already names this boundary:
 [`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md) lists
 *"Beyond-CDS design (5′UTR / initiation-region) — where the literature says most of
@@ -552,15 +598,25 @@ Independent of Tier 2, so it can land early for visible value.
 | m1Ψ slippery-sequence avoidance | LOCAL motif preset + a **per-base** homopolymer limit | `HomopolymerConstraint(6)` cannot express "U runs ≤ 3 but other runs ≤ 6". Applies **only** to m1Ψ-modified mRNA — meaningless for a plasmid, which is exactly the kind of context a preset makes legible. |
 | Codon optimality / CSC (mRNA stability) | LOCAL additive term | Distinct from tAI; a validated axis BT4 does not carry. |
 
-### Tier 5 — the flagship, separate track
+### Tier 5 — demoted by the evidence
 
-**LinearDesign-class joint codon + secondary-structure optimization** in the
-trellis. The field's strongest validated in-vivo result and architecturally native
-to BT4 — but a research project, not a PR, and it deserves its own design doc
-(already identified in
-[`RESEARCH_codon_optimization_SOTA.md`](RESEARCH_codon_optimization_SOTA.md) §4).
-Note the dependency runs the right way: joint folding that knows the real 5′UTR is
-strictly better than joint folding that does not, so **context first**.
+**LinearDesign-class joint codon + secondary-structure optimization** was the
+previous top architectural recommendation. The verification sweep does not support
+that ranking: the headline number is an antibody-titre result in n = 6 mice
+against a vendor optimizer (HEK293 protein was 2.9×), it has never replicated, an
+independent 2026 mammalian bake-off found stability-prioritizing strategies
+*reduced* expression, MFE-optimized mRNA gives monosome-dominated polysome
+profiles, and MFE minimization is substantially a **GC-maximization proxy** — so
+putting folding ΔG and GC on a frontier as independent axes would itself mislead.
+
+**What survives, and is cheap:** the *position-dependence* has uncontested
+numbers, and it needs a defined cap distance rather than a joint solver. A
+−30 kcal/mol hairpin 12 nt from the cap inhibits; the same hairpin at 50–60 nt
+does not; a 9-nt shift modulates translation >50-fold. That is a **two-region
+folding model anchored to a real 5′UTR** — Tier 2 work, not Tier 5. Retain the
+joint solver as a long-horizon option with its counter-evidence attached, and note
+the dependency runs the right way regardless: joint folding that knows the real
+5′UTR beats joint folding that does not, so **context first**.
 
 ### Sequencing
 
