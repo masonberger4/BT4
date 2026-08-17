@@ -315,6 +315,12 @@ optimality**.
 
 ### Constraints (each a new file + registry entry)
 
+**functional poly(A) signal** (`constraints/polya.py` — an `AATAAA`/`ATTAAA`
+hexamer forbidden *only* when a downstream U/GU-rich element follows it, the
+bipartite signal CPSF/CstF actually recognise; strictly more permissive than the
+blunt `poly_a_signal` hexamer preset, which remains available as the stricter
+option, and refinement-enforced because its ~45 nt footprint is far too wide for
+the trellis — a structural rule making no calibrated cleavage claim),
 GC, homopolymer, **max GC-run** (longest run of consecutive G/C, the "max GC
 length" knob — LOCAL, exact), tandem **and reverse-complement/inverted** repeats,
 **max repeat length** (any dispersed direct/inverted/palindromic repeat, anywhere,

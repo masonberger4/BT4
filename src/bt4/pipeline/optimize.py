@@ -37,6 +37,7 @@ from bt4.constraints.gc_run import GcRunConstraint
 from bt4.constraints.gc_window import GcWindowConstraint
 from bt4.constraints.kozak import InternalStartConstraint
 from bt4.constraints.max_repeat import MaxRepeatConstraint
+from bt4.constraints.polya import FunctionalPolyASignalConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint, enzyme_provenance
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
@@ -230,6 +231,18 @@ class OptimizeConfig:
         avoid_internal_start: When ``True``, forbid any internal ATG (past the
             first codon) sitting in a strong Kozak context (purine at -3 and G at
             +4) to suppress spurious re-initiation. Off by default.
+        avoid_polya: When ``True``, forbid **functional** polyadenylation signals --
+            an ``AATAAA``/``ATTAAA`` hexamer *paired with* a downstream U/GU-rich
+            element, which is the bipartite architecture the cleavage machinery
+            actually recognises (CPSF binds the hexamer, CstF the downstream
+            element). This is deliberately more permissive than the blunt
+            ``poly_a_signal`` forbidden preset, which bans every bare hexamer and so
+            discards synonymous choices to avoid sites that would never be used --
+            pick whichever suits your risk appetite; they compose. Its footprint
+            spans the hexamer plus the whole downstream search window, which is far
+            too wide for the exact trellis, so it is enforced by the refinement pass
+            and its residuals are reported honestly. A structural rule; it makes no
+            calibrated claim about cleavage efficiency.
         avoid_uorf: When ``True``, suppress out-of-frame internal ATGs that pair
             with a downstream in-frame stop -- short uORFs that divert ribosomes
             from the main ORF. This is a genuinely non-local (GLOBAL) rule, so it
@@ -327,6 +340,7 @@ class OptimizeConfig:
     inverted_loop: int = 0
     avoid_splice_sites: bool = False
     avoid_internal_start: bool = False
+    avoid_polya: bool = False
     avoid_uorf: bool = False
     uorf_region_nt: int = 100
     gc_min: int | None = None
@@ -556,6 +570,11 @@ def _build_global_constraints(config: OptimizeConfig) -> list[Constraint]:
         globals_.append(
             UorfConstraint(region_nt=config.uorf_region_nt, cds_offset=len(upstream))
         )
+    if config.avoid_polya:
+        # Footprint = hexamer + the whole downstream search window (~45 nt), so this
+        # is bounded but far too wide for the trellis; enforce it in refinement and
+        # report residuals rather than silently capping the context (§10.1).
+        globals_.append(FunctionalPolyASignalConstraint())
     if config.gc_window_nt is not None and config.gc_window_nt > _GC_WINDOW_TRELLIS_MAX_NT:
         globals_.append(
             GcWindowConstraint(
@@ -675,6 +694,7 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "inverted_loop": config.inverted_loop,
         "avoid_splice_sites": config.avoid_splice_sites,
         "avoid_internal_start": config.avoid_internal_start,
+        "avoid_polya": config.avoid_polya,
         "avoid_uorf": config.avoid_uorf,
         "uorf_region_nt": config.uorf_region_nt,
         "gc_min": config.gc_min,
@@ -1091,10 +1111,13 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
         and config.gc_window_nt > _GC_WINDOW_TRELLIS_MAX_NT
     )
     if (
-        config.max_repeat_length is not None or config.avoid_uorf or wide_gc_window
+        config.max_repeat_length is not None
+        or config.avoid_uorf
+        or config.avoid_polya
+        or wide_gc_window
     ) and has_budget:
         raise ValueError(
-            f"max_repeat_length / avoid_uorf / a gc_window_nt wider than "
+            f"max_repeat_length / avoid_uorf / avoid_polya / a gc_window_nt wider than "
             f"{_GC_WINDOW_TRELLIS_MAX_NT} nt are not supported together with a "
             f"{budget_label}: enforcing them needs a refinement "
             "pass that would not re-enforce the budget"

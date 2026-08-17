@@ -24,6 +24,11 @@ from bt4.pipeline.optimize import (
     run_optimize,
     run_validate,
 )
+from bt4.pipeline.packaging import (
+    PACKAGING_LIMITS,
+    PackagingReport,
+    packaging_report,
+)
 from bt4.pipeline.presets import (
     APPLICATION_PRESETS,
     ApplicationPreset,
@@ -43,6 +48,7 @@ from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 
 __all__ = [
     "APPLICATION_PRESETS",
+    "PACKAGING_LIMITS",
     "ApplicationPreset",
     "Candidate",
     "CandidateSet",
@@ -53,6 +59,7 @@ __all__ = [
     "InfeasibleError",
     "LibraryResult",
     "OptimizeConfig",
+    "PackagingReport",
     "SpliceCrossCheck",
     "Track",
     "TracksResult",
@@ -63,6 +70,7 @@ __all__ = [
     "audit_construct",
     "available_presets",
     "available_splice_backends",
+    "packaging_report",
     "rerank_by_expression",
     "resolve_preset",
     "resolve_splice_backend",
