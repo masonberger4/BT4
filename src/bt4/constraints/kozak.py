@@ -42,6 +42,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from bt4.domain.relax import SoftConstraint
 from bt4.domain.result import Severity, Violation
 from bt4.domain.scope import Scope
 
@@ -151,6 +152,22 @@ class InternalStartConstraint:
     def penalty(self, prefix: str, next_codon: str) -> float:
         """Return ``0.0`` (this constraint is purely hard)."""
         return 0.0
+
+    def relax(self) -> SoftConstraint:
+        """Return a soft form of this constraint for graceful degradation (§4.2).
+
+        ``avoid_internal_start`` is genuinely infeasible whenever an internal Met's
+        strong-Kozak context is synonymously forced -- Met is a single codon, and
+        the flanking residues can force a purine at -3 and a G at +4 (e.g. an Ala
+        before and a Gly after, whose codons all start with a G). Rather than
+        dead-end, the solver may relax to this soft form: the would-be-forbidden
+        internal ATGs are then reported as SOFT and the result's certificate is
+        downgraded to ``RELAXED`` naming this constraint (CLAUDE.md §4.2, invariant
+        #6). Declaring this method is also how the constraint *opts in* to being
+        relaxed (see :func:`bt4.domain.relax.is_relaxable`); a constraint without it
+        is never silently dropped.
+        """
+        return SoftConstraint(self)
 
     def validate(self, dna: str) -> Iterator[Violation]:
         """Yield one HARD violation per strong internal ATG in ``dna``.

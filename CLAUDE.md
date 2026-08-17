@@ -28,9 +28,13 @@ before writing code, and keep it current as the architecture evolves.
 > *Candidates & splice audit* with the opt-in RiboNN head, *Library (sampled)*,
 > plus menus, shortcuts and runtime theming). **A measured 2026-08 audit
 > ([`docs/REVIEW_2026-08_expression_and_context.md`](docs/REVIEW_2026-08_expression_and_context.md))
-> re-pointed what remains**: four defects reproducible by running the code — three
-> of which break a §5 invariant on `main` today — then a defensible default
-> operating point (BT4 ships CAI = 1.000 where nine other tools cluster at
+> re-pointed what remains**, and its four measured defects — three of which broke a
+> §5 invariant — are now **fixed** (honest `RELAXED` certificates for unenforced
+> GLOBAL rules on the frontier, GLOBAL-aware `validate`, a windowed `folding_dg`, and
+> a new opt-in constraint `relax()` with culprit-named infeasibility; see
+> [`docs/REVIEW_2026-08_sota_and_roadmap.md`](docs/REVIEW_2026-08_sota_and_roadmap.md)
+> §3, which also benchmarks BT4 against 2023–2026 SOTA). What remains: a defensible
+> default operating point (BT4 ships CAI = 1.000 where nine other tools cluster at
 > 0.63–0.83), then **construct context**, the standing architectural gap. Data and
 > human-gated calibration, packaged installers, and breadth follow those — see
 > NEXT_SESSION.md.

@@ -24,15 +24,16 @@ and green on `main`.
 calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 `BLOCKED-human` (needs licensed weights / a maintainer machine) · `NOT-STARTED`.
 
-> ⚠️ **Four open defects, measured 2026-08** — read
+> ✅ **The four Tier-0 defects (measured 2026-08) are FIXED.** See
+> [`REVIEW_2026-08_sota_and_roadmap.md`](REVIEW_2026-08_sota_and_roadmap.md) §3 for the
+> fix record and before/after reproduction, and
 > [`REVIEW_2026-08_expression_and_context.md`](REVIEW_2026-08_expression_and_context.md)
-> §4 before trusting a `DONE` row below. Three of them break a §5 invariant on
-> `main` today: `run_frontier` reports but does not **enforce** GLOBAL rules (so
-> the GUI's Optimize button can badge a 58-nt repeat `proven_optimal`);
-> `run_validate` / `POST /validate` silently drop GLOBAL constraints entirely;
-> `folding_dg` is computed whole-sequence but labelled `5' dG`; and
-> `avoid_internal_start` is infeasible on 82–100% of 400–700 aa proteins with an
-> error that names the wrong constraints. They are queue item 1.
+> §4 for the original measured evidence. `run_frontier` now downgrades a point that
+> violates a GLOBAL rule to a `RELAXED` certificate (never `proven_optimal`);
+> `run_validate` / `POST /validate` now audit GLOBAL constraints; `folding_dg` now
+> reports the optimized 5′ window; and `avoid_internal_start` degrades gracefully via a
+> new opt-in `relax()` with a culprit-named `InfeasibleError`. **Start here is now
+> Tier 1** (queue item 2).
 
 | Component | State | Calibrated? | Primary file(s) |
 |---|---|---|---|
@@ -109,31 +110,25 @@ items 1–3 are in
 [`REVIEW_2026-08_expression_and_context.md`](REVIEW_2026-08_expression_and_context.md)
 §4 and §9.
 
-1. **[START HERE · self-contained] Tier 0 — the four measured defects.** Each is
-   small, each violates a §5 invariant, and each is reproducible by a command in
-   the review's §10.
-   - **`run_frontier` does not enforce GLOBAL rules** — it only reports them
-     (`pipeline/optimize.py:1026-1029`). This is the path **BT4 Studio's Optimize
-     button runs**, so a user who sets *Max repeat length* gets a green
-     `proven_optimal` badge on a sequence with a 58-nt repeat and 96 violations.
-     Suggested shape: refine the *delivered* point (degrading that point's
-     certificate to `HEURISTIC`) while other frontier points stay exact and
-     honestly labelled — the badge becomes per-point. **No frontier point may
-     claim `proven_optimal` while violating a GLOBAL rule.**
-   - **`run_validate` / `POST /validate` silently drop every GLOBAL constraint**
-     (`pipeline/optimize.py:1105` omits `_build_global_constraints`), so
-     `bt4 validate --max-repeat-length 8` reports zero violations on a sequence
-     with a 31-nt exact repeat. No test covers this.
-   - **`folding_dg` is whole-sequence but labelled `5' dG`**
-     (`pipeline/optimize.py:827` omits `window`; the SA optimized the 48-nt
-     window). Measured: optimized `-39.0`, reported `-138.0`. Fix it *structurally*
-     — one shared window function used by both objective and audit.
-   - **`avoid_internal_start` is infeasible on 82–100% of 400–700 aa proteins**
-     (Met is single-codon; `MAAMG` is a minimal reproducer), and `InfeasibleError`
-     names every *active* constraint rather than the culprit, with no residue
-     position. `relax()` (§4.2 of the constitution) does not exist, and
-     `OptimalityStatus.RELAXED` is defined but never used. **Blocks item 2.**
-2. **[self-contained · blocked by #1's `relax()`] Tier 1 — make the default
+1. **[DONE 2026-08] Tier 0 — the four measured defects.** All four fixed in the
+   `codon-optimization-review` change; fix record + before/after reproduction in
+   [`REVIEW_2026-08_sota_and_roadmap.md`](REVIEW_2026-08_sota_and_roadmap.md) §3.
+   - **`run_frontier` now downgrades a GLOBAL-violating point to `RELAXED`** (never
+     `proven_optimal`) naming the unenforced rule, with the residual in the audit
+     (`pipeline/optimize.py::run_frontier`). Repair of a violating seed stays in
+     `run_optimize` and the candidate assembler; the frontier is a pure explorer.
+   - **`run_validate` / `POST /validate` now audit the GLOBAL constraints**
+     (`pipeline/optimize.py::run_validate`); covered by
+     `tests/test_pipeline_api.py::test_validate_enforces_global_max_repeat`.
+   - **`folding_dg` now reports the optimized 5′ window** (`model.score_sequence`),
+     so reported == computed; covered by
+     `test_refine_folding_audit_reports_optimized_window`.
+   - **`avoid_internal_start` degrades gracefully** via a new opt-in
+     `relax()` (`bt4.domain.relax.SoftConstraint`, `OptimalityStatus.RELAXED`
+     now used) and `InfeasibleError` names the failing residue + culprit
+     constraints (`optimize/exact_dp.py`). A non-opt-in rule (e.g. restriction) is
+     never silently dropped. **Tier 1 presets are now unblocked.**
+2. **[START HERE · self-contained] Tier 1 — make the default
    defensible.** BT4's own `scripts/compare_tools.py` shows nine shipping tools
    clustered at CAI 0.63–0.83 / GC 42–54% while BT4's default sits alone at
    **CAI 1.000 / GC 62.4%**. The engine is not wrong; the operating point is.

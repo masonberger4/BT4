@@ -36,6 +36,17 @@ def test_relaxed_certificate_records_terms() -> None:
     assert cert.relaxed_terms == ("cpg", "gc")
 
 
+def test_relaxed_helper_names_the_dropped_rule() -> None:
+    # The convenience constructor used when a hard rule is relaxed to stay feasible
+    # (CLAUDE.md §4.2, defect A.4): the status is RELAXED and the dropped rule is
+    # named, so the loss of the hard guarantee is never silent (invariant #6).
+    cert = OptimalityCertificate.relaxed("exact_dp", ("internal_start",), detail="forced Kozak")
+    assert cert.status is OptimalityStatus.RELAXED
+    assert not cert.is_proven_optimal
+    assert cert.relaxed_terms == ("internal_start",)
+    assert cert.solver == "exact_dp"
+
+
 def test_sampled_makes_no_optimality_claim() -> None:
     # Library / degenerate-design mode: a stochastic draw, never an optimum.
     cert = OptimalityCertificate(

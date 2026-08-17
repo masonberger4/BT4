@@ -392,8 +392,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.gc_spin.setAccessibleName("GC target fraction")
         self._add_row(
             form, "GC target", self.gc_spin,
-            "Desired overall GC fraction (0-1); the GC-proximity objective pulls "
-            "the sequence toward this value.",
+            "Desired overall GC fraction (0-1). This is a soft objective: Studio "
+            "sweeps it as a frontier axis, so it always shapes the trade-off here. "
+            "(In a single CLI/API solve it only applies when its weight is > 0.) "
+            "It nudges toward this value; it is not a hard bound.",
         )
 
         self.homo_spin = QtWidgets.QSpinBox()

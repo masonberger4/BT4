@@ -162,11 +162,19 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
              "genome_wide (codon commonness). Omit to use the organism's default; "
              "see `bt4 organisms`",
     )
-    parser.add_argument("--gc-target", type=float, default=0.55, dest="gc_target")
+    parser.add_argument("--gc-target", type=float, default=0.55, dest="gc_target",
+                        help="target GC fraction in [0,1] for the GC-proximity objective. "
+                        "This is a SOFT objective: on `bt4 optimize` it only steers the "
+                        "sequence when --gc-weight > 0 (default 0 = off, so --gc-target "
+                        "alone has no effect); the frontier always sweeps it. For a HARD "
+                        "GC bound use --gc-min/--gc-max")
     parser.add_argument("--cai-weight", type=float, default=1.0, dest="cai_weight")
+    parser.add_argument("--gc-weight", type=float, default=0.0, dest="gc_weight",
+                        help="weight on the GC-proximity objective in a single solve "
+                        "(0 = off; must be > 0 for --gc-target to steer `bt4 optimize`). "
+                        "For a hard GC-count window use --gc-min/--gc-max instead")
     parser.add_argument("--tai-weight", type=float, default=0.0, dest="tai_weight",
                         help="tRNA-adaptation-index weight (0 = off; human tRNA data only)")
-    parser.add_argument("--gc-weight", type=float, default=0.0, dest="gc_weight")
     parser.add_argument("--cpb-weight", type=float, default=0.0, dest="cpb_weight",
                         help="codon-pair-bias weight (0 = off; needs --cpb-cds). "
                         "Negative deoptimizes pairs (attenuated-vaccine design)")

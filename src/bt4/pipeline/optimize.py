@@ -56,6 +56,8 @@ from bt4.domain import (
     Violation,
     dominates,
     gc_fraction,
+    is_relaxable,
+    relax_constraint,
     translate,
     validate_dna,
     validate_protein,
@@ -66,7 +68,7 @@ from bt4.objectives.minmax import MinMaxTerm
 from bt4.objectives.ramp import RampTerm
 from bt4.objectives.tai import TaiTerm
 from bt4.objectives.terms import CaiTerm, GcProximityTerm
-from bt4.optimize import SolveResult, frontier_solver, solve_exact
+from bt4.optimize import InfeasibleError, SolveResult, frontier_solver, solve_exact
 from bt4.provenance import Manifest, build_manifest, resolve_git_commit
 
 __all__ = [
@@ -102,11 +104,20 @@ class OptimizeConfig:
             answer different questions, so a result that did not say which one
             it used would not be reproducible from its own stamp.
         gc_target: Desired GC fraction in ``[0, 1]`` for the GC-proximity term.
+            This is a **soft** objective: in a single :func:`run_optimize` solve it
+            only steers the sequence when ``gc_weight > 0`` (which defaults to
+            ``0.0``, so ``gc_target`` alone is inert there). :func:`run_frontier`
+            sweeps GC-proximity as a frontier axis regardless of ``gc_weight``, so
+            ``gc_target`` always matters on the frontier. For a *hard* GC bound use
+            the ``gc_min``/``gc_max`` count budget instead.
         cai_weight: Weight on the CAI (log-w) objective in a single solve.
         tai_weight: Weight on the tRNA-adaptation-index (log-w) objective (0
             disables it). Requires a bundled tAI table for ``organism`` (human
             ships one); other organisms raise until their tRNA data is added.
-        gc_weight: Weight on the GC-proximity objective in a single solve.
+        gc_weight: Weight on the GC-proximity objective in a single solve (``0.0``
+            = off, so ``gc_target`` has no effect on :func:`run_optimize` unless
+            this is ``> 0``; the frontier sweeps GC regardless). A hard GC-count
+            window is ``gc_min``/``gc_max``.
         cpb_weight: Weight on the codon-pair-bias (CPS) objective (0 disables it).
             Positive prefers over-represented (natural) codon pairs; a negative
             weight deoptimizes them (attenuated-vaccine design). PAIRWISE, so it is
@@ -669,9 +680,10 @@ def _solve_with_gc_budget(
     budget: the CP-SAT backend (see cpsat.py) solves it and proves optimality of
     the integer-scaled objective. When a local constraint or a pairwise term is in
     force -- which CP-SAT cannot encode -- the Lagrangian backend (see
-    lagrangian.py) dualizes the GC budget into the exact DP so those constraints
-    and terms stay honored, at the cost of a gap-bounded (not proven-optimal)
-    certificate. Both backends recompute the delivered metrics from the DNA, so a
+    lagrangian.py) folds the GC budget into an amount-bucketed *exact* DP so those
+    constraints and terms stay honored, with a ``PROVEN_OPTIMAL`` certificate (or
+    ``BEAM_TRUNCATED`` when a beam truncates a layer -- the budget stays exact
+    either way). Both backends recompute the delivered metrics from the DNA, so a
     budget is always honestly reported.
     """
     non_local = any(
@@ -824,7 +836,13 @@ def _refine(
     if model is not None:
         extra_audit["folding_model"] = model.name
         extra_audit["folding_calibrated"] = model.calibrated
-        extra_audit["folding_dg"] = model.five_prime_dg(result.dna)
+        # Report the *same* 5' window the SA optimized, not the whole sequence.
+        # score_sequence returns the 5' window dG directly (folding's fixed
+        # larger-is-better orientation), so this equals the folding objective the
+        # refinement maximized (line above: model.score_sequence(dna)). Reporting a
+        # whole-sequence dG under the CLI's "5' dG" label while optimizing only the
+        # window is a reported-vs-computed lie (invariant #2, defect A.3).
+        extra_audit["folding_dg"] = model.score_sequence(result.dna)
         # The folding backend changed the DNA, so its identity must enter the stamp
         # (invariant #9); folding_dg is an output metric and stays out of the hash.
         manifest_extra["folding_model"] = model.name
@@ -839,8 +857,10 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
 
     A GC budget (``gc_min``/``gc_max``) routes the solve through a budget backend:
     the OR-Tools CP-SAT backend for a pure additive, context-free objective with
-    no local constraints (proven optimal), or the Lagrangian backend when a local
-    constraint or pairwise term is in force (gap-bounded, but those are honored).
+    no local constraints (proven optimal), or the Lagrangian amount-bucketed
+    exact-DP backend when a local constraint or pairwise term is in force (also
+    proven optimal, with those constraints honored; beam-truncated only under a
+    beam).
     A dinucleotide count budget (``dinuc_budget`` with ``dinuc_min``/``dinuc_max``)
     always routes through the amount-bucketed exact DP (context-aware, since a
     2-mer straddles codon boundaries) with a proven-optimal certificate. The two
@@ -912,6 +932,13 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
     # delivered result carries every violation, including any residual max-repeat.
     report_constraints = [*constraints, *global_constraints]
     residues = [*p, STOP]
+    obj_context = max((term.context_len() for term, _ in active), default=0)
+    # The LOCAL set actually solved (and used to gate any refinement). It equals
+    # `constraints` unless a hard rule made the instance infeasible and was relaxed
+    # below; the delivered result is always audited against the ORIGINAL hard rules
+    # (`report_constraints`), so residuals stay honestly reported.
+    local_constraints: list[Constraint] = constraints
+    relaxed_names: tuple[str, ...] = ()
     if has_dinuc_budget:
         solve, certificate = _solve_with_dinuc_budget(residues, active, constraints, config)
     elif has_gc_budget:
@@ -921,14 +948,46 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
         # Python-side precompute costs about as much as the whole pure DP, so it
         # only pays off when amortized across many solves (the frontier sweep,
         # see run_frontier). Wiring it here would regress single-shot runs.
-        solve = solve_exact(
-            residues,
-            scalar_delta=_scalar_delta(active),
-            constraints=constraints,
-            beam=config.beam,
-            objective_context=max((term.context_len() for term, _ in active), default=0),
-        )
-        certificate = solve.certificate
+        try:
+            solve = solve_exact(
+                residues,
+                scalar_delta=_scalar_delta(active),
+                constraints=constraints,
+                beam=config.beam,
+                objective_context=obj_context,
+            )
+            certificate = solve.certificate
+        except InfeasibleError as exc:
+            # Graceful degradation (§4.2, defect A.4): if a culprit constraint opts
+            # in to relaxation (e.g. avoid_internal_start on a synonymously-forced
+            # Kozak context), drop it to a soft rule and re-solve rather than
+            # dead-end. Constraints that do not opt in (e.g. restriction sites) are
+            # never silently dropped -- the error propagates, naming the culprit.
+            relaxable_ids = {
+                id(c) for c in constraints if is_relaxable(c) and c.name in exc.constraints
+            }
+            if not relaxable_ids:
+                raise
+            local_constraints = [
+                relax_constraint(c) if id(c) in relaxable_ids else c for c in constraints
+            ]
+            relaxed_names = tuple(c.name for c in constraints if id(c) in relaxable_ids)
+            solve = solve_exact(
+                residues,
+                scalar_delta=_scalar_delta(active),
+                constraints=local_constraints,
+                beam=config.beam,
+                objective_context=obj_context,
+            )
+            certificate = OptimalityCertificate.relaxed(
+                "exact_dp",
+                relaxed_names,
+                detail=(
+                    "no sequence satisfied every hard rule; relaxed "
+                    f"{', '.join(relaxed_names)} to a soft rule and re-solved "
+                    "(residual violations are reported against the original hard rule)"
+                ),
+            )
     dna = solve.dna
     extra_audit: dict[str, object] | None = None
     manifest_extra: dict[str, object] | None = None
@@ -940,17 +999,19 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
         extra_audit = {f"{dn.lower()}_count": count}
     # Refine when the caller asked for folding, or when a non-local constraint
     # (max-repeat) is active and the exact-DP seed actually violates it -- a clean
-    # seed keeps its proven-optimal certificate and needs no perturbation.
+    # seed keeps its (proven-optimal or relaxed) certificate and needs no perturbation.
     seed_repeat_hard = sum(
         1 for c in global_constraints for v in c.validate(dna) if v.severity is Severity.HARD
     )
     needs_refine = config.refine or seed_repeat_hard > 0
     if needs_refine:
+        # Gate refinement on the SAME local set that was solved (relaxed, if a rule
+        # was relaxed), so refinement does not try to re-impose a dropped rule.
         dna, certificate, extra_audit, manifest_extra = _refine(
             dna,
             residues,
             active,
-            constraints,
+            local_constraints,
             global_constraints,
             config,
             with_folding=config.refine,
@@ -959,6 +1020,10 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
         # A non-local constraint is active but the proven-optimal seed already
         # satisfied it, so no refinement was needed: report it as cleanly enforced.
         extra_audit = _global_audit(dna, global_constraints, config)
+    if relaxed_names:
+        # Record the relaxation in the audit even when refinement replaced the
+        # certificate (e.g. a relaxed Kozak rule plus a refined max-repeat).
+        extra_audit = {**(extra_audit or {}), "relaxed_constraints": list(relaxed_names)}
     return _make_result(
         protein=p,
         dna=dna,
@@ -1013,9 +1078,20 @@ def run_frontier(
     The frontier uses the exact DP; a GC budget (``gc_min``/``gc_max``) applies
     to :func:`run_optimize` only, not here.
 
+    Non-local GLOBAL rules (``max_repeat_length`` / ``avoid_uorf``) cannot be
+    enforced by the exact DP, so a point that violates one has its certificate
+    **downgraded to ``RELAXED``** naming the unenforced rule (with the residual in
+    the audit), and a point that satisfies it keeps its certificate and is reported
+    clean. Badging a point ``PROVEN_OPTIMAL`` while it violates a rule the user set
+    would be a certificate lie (defect A.1, invariant #6). The frontier stays a pure
+    exact-solve *explorer*; *repairing* a violating seed lives in :func:`run_optimize`
+    (single solve) and :func:`~bt4.pipeline.candidates.assemble_and_rank_candidates`
+    (which refines the frontier's seeds for the expression reranker).
+
     Raises:
         ValueError: On an invalid protein or ``steps < 1``.
-        bt4.optimize.InfeasibleError: If the constraints admit no feasible codon.
+        bt4.optimize.InfeasibleError: If the constraints admit no feasible codon
+            (the error names the failing residue and the culprit constraints).
     """
     config = config or OptimizeConfig()
     if steps < 1:
@@ -1023,10 +1099,12 @@ def run_frontier(
     p = validate_protein(protein)
     table = load_table(config.organism, reference_set=config.reference_set)
     constraints = _build_constraints(config)
-    # The frontier is a pure exact-solve trade-off explorer: each point is
-    # proven-optimal for the local constraints, so the non-local max-repeat rule is
-    # only *reported* here (not refinement-enforced -- that lives in run_optimize).
-    report_constraints = [*constraints, *_build_global_constraints(config)]
+    global_constraints = _build_global_constraints(config)
+    # Local + global together are the reporting set. The exact DP cannot enforce the
+    # GLOBAL rules, so a point that violates one is reported honestly and its
+    # certificate downgraded below -- the frontier never badges PROVEN_OPTIMAL over a
+    # violated rule.
+    report_constraints = [*constraints, *global_constraints]
     residues = [*p, STOP]
 
     axes = _frontier_axes(table, config)
@@ -1059,16 +1137,44 @@ def run_frontier(
             break
         active = list(zip(axes, weights, strict=True))
         solve = solve_point(_scalar_delta(active), config.beam)
-        if solve.dna not in by_dna:
-            by_dna[solve.dna] = _make_result(
+        dna = solve.dna
+        certificate = solve.certificate
+        extra_audit: dict[str, object] | None = None
+        if global_constraints:
+            # Report each non-local rule honestly per point. The exact DP proves
+            # optimality for the LOCAL problem but cannot enforce a GLOBAL rule, so a
+            # point that violates one has its certificate downgraded to RELAXED
+            # (naming the unenforced rule); a clean point keeps its certificate. This
+            # is the A.1 fix: the frontier never badges PROVEN_OPTIMAL over a violated
+            # rule (invariant #6). With no global rule this block is skipped, so a
+            # plain CAI/GC frontier is byte-identical to before (invariant #7).
+            extra_audit = _global_audit(dna, global_constraints, config)
+            violated = tuple(
+                c.name
+                for c in global_constraints
+                if extra_audit.get(f"{c.name}_enforced") == "partial"
+            )
+            if violated:
+                certificate = OptimalityCertificate.relaxed(
+                    certificate.solver,
+                    violated,
+                    detail=(
+                        f"non-local rule(s) {', '.join(violated)} reported but not "
+                        "enforced by the exact frontier; see run_optimize / candidates "
+                        "for a refined (repaired) sequence"
+                    ),
+                )
+        if dna not in by_dna:
+            by_dna[dna] = _make_result(
                 protein=p,
-                dna=solve.dna,
+                dna=dna,
                 table=table,
                 terms=axes,
                 constraints=report_constraints,
-                certificate=solve.certificate,
+                certificate=certificate,
                 config=config,
                 alpha=weights[0],
+                extra_audit=extra_audit,
             )
         if on_progress is not None:
             on_progress(i + 1, total)
@@ -1093,7 +1199,14 @@ def run_frontier(
 
 
 def run_validate(dna: str, config: OptimizeConfig | None = None) -> ValidationReport:
-    """Audit a caller-supplied ``dna`` under ``config`` (no optimization).
+    """Audit a caller-supplied ``dna`` under *every* constraint ``config`` sets.
+
+    The audit covers both the LOCAL (exact-DP) constraints and the non-local
+    GLOBAL rules (``max_repeat_length`` / ``avoid_uorf``). A validator that
+    silently dropped the GLOBAL rules would return a false ``is_feasible`` for a
+    sequence that violates a rule the caller explicitly set -- a reported-vs-computed
+    lie (invariant #2). Every rule is checked by its own ``validate``, so the two
+    sources of truth (this audit and the optimizer's own reporting) agree.
 
     Raises:
         ValueError: On non-ACGT input.
@@ -1102,7 +1215,7 @@ def run_validate(dna: str, config: OptimizeConfig | None = None) -> ValidationRe
     d = validate_dna(dna)
     table = load_table(config.organism, reference_set=config.reference_set)
     terms = [term for term, _ in _active_terms(table, config)]
-    constraints = _build_constraints(config)
+    constraints = [*_build_constraints(config), *_build_global_constraints(config)]
     violations = _violations(d, constraints)
     if len(d) % 3 == 0:
         metrics = _metrics(d, terms, violations)
