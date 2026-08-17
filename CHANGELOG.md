@@ -7,6 +7,33 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **RiboNN gains cell-type selection and a fold-resolved read, closing two scope
+  errors that would have corrupted a calibration gate before it ever ran.** Both are
+  diagnostics and neither touches `calibrated`, which stays `False`.
+  - **`cell_types`** picks which of RiboNN's per-cell-type outputs to average (78
+    human / 68 mouse). Empty stays the default and averages all of them, which is the
+    right summary for a generic design -- but comparing the mean of 78 tissues against
+    a measurement from *one* cell line is a scope error, not a rounding error, so a
+    HEK293T panel is now scored with `cell_types=("HEK293T",)`. An unmatched name
+    **raises** and lists what is available rather than quietly averaging the wrong
+    set. The units label names the selection, so "mean over all human cell types" and
+    "mean over HEK293T" can never share a label in a report or manifest.
+  - **`predict_folds()`** returns `RiboNNFoldPrediction(index, fold, te)` per
+    (input, fold) instead of the fold mean. RiboNN emits one row per input per outer
+    fold, each already that fold's `top_k`-model mean; averaging all ten is correct
+    for the novel designed sequences BT4 produces -- no fold saw them -- and **wrong**
+    for a natural transcript, where nine folds trained on its own label, making the
+    averaged number optimistic and incomparable to RiboNN's published held-out
+    accuracy. Keeping the fold identity is what makes the zero-cost
+    adapter-validation check possible: score RiboNN's own published labels, keep the
+    holdout fold, and confirm the held-out r² lands near the published value while
+    the other nine sit visibly higher. If they are indistinguishable, the fold
+    semantics are wrong and every downstream number is uninterpretable.
+  - `_run_predict` now returns the raw table, and the fold-averaged and fold-resolved
+    views are two consumers of that **one** invocation and code path, so they cannot
+    drift; a test pins that the averaged view is exactly the mean of the resolved one.
+
 ### Changed
 - **The RiboNN adapter now forwards `batch_size` and `num_workers`, and a claim that
   it could not has been corrected in three places.** `ribonn.py`'s own comment,

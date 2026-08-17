@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -73,6 +74,7 @@ from bt4.domain.sequence import validate_dna
 __all__ = [
     "PINNED_WEIGHT_SHA256",
     "RiboNNExpressionModel",
+    "RiboNNFoldPrediction",
     "load_pinned_sha256",
 ]
 
@@ -106,6 +108,33 @@ def load_pinned_sha256() -> dict[str, str]:
 
 # The public pinned content hashes (loaded from the bundled manifest).
 PINNED_WEIGHT_SHA256: dict[str, str] = load_pinned_sha256()
+
+
+@dataclass(frozen=True, slots=True)
+class RiboNNFoldPrediction:
+    """One RiboNN ensemble-fold prediction for one input (immutable).
+
+    RiboNN's ``predict`` returns **one row per input per outer fold** (10 folds,
+    each row already the mean of that fold's ``top_k`` models), tagged with a
+    ``fold`` column. :meth:`RiboNNExpressionModel.score_many` averages those folds,
+    which is correct for a *novel designed* sequence -- no fold ever saw it.
+
+    It is **wrong** for a natural transcript, because nine of the ten folds had that
+    transcript's own label in training. Reproducing RiboNN's published held-out
+    accuracy therefore requires keeping only the fold that held the transcript out,
+    which needs the per-fold values rather than their mean -- hence this record and
+    :meth:`RiboNNExpressionModel.predict_folds`.
+
+    Attributes:
+        index: Position of the sequence in the ``dnas`` list that was scored.
+        fold: RiboNN's outer-fold id for this prediction.
+        te: Mean predicted TE over the selected cell types, in native CLR-residual
+            units (larger is better).
+    """
+
+    index: int
+    fold: int
+    te: float
 
 
 def _sha256_file(path: Path) -> str:
@@ -147,6 +176,15 @@ class RiboNNExpressionModel:
             ``(channels, 13318)`` float32 tensors is hundreds of MB *per batch*
             before worker prefetch, which OOMs an ordinary CPU box. Raise it on a
             GPU.
+        cell_types: Which of RiboNN's per-cell-type outputs to average. Empty (the
+            default) means **all** of them -- 78 columns for human, 68 for mouse.
+            Averaging all 78 is the right summary for a generic design, but it is a
+            **scope error** when comparing against a measurement from one cell line:
+            a HEK293T ribosome-load panel should be scored against
+            ``cell_types=("HEK293T",)``, not against the mean of 78 tissues. Names
+            are matched against RiboNN's ``predicted_TE_<name>`` output columns, and
+            an unmatched name **raises** (listing what is available) rather than
+            being quietly dropped.
         num_workers: DataLoader worker processes handed to RiboNN's ``predict``
             (its own default is 4). BT4 defaults to **0**, which is a correctness
             requirement rather than a tuning choice: this adapter scores from a
@@ -170,6 +208,7 @@ class RiboNNExpressionModel:
     weights_dir: str | None = None
     batch_size: int = 64
     num_workers: int = 0
+    cell_types: tuple[str, ...] = ()
     fidelity_verified: bool = field(default=False)
 
     def __post_init__(self) -> None:
@@ -181,6 +220,10 @@ class RiboNNExpressionModel:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
         if self.num_workers < 0:
             raise ValueError(f"num_workers must be >= 0, got {self.num_workers}")
+        if any(not name.strip() for name in self.cell_types):
+            raise ValueError("cell_types must not contain blank names")
+        if len(set(self.cell_types)) != len(self.cell_types):
+            raise ValueError(f"cell_types contains duplicates: {self.cell_types}")
 
     @property
     def name(self) -> str:
@@ -250,15 +293,20 @@ class RiboNNExpressionModel:
                     f"RiboNN weight {rel} sha256 {got} != pinned {want}; refusing to load"
                 )
 
-    def _predict_te(self, dnas: list[str]) -> list[float]:
-        """Run RiboNN on ``dnas`` and return one mean-TE (over cell types) per input.
+    def _run_predict(self, dnas: list[str]) -> tuple[Any, list[str]]:
+        """Run RiboNN on ``dnas`` and return its ``(raw prediction table, tx_ids)``.
 
-        Drives the user's RiboNN checkout: verifies weights, writes a temporary
-        input table (``tx_id, utr5_sequence, cds_sequence, utr3_sequence``) using the
-        fixed UTR context, calls the repo's
-        ``predict_using_nested_cross_validation_models``, and averages the
-        ``predicted_TE_*`` cell-type columns. Heavy deps and the repo's ``src`` are
-        imported here, never at module load.
+        Drives the user's RiboNN checkout: validates the inputs, verifies weights,
+        writes a temporary input table
+        (``tx_id, utr5_sequence, cds_sequence, utr3_sequence``) using the fixed UTR
+        context, and calls the repo's
+        ``predict_using_nested_cross_validation_models``. Heavy deps and the repo's
+        ``src`` are imported here, never at module load.
+
+        The *raw* table is returned (one row per input per outer fold) so both the
+        fold-averaged summary (:meth:`_predict_te`) and the fold-resolved view
+        (:meth:`predict_folds`) are served by one invocation and one code path --
+        there is no second scoring route to drift.
         """
         import csv
         import importlib
@@ -329,7 +377,44 @@ class RiboNNExpressionModel:
                 num_workers=self.num_workers,
             )
 
-        return _reduce_te_by_tx_id(out_df, tx_ids)
+        return out_df, tx_ids
+
+    def _predict_te(self, dnas: list[str]) -> list[float]:
+        """Return one fold-averaged mean-TE per input, in input order."""
+        out_df, tx_ids = self._run_predict(dnas)
+        return _reduce_te_by_tx_id(out_df, tx_ids, self.cell_types)
+
+    def predict_folds(self, dnas: list[str]) -> list[RiboNNFoldPrediction]:
+        """Return RiboNN's **per-outer-fold** predictions, not their mean.
+
+        :meth:`score_many` averages RiboNN's ten outer folds, which is right for the
+        novel designed sequences BT4 produces -- no fold ever saw them. It is wrong
+        for a *natural* transcript, where nine of the ten folds trained on that
+        transcript's own label, so the fold-averaged number is optimistic and cannot
+        be compared against RiboNN's published held-out accuracy.
+
+        This exposes the fold identity so a caller can keep only the fold that held a
+        given transcript out. That is what makes the free adapter-validation check
+        possible: score RiboNN's own published labels, keep the matching fold, and
+        confirm the held-out r^2 lands near the published value while the other nine
+        folds sit visibly higher. If they are indistinguishable, the fold semantics
+        are wrong and every downstream number is uninterpretable.
+
+        Args:
+            dnas: Coding sequences over ``{A,C,G,T}`` (start/stop codons included).
+                An empty list returns ``[]`` without touching the checkout.
+
+        Returns:
+            One :class:`RiboNNFoldPrediction` per ``(input, fold)`` pair, sorted by
+            ``(index, fold)``. Values are in native CLR-residual units and carry **no
+            calibration claim** -- this is a diagnostic surface, not a prediction API.
+        """
+        if not dnas:
+            return []
+        for dna in dnas:
+            validate_dna(dna)
+        out_df, tx_ids = self._run_predict(dnas)
+        return _reduce_te_by_tx_id_and_fold(out_df, tx_ids, self.cell_types)
 
     def score_sequence(self, dna: str) -> ExpressionResult:
         """Return RiboNN's predicted mean TE for ``dna`` (CLR-residual units).
@@ -384,7 +469,7 @@ class RiboNNExpressionModel:
             return []
         for dna in dnas:
             validate_dna(dna)
-        units = f"RiboNN CLR-residual TE (mean over {self.species} cell types)"
+        units = self._units()
         return [
             ExpressionResult(
                 score=te,
@@ -394,6 +479,21 @@ class RiboNNExpressionModel:
             )
             for te in self._predict_te(dnas)
         ]
+
+    def _units(self) -> str:
+        """Return the units label, naming the cell-type selection when explicit.
+
+        The label travels with every score into reports and the manifest, so it must
+        say *which* cell types were averaged -- "mean over human cell types" and
+        "mean over HEK293T" are different numbers and must not share a label.
+        """
+        if self.cell_types:
+            return (
+                "RiboNN CLR-residual TE (mean over "
+                + ", ".join(self.cell_types)
+                + ")"
+            )
+        return f"RiboNN CLR-residual TE (mean over all {self.species} cell types)"
 
     def delta_logte(self, designed_dna: str, reference_dna: str) -> float:
         """Return ``TE(designed) - TE(reference)`` -- the CDS-attributable signal.
@@ -444,34 +544,113 @@ class RiboNNExpressionModel:
         return [te - reference_te for te in designed_te]
 
 
-def _reduce_te_by_tx_id(out_df: Any, tx_ids: list[str]) -> list[float]:
-    """Reduce RiboNN's raw prediction table to one mean-TE per input, in input order.
+_TE_PREFIX = "predicted_TE_"
 
-    RiboNN returns the ensemble's predictions as **multiple rows per input** -- one per
-    cross-validation model kept by ``top_k`` -- each carrying the ``predicted_TE_*``
-    per-cell-type columns. The decision-relevant scalar is the mean over cell types
-    *and* over the ensemble, so we average the per-cell-type columns within each row and
-    then average those rows per ``tx_id``. Grouping collapses the ensemble (and is a
-    no-op when the table already has one row per input); a plain ``set_index`` left
-    duplicate ``tx_id`` labels, so ``float(ordered[tx_id])`` saw a Series and raised.
 
-    A ``tx_id`` absent from the output was dropped by RiboNN's length cap (5'UTR > 1381
-    or CDS+3'UTR > 11937 nt), so it is surfaced honestly rather than as a ``KeyError``.
+def _select_te_columns(out_df: Any, cell_types: tuple[str, ...]) -> list[str]:
+    """Return the ``predicted_TE_*`` columns to average, honouring ``cell_types``.
+
+    With ``cell_types`` empty, every per-cell-type column is used (RiboNN's own
+    summary: 78 human / 68 mouse). With names given, only those are used -- and an
+    unmatched name **raises** rather than being silently ignored, because quietly
+    averaging the wrong set of tissues is precisely the kind of scope error that
+    would show up later as an unexplained calibration failure.
+
+    Raises:
+        RuntimeError: If the table carries no ``predicted_TE_*`` columns at all.
+        ValueError: If a requested cell type has no matching column.
     """
-    te_cols = [c for c in out_df.columns if str(c).startswith("predicted_TE_")]
-    if not te_cols:
+    available = [c for c in out_df.columns if str(c).startswith(_TE_PREFIX)]
+    if not available:
         raise RuntimeError("RiboNN output had no predicted_TE_* columns")
-    means = out_df[te_cols].mean(axis=1)
-    ordered = out_df.assign(_te=means).groupby("tx_id")["_te"].mean()
-    results: list[float] = []
-    for i, tx_id in enumerate(tx_ids):
-        if tx_id not in ordered.index:
+    if not cell_types:
+        return available
+    by_name = {str(c)[len(_TE_PREFIX) :]: c for c in available}
+    selected: list[str] = []
+    missing: list[str] = []
+    for name in cell_types:
+        column = by_name.get(name)
+        if column is None:
+            missing.append(name)
+        else:
+            selected.append(column)
+    if missing:
+        raise ValueError(
+            f"RiboNN has no output for cell type(s) {sorted(missing)}; "
+            f"available: {sorted(by_name)}"
+        )
+    return selected
+
+
+def _reduce_te_by_tx_id_and_fold(
+    out_df: Any, tx_ids: list[str], cell_types: tuple[str, ...] = ()
+) -> list[RiboNNFoldPrediction]:
+    """Reduce RiboNN's table to one :class:`RiboNNFoldPrediction` per (input, fold).
+
+    RiboNN emits one row per input per outer fold (each row already that fold's
+    ``top_k``-model mean) tagged with a ``fold`` column. This averages the selected
+    per-cell-type columns within each row and keeps the fold identity, so a caller
+    can either average the folds (a novel sequence: no fold saw it) or keep only the
+    holdout fold (a natural transcript: nine folds trained on its label).
+
+    Rows are returned sorted by ``(index, fold)``. A table without a ``fold`` column
+    is treated as a single unlabelled fold (``-1``), which keeps synthetic
+    single-fold tables usable.
+
+    Raises:
+        ValueError: If an input has no prediction row -- RiboNN's length caps
+            (5'UTR > 1381 or CDS+3'UTR > 11937 nt) drop such rows.
+    """
+    te_cols = _select_te_columns(out_df, cell_types)
+    frame = out_df.assign(_te=out_df[te_cols].mean(axis=1))
+    position = {tx_id: i for i, tx_id in enumerate(tx_ids)}
+    row_tx_ids = [str(value) for value in frame["tx_id"]]
+    row_tes = [float(value) for value in frame["_te"]]
+    # A table with no ``fold`` column is one unlabelled fold; that keeps synthetic
+    # single-fold tables (and any future single-fold upstream mode) usable.
+    row_folds = (
+        [int(value) for value in frame["fold"]]
+        if "fold" in frame.columns
+        else [-1] * len(row_tx_ids)
+    )
+
+    grouped: dict[tuple[int, int], list[float]] = {}
+    for tx_id, fold, te in zip(row_tx_ids, row_folds, row_tes, strict=True):
+        index = position.get(tx_id)
+        if index is None:
+            continue  # a row for something we did not ask about; ignore it
+        grouped.setdefault((index, fold), []).append(te)
+
+    seen = {index for index, _ in grouped}
+    for i, _tx_id in enumerate(tx_ids):
+        if i not in seen:
             raise ValueError(
                 f"RiboNN produced no prediction for input {i}; its CDS likely "
                 "exceeds RiboNN's length cap (CDS+3'UTR <= 11937 nt)"
             )
-        results.append(float(ordered[tx_id]))
-    return results
+    return [
+        RiboNNFoldPrediction(index=index, fold=fold, te=math.fsum(values) / len(values))
+        for (index, fold), values in sorted(grouped.items())
+    ]
+
+
+def _reduce_te_by_tx_id(
+    out_df: Any, tx_ids: list[str], cell_types: tuple[str, ...] = ()
+) -> list[float]:
+    """Reduce RiboNN's raw prediction table to one mean-TE per input, in input order.
+
+    The fold-averaging summary: :func:`_reduce_te_by_tx_id_and_fold` then a mean over
+    folds per input. Correct for the *novel designed* sequences BT4 produces, since no
+    ensemble fold has seen them; see :class:`RiboNNFoldPrediction` for why it is wrong
+    for a natural transcript.
+    """
+    per_fold = _reduce_te_by_tx_id_and_fold(out_df, tx_ids, cell_types)
+    by_index: dict[int, list[float]] = {}
+    for record in per_fold:
+        by_index.setdefault(record.index, []).append(record.te)
+    return [
+        math.fsum(by_index[i]) / len(by_index[i]) for i in range(len(tx_ids))
+    ]
 
 
 def _run_predict_with_models_layout(

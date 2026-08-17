@@ -426,3 +426,137 @@ def test_resolve_backend_threads_batch_knobs() -> None:
     assert isinstance(model, RiboNNExpressionModel)
     assert (model.batch_size, model.num_workers) == (16, 2)
     assert model.calibrated is False  # a knob is not a calibration claim
+
+
+# --- cell-type selection and fold semantics -----------------------------------
+#
+# RiboNN emits one row per input per outer fold (10), each already that fold's
+# top_k-model mean, across 78 human / 68 mouse per-cell-type columns. Averaging
+# every fold is right for a novel designed sequence and wrong for a natural one
+# (nine folds trained on its label); averaging all 78 cell types is right for a
+# generic design and wrong when the ground truth came from one cell line.
+
+
+def _fake_out_df(pd: object) -> object:
+    # Two inputs x two folds x two cell types. Per-row cell-type means are chosen
+    # so every reduction below has an exactly-representable expected value.
+    return pd.DataFrame(  # type: ignore[attr-defined]
+        {
+            "tx_id": ["bt4_0", "bt4_1", "bt4_0", "bt4_1"],
+            "fold": [0, 0, 1, 1],
+            "predicted_TE_HEK293T": [1.0, 3.0, 5.0, 7.0],
+            "predicted_TE_HeLa": [3.0, 9.0, 11.0, 17.0],
+        }
+    )
+
+
+def test_fold_reduction_keeps_fold_identity() -> None:
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id_and_fold
+
+    records = _reduce_te_by_tx_id_and_fold(_fake_out_df(pd), ["bt4_0", "bt4_1"])
+    # sorted by (index, fold); te = mean over both cell-type columns
+    assert [(r.index, r.fold, r.te) for r in records] == [
+        (0, 0, 2.0),  # mean(1, 3)
+        (0, 1, 8.0),  # mean(5, 11)
+        (1, 0, 6.0),  # mean(3, 9)
+        (1, 1, 12.0),  # mean(7, 17)
+    ]
+
+
+def test_fold_averaged_summary_is_the_mean_of_the_folds() -> None:
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    # input 0: mean(2, 8) = 5; input 1: mean(6, 12) = 9
+    assert _reduce_te_by_tx_id(_fake_out_df(pd), ["bt4_0", "bt4_1"]) == [5.0, 9.0]
+
+
+def test_cell_type_selection_changes_the_number() -> None:
+    # The point of the knob: selecting one cell line is a different number from the
+    # mean of all of them, so it must not silently fall back to "all".
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    out = _fake_out_df(pd)
+    both = _reduce_te_by_tx_id(out, ["bt4_0", "bt4_1"])
+    hek = _reduce_te_by_tx_id(out, ["bt4_0", "bt4_1"], ("HEK293T",))
+    assert hek == [3.0, 5.0]  # input 0: mean(1, 5); input 1: mean(3, 7)
+    assert hek != both
+
+
+def test_unknown_cell_type_raises_and_lists_the_options() -> None:
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    with pytest.raises(ValueError, match=r"no output for cell type\(s\) \['K562'\]"):
+        _reduce_te_by_tx_id(_fake_out_df(pd), ["bt4_0", "bt4_1"], ("K562",))
+    # and the message names what IS available, so the fix is obvious
+    with pytest.raises(ValueError, match="HEK293T"):
+        _reduce_te_by_tx_id(_fake_out_df(pd), ["bt4_0", "bt4_1"], ("K562",))
+
+
+def test_missing_input_row_still_raises_the_length_cap_hint() -> None:
+    pd = pytest.importorskip("pandas")
+    from bt4.biomodels.expression.ribonn import _reduce_te_by_tx_id
+
+    out = pd.DataFrame({"tx_id": ["bt4_0"], "fold": [0], "predicted_TE_a": [1.0]})
+    with pytest.raises(ValueError, match="no prediction for input 1"):
+        _reduce_te_by_tx_id(out, ["bt4_0", "bt4_1"])
+
+
+def test_cell_types_are_validated() -> None:
+    with pytest.raises(ValueError, match="must not contain blank names"):
+        RiboNNExpressionModel(cell_types=("HEK293T", " "))
+    with pytest.raises(ValueError, match="contains duplicates"):
+        RiboNNExpressionModel(cell_types=("HEK293T", "HEK293T"))
+
+
+def test_units_name_the_cell_type_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The units label travels into reports and the manifest, so "all human cell
+    # types" and "HEK293T only" must never share one.
+    def fake_predict_te(self: RiboNNExpressionModel, dnas: list[str]) -> list[float]:
+        return [0.0] * len(dnas)
+
+    monkeypatch.setattr(RiboNNExpressionModel, "_predict_te", fake_predict_te)
+    base = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    scoped = dataclasses.replace(base, cell_types=("HEK293T",))
+
+    assert "all human cell types" in base.score_many(["ATGTAA"])[0].units
+    assert scoped.score_many(["ATGTAA"])[0].units.endswith("(mean over HEK293T)")
+
+
+def test_predict_folds_empty_is_a_no_op() -> None:
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    assert model.predict_folds([]) == []
+
+
+def test_predict_folds_validates_dna(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BT4_RIBONN_DIR", raising=False)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    with pytest.raises(ValueError, match="non-ACGT"):
+        model.predict_folds(["ATGTAA", "ATGXAA"])
+
+
+def test_predict_folds_shares_one_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    # predict_folds and _predict_te must be two views of ONE scoring path, so a
+    # fold-resolved read cannot drift from the fold-averaged one.
+    pd = pytest.importorskip("pandas")
+    calls: list[list[str]] = []
+
+    def fake_run(self: RiboNNExpressionModel, dnas: list[str]) -> tuple[object, list[str]]:
+        calls.append(list(dnas))
+        return _fake_out_df(pd), [f"bt4_{i}" for i in range(len(dnas))]
+
+    monkeypatch.setattr(RiboNNExpressionModel, "_run_predict", fake_run)
+    model = RiboNNExpressionModel(utr5="GCCACC", utr3="GCTAAT")
+    dnas = ["ATGTAA", "ATGTGA"]
+
+    per_fold = model.predict_folds(dnas)
+    averaged = [r.score for r in model.score_many(dnas)]
+
+    assert len(calls) == 2  # one invocation each; neither loops per sequence
+    # The averaged view is exactly the mean of the fold-resolved view.
+    for i, score in enumerate(averaged):
+        folds = [r.te for r in per_fold if r.index == i]
+        assert score == pytest.approx(sum(folds) / len(folds))

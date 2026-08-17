@@ -34,6 +34,7 @@ from bt4.biomodels.expression.gate import (
 from bt4.biomodels.expression.ribonn import (
     PINNED_WEIGHT_SHA256,
     RiboNNExpressionModel,
+    RiboNNFoldPrediction,
     load_pinned_sha256,
 )
 
@@ -46,6 +47,7 @@ __all__ = [
     "ExpressionResult",
     "NullExpressionModel",
     "RiboNNExpressionModel",
+    "RiboNNFoldPrediction",
     "available_backends",
     "default",
     "load_pinned_sha256",
@@ -114,6 +116,7 @@ def resolve_backend(
     top_k: int = 5,
     batch_size: int = 64,
     num_workers: int = 0,
+    cell_types: tuple[str, ...] = (),
 ) -> ExpressionPredictor:
     """Construct an expression backend by name (the mirror of the splice resolver).
 
@@ -130,6 +133,10 @@ def resolve_backend(
         batch_size: RiboNN inference batch size (memory/speed only -- it cannot
             change a score, since RiboNN pads to a fixed width and does not shuffle
             when predicting). Defaults below RiboNN's own 1024, which OOMs a CPU box.
+        cell_types: Which RiboNN per-cell-type outputs to average. Empty (default)
+            averages all of them; naming one (e.g. ``("HEK293T",)``) is required to
+            compare honestly against a single-cell-line measurement. An unmatched name
+            raises when scoring.
         num_workers: RiboNN dataloader worker count. Defaults to ``0``, which is
             required wherever the multiprocessing start method is *spawn* (Windows,
             macOS) because the adapter scores from a mutated ``sys.path`` and a
@@ -157,5 +164,6 @@ def resolve_backend(
             utr3=utr3,
             batch_size=batch_size,
             num_workers=num_workers,
+            cell_types=cell_types,
         )
     return NullExpressionModel()
