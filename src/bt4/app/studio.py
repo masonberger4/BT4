@@ -26,7 +26,7 @@ never folded into an export or a run manifest (CLAUDE.md §6, §6.6, §10.15).
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from html import escape
 from itertools import pairwise
 
@@ -125,6 +125,61 @@ _METRIC_ROWS = (
     "Optimality",
     "Solver",
 )
+
+# Human labels for the non-local rules that report an enforcement status. A rule
+# absent from this map still shows up (its key is prettified), so a NEW global rule
+# is surfaced automatically rather than silently missing from the GUI -- which is
+# exactly how the poly(A) and windowed-GC rules would otherwise have been invisible
+# here while the CLI printed them.
+_RULE_LABELS: dict[str, str] = {
+    "max_repeat": "Max repeat",
+    "uorf": "uORF",
+    "polya_signal": "Poly(A) signal",
+    "gc_window": "GC window",
+}
+
+
+def _audit_rows(audit: Mapping[str, object]) -> list[tuple[str, str]]:
+    """Build metrics rows from whatever the run's audit actually reported.
+
+    Driven by the audit dict rather than a fixed list, so a rule added to the
+    engine later shows up in the GUI without anyone remembering to update it here.
+    Covers the non-local rules' enforcement status (with residual counts), the
+    optional objective read-outs, and any relaxation the solver had to make.
+    """
+    rows: list[tuple[str, str]] = []
+
+    if "tai" in audit:
+        rows.append(("tAI", f"{float(audit['tai']):.4f}"))  # type: ignore[arg-type]
+    for key, label in (("cg_count", "CpG count"), ("ta_count", "UpA count")):
+        if key in audit:
+            rows.append((label, str(audit[key])))
+
+    # Non-local rules: "<rule>_enforced" plus its "<rule>_residual" partner.
+    for key in sorted(audit):
+        if not key.endswith("_enforced"):
+            continue
+        rule = key[: -len("_enforced")]
+        label = _RULE_LABELS.get(rule, rule.replace("_", " ").capitalize())
+        status = str(audit[key])
+        residual = audit.get(f"{rule}_residual")
+        if status == "clean":
+            value = "clean (fully enforced)"
+        else:
+            value = f"{status} - {residual} could not be removed"
+        rows.append((label, value))
+
+    if audit.get("relaxed_constraints"):
+        relaxed = audit["relaxed_constraints"]
+        names = ", ".join(relaxed) if isinstance(relaxed, list) else str(relaxed)
+        rows.append(("Relaxed rules", f"{names} - could not be satisfied"))
+
+    if "folding_dg" in audit:
+        calibrated = bool(audit.get("folding_calibrated", False))
+        units = "kcal/mol" if calibrated else "arbitrary units, UNCALIBRATED"
+        rows.append(("5' folding", f"{float(audit['folding_dg']):.3f} ({units})"))  # type: ignore[arg-type]
+
+    return rows
 
 # Above this residue count, warn before starting: the exact frontier sweep can
 # take a noticeable amount of time (the run is cancelable either way).
@@ -2664,25 +2719,54 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.badge.setStyleSheet(theme.badge_qss(cert.status.value))
 
     def _render_metrics(self, delivered: api.Result) -> None:
-        """Fill the metrics table from the delivered result's recomputed metrics."""
+        """Fill the metrics table from the delivered result's recomputed metrics.
+
+        The fixed core rows are followed by rows derived from the run's **audit**,
+        so what the GUI shows tracks what the engine actually reported. That matters
+        for honesty, not tidiness: a non-local rule that could only be *partly*
+        enforced says so on the CLI, and before this the GUI showed nothing at all --
+        a user who set "Max repeat length" and got 19 unremovable residuals saw only
+        an unexplained hard-violation count.
+        """
         metrics = delivered.metrics
         cert = delivered.certificate
-        values = {
-            "CAI": f"{float(delivered.audit['cai']):.4f}",
-            "CAI reference set": str(delivered.audit.get("codon_reference_set", "unknown")),
-            "GC %": f"{metrics.gc * 100.0:.2f}",
-            "Length (nt)": str(metrics.length_nt),
-            "Scored codons": str(delivered.audit["n_scored_codons"]),
-            "Hard violations": str(metrics.hard_violations),
-            "Soft violations": str(metrics.soft_violations),
-            "Optimality": cert.status.value,
-            "Solver": cert.solver,
-        }
-        self.metrics_table.setRowCount(len(_METRIC_ROWS))
-        for row, name in enumerate(_METRIC_ROWS):
+        rows: list[tuple[str, str]] = [
+            ("CAI", f"{float(delivered.audit['cai']):.4f}"),
+            (
+                "CAI reference set",
+                str(delivered.audit.get("codon_reference_set", "unknown")),
+            ),
+            ("GC %", f"{metrics.gc * 100.0:.2f}"),
+            ("Length (nt)", str(metrics.length_nt)),
+            ("Scored codons", str(delivered.audit["n_scored_codons"])),
+            ("Hard violations", str(metrics.hard_violations)),
+            ("Soft violations", str(metrics.soft_violations)),
+            ("Optimality", cert.status.value),
+            ("Solver", cert.solver),
+        ]
+        rows.extend(_audit_rows(delivered.audit))
+
+        self.metrics_table.setRowCount(len(rows))
+        for row, (name, value) in enumerate(rows):
             self.metrics_table.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
-            self.metrics_table.setItem(row, 1, QtWidgets.QTableWidgetItem(values[name]))
+            item = QtWidgets.QTableWidgetItem(value)
+            # A partly-enforced rule is the one row a user must not skim past.
+            if "could not" in value or "UNCALIBRATED" in value:
+                # Same red the sequence viewer uses for a HARD span, so "partly
+                # enforced" reads as the warning it is rather than as ordinary text.
+                item.setForeground(
+                    SequenceViewer._HARD_DARK if _is_dark() else SequenceViewer._HARD_LIGHT
+                )
+            # The full text is also the tooltip: an enforcement note is the one
+            # row a user must be able to read, and it is the longest.
+            item.setToolTip(value)
+            self.metrics_table.setItem(row, 1, item)
         self.metrics_table.resizeColumnsToContents()
+        # Let the value column take the remaining width rather than being clipped
+        # -- truncating "partial - N could not be removed" would hide exactly the
+        # disclosure the row exists to make.
+        header = self.metrics_table.horizontalHeader()
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
 
     def _render_sequence(self, delivered: api.Result) -> None:
         """Show the delivered DNA with inline violation highlights and a legend.

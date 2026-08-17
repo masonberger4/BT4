@@ -1311,3 +1311,87 @@ def test_the_construct_context_box_is_not_the_ribonn_utr_box() -> None:
     assert window.ctx_downstream_edit is not window.utr3_edit
     # The RiboNN tooltip points at the other box so the distinction is discoverable.
     assert "5' context" in window.utr5_edit.toolTip()
+
+
+# --------------------------------------------------------------------------- #
+# The metrics table is driven by the audit, not a fixed row list.
+# --------------------------------------------------------------------------- #
+
+
+def test_audit_rows_surface_partial_enforcement() -> None:
+    """A rule the engine could only partly enforce must be visible in the GUI.
+
+    The CLI has always printed this; the GUI showed nothing, so a user who set
+    "Max repeat length" and got unremovable residuals saw only an unexplained
+    hard-violation count.
+    """
+    rows = dict(
+        studio._audit_rows(
+            {"max_repeat_enforced": "partial", "max_repeat_residual": 19}
+        )
+    )
+    assert "could not be removed" in rows["Max repeat"]
+    assert "19" in rows["Max repeat"]
+
+
+def test_audit_rows_report_clean_enforcement_too() -> None:
+    rows = dict(
+        studio._audit_rows({"uorf_enforced": "clean", "uorf_residual": 0})
+    )
+    assert rows["uORF"] == "clean (fully enforced)"
+
+
+def test_audit_rows_surface_an_unknown_future_rule() -> None:
+    """A rule added to the engine later must appear without editing the GUI.
+
+    This is the property that matters: the poly(A) and windowed-GC rules would
+    otherwise have been silently missing from the table while the CLI printed them.
+    """
+    rows = dict(
+        studio._audit_rows(
+            {"brand_new_rule_enforced": "partial", "brand_new_rule_residual": 3}
+        )
+    )
+    assert "Brand new rule" in rows
+    assert "3 could not be removed" in rows["Brand new rule"]
+
+
+def test_audit_rows_flag_an_uncalibrated_folding_number() -> None:
+    rows = dict(
+        studio._audit_rows({"folding_dg": -41.0, "folding_calibrated": False})
+    )
+    assert "UNCALIBRATED" in rows["5' folding"]
+    calibrated = dict(
+        studio._audit_rows({"folding_dg": -12.5, "folding_calibrated": True})
+    )
+    assert "kcal/mol" in calibrated["5' folding"]
+    assert "UNCALIBRATED" not in calibrated["5' folding"]
+
+
+def test_audit_rows_name_relaxed_rules() -> None:
+    rows = dict(studio._audit_rows({"relaxed_constraints": ["internal_start"]}))
+    assert "internal_start" in rows["Relaxed rules"]
+
+
+def test_audit_rows_are_empty_for_a_plain_run() -> None:
+    assert studio._audit_rows({"cai": 1.0, "gc_percent": 55.0}) == []
+
+
+def test_metrics_table_grows_with_the_audit() -> None:
+    """End-to-end: the rendered table gains rows for what the run reported."""
+    window = StudioWindow()
+    plain = api.optimize("MAALKHETQWY", api.OptimizeConfig(max_homopolymer=None))
+    window._render_metrics(plain)
+    baseline = window.metrics_table.rowCount()
+
+    guarded = api.optimize(
+        "MWWWWWWWWKLDE",
+        api.OptimizeConfig(max_repeat_length=6, max_homopolymer=None),
+    )
+    window._render_metrics(guarded)
+    assert window.metrics_table.rowCount() > baseline
+    shown = {
+        window.metrics_table.item(r, 0).text(): window.metrics_table.item(r, 1).text()
+        for r in range(window.metrics_table.rowCount())
+    }
+    assert "could not be removed" in shown["Max repeat"]
