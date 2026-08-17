@@ -31,6 +31,15 @@ from bt4.biomodels.expression.gate import (
     run_expression_gate,
     verify_expression_gate,
 )
+from bt4.biomodels.expression.panel import (
+    MAX_CDS_UTR3_LEN,
+    MAX_UTR5_LEN,
+    PANEL_COLUMNS,
+    ExpressionPanel,
+    PanelRow,
+    panel_from_rows,
+    read_panel,
+)
 from bt4.biomodels.expression.ribonn import (
     PINNED_WEIGHT_SHA256,
     RiboNNExpressionModel,
@@ -39,18 +48,25 @@ from bt4.biomodels.expression.ribonn import (
 )
 
 __all__ = [
+    "MAX_CDS_UTR3_LEN",
+    "MAX_UTR5_LEN",
+    "PANEL_COLUMNS",
     "PINNED_WEIGHT_SHA256",
     "BatchExpressionPredictor",
     "ExpressionEvalCase",
     "ExpressionGateReport",
+    "ExpressionPanel",
     "ExpressionPredictor",
     "ExpressionResult",
     "NullExpressionModel",
+    "PanelRow",
     "RiboNNExpressionModel",
     "RiboNNFoldPrediction",
     "available_backends",
     "default",
     "load_pinned_sha256",
+    "panel_from_rows",
+    "read_panel",
     "resolve_backend",
     "run_expression_gate",
     "verify_expression_gate",

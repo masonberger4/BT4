@@ -8,6 +8,33 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **A measured CDS-variant panel format and a strict reader**
+  (`bt4.biomodels.expression.panel`). The gate consumes in-memory triples, which is
+  right for the gate and no help to a maintainer turning a published supplementary table
+  into something runnable and provable months later. Tab-separated, `group` /
+  `variant_id` / `cds` / `measured` / `utr5` / `utr3` required, with optional `readout` /
+  `cell_type` / `species` carried through so a number is never separated from the
+  question it answers.
+  - **It refuses rather than copes, and that is the point.** RiboNN *silently drops* any
+    row whose 5′UTR exceeds 1381 nt or whose CDS+3′UTR exceeds 11937 nt -- the caps are
+    applied inside its data module, which filters the frame. A quietly-shortened panel is
+    the worst possible gate input: the gate would report an honest `n_test` while
+    answering a question about a dataset nobody chose. Such a row is now a hard error
+    naming the row, as are a non-3N or stop-less CDS, a non-ACGT or empty UTR, a
+    non-finite `measured`, a duplicate `variant_id`, an unknown species, and — so a
+    mislabelled column cannot sit unused while the gate runs on nothing — an
+    **unrecognised column**.
+  - **`content_hash()`** is order-independent and timestamp-free (invariant #7), so a
+    panel's identity can be pre-registered *before* a gate run and compared afterwards.
+    Re-ordering or re-quoting a file does not change it; changing any value does.
+  - **`describe()`** surfaces the sizing facts the gate's own arithmetic makes
+    load-bearing: rows, groups, and **groups with 2+ members**, since a 90% conformal
+    interval needs ≥ 9 calibration rows for a finite half-width, within-group scoring
+    needs groups with 2+ members, and a grouped split needs 2+ groups. An unfit panel is
+    visible before a single model runs.
+  - **`contexts()`** buckets rows by their `(utr5, utr3)` pair. A predictor carries its
+    UTR context on the model, so a panel spanning transcripts with different UTRs cannot
+    be scored in one invocation; this makes that split explicit rather than accidental.
 - **The expression gate can now judge a CDS-variant panel honestly: `within_group`,
   `recalibrate`, a cluster-bootstrap CI, and a vacuity check.** As written the gate
   could hand out a **false pass**, and each addition closes one way that happens.
