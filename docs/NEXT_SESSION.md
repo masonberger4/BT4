@@ -289,9 +289,13 @@ items 1–3 are in
    un-hid the windowed-GC `max` spinbox that was previously off-screen.)*
    Beyond the frontier-point picker in item 2: a **basic/advanced split** (27 undifferentiated controls, of which
    only 2 are ones a bench scientist must set), **protein file open + drag-drop**
-   (there is no `getOpenFileName` anywhere in the app today), driving the metrics
-   table from the audit dict instead of a hard-coded 9 rows (so
-   `max_repeat_enforced` / `uorf_residual` / tAI / CpG counts stop being CLI-only),
+   (there is no `getOpenFileName` anywhere in the app today), *(**DONE 2026-08:**
+   the metrics table is now driven by the audit dict instead of a hard-coded 9
+   rows, so enforcement status, residual counts, tAI, CpG/UpA counts, relaxed
+   rules and the folding read-out are no longer CLI-only. It keys off any
+   `<rule>_enforced` audit key rather than a fixed list, so a rule added to the
+   engine later surfaces without editing the GUI — which is how the poly(A) and
+   windowed-GC rules would otherwise have been invisible here.)*
    surfacing the **seven engine capabilities the GUI hides** (CpG/UpA budget, GC
    budget, ramp axis, `--refine`, negative `cpb_weight`, `tandem_copies` /
    `inverted_loop`, `seed`), saving/restoring the control panel, richer per-site
