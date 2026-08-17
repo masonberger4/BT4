@@ -239,6 +239,7 @@ def tracks(
     codon_window: int = 18,
     splice: bool = False,
     splice_predictor: object | None = None,
+    context: ConstructContext | None = None,
 ) -> TracksResult:
     """Compute per-site tracks for a coding sequence.
 
@@ -260,6 +261,9 @@ def tracks(
             pseudo-scores showing where consensus-like positions sit, not
             probabilities.
         splice_predictor: Backend to score with (``None`` = the baseline).
+        context: Known flanking sequence. When given, the splice track is scored
+            with the CDS in its real flanks rather than alone; values stay aligned
+            to the CDS.
 
     Returns:
         A :class:`~bt4.pipeline.tracks.TracksResult` bundling the named tracks,
@@ -276,6 +280,7 @@ def tracks(
         codon_window=codon_window,
         splice=splice,
         splice_predictor=splice_predictor,
+        context=context,
     )
 
 
@@ -387,6 +392,7 @@ def splice_audit(
     predictors: Sequence[SplicePredictor] | None = None,
     threshold: float = 0.5,
     match_window: int = 3,
+    context: ConstructContext | None = None,
 ) -> SpliceAuditReport:
     """Localize-and-flag cryptic splice sites across a candidate set (no editing).
 
@@ -409,6 +415,11 @@ def splice_audit(
         threshold: Site-localization threshold (a heuristic display knob, not a
             calibrated cutoff).
         match_window: +/- nt window for the approximate cross-backend co-occurrence.
+        context: Known flanking sequence. When given, every candidate (and the
+            reference) is scored with the CDS in its real flanks instead of alone --
+            the wrapped CNNs otherwise pad their wide context with literal ``N``.
+            Reported positions stay in CDS coordinates. Better input is not
+            calibration: an uncalibrated backend stays uncalibrated.
 
     Returns:
         A :class:`~bt4.biomodels.splice.audit.SpliceAuditReport`.
@@ -422,6 +433,7 @@ def splice_audit(
         predictors=predictors,
         threshold=threshold,
         match_window=match_window,
+        context=context,
     )
 
 

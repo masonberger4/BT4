@@ -267,11 +267,22 @@ BT4 no longer optimizes the CDS in a vacuum.
   takes a bare CDS — there is no parameter through which a backbone could be
   transmitted, and a test pins that.
 
+- **Real flanks for the splice models.** `score_in_context()` scores a CDS inside
+  its known flanks and **slices the result back to the CDS**, so every downstream
+  coordinate (localization, pooling, Δsplicing, the per-site track) is unchanged and
+  no backend needed modifying. `api.splice_audit(..., context=)` and
+  `api.tracks(..., context=)` use it. This replaces the literal `N` padding for the
+  region that matters — which also matters for the *agreement* signal, since both
+  CNNs previously padded identically and so could not disagree about the artifact.
+  **Explicitly not a calibration event:** an uncalibrated backend stays uncalibrated,
+  and a fidelity attestation captured on the N-padded path does **not** transfer to a
+  flanked one, because it is a different input regime.
+
 ### Still ahead
 
-Real flanks for the wrapped SpliceAI/Pangolin CNNs (they still `N`-pad; note an
-attestation captured on the N-padded path cannot transfer to a flanked one),
-packaged installers, and the human/data-gated calibration items.
+Packaged installers, the human/data-gated calibration items (splice CNN fidelity
+attestation, a regime-matched CDS-variant panel for RiboNN), GenBank I/O, and
+LinearDesign-class joint codon+structure optimization.
 
 ### Maintainer decisions on record
 

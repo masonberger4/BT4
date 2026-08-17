@@ -42,6 +42,7 @@ from dataclasses import dataclass
 
 from bt4._accel import gc_count
 from bt4.biomodels.codon.tables import load_table
+from bt4.domain.context import ConstructContext
 from bt4.domain.sequence import validate_dna
 from bt4.objectives.dinuc_profile import dinucleotide_profile
 from bt4.objectives.minmax import min_max_profile
@@ -125,6 +126,7 @@ def run_tracks(
     codon_window: int = 18,
     splice: bool = False,
     splice_predictor: object | None = None,
+    context: ConstructContext | None = None,
 ) -> TracksResult:
     """Compute the per-site composition tracks for a coding sequence.
 
@@ -197,12 +199,18 @@ def run_tracks(
     splice_calibrated = False
     if splice:
         # Lazy: keeps `import bt4` light and the splice backends optional.
-        from bt4.biomodels.splice import SplicePredictor
+        from bt4.biomodels.splice import SplicePredictor, score_in_context
         from bt4.biomodels.splice import default as splice_default
 
         predictor = splice_predictor if splice_predictor is not None else splice_default()
         assert isinstance(predictor, SplicePredictor)
-        scored = predictor.score_sequence(d)
+        # With known flanks the model reads real sequence around the CDS instead of
+        # padding; the scores come back aligned to the CDS either way.
+        scored = (
+            score_in_context(predictor, d, context.upstream, context.downstream)
+            if context is not None and not context.is_empty
+            else predictor.score_sequence(d)
+        )
         splice_model = scored.model_name
         splice_calibrated = scored.calibrated
         tracks.append(

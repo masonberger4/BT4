@@ -348,3 +348,61 @@ def test_folding_region_is_shared_between_objective_and_audit() -> None:
     # longer than the CDS-only window.
     assert aware.audit["folding_spans_junction"] is True
     assert aware.audit["folding_region_nt"] > plain.audit["folding_region_nt"]
+
+
+# --------------------------------------------------------------------------- #
+# Real flanks for the splice models (instead of a nucleotide vacuum).
+# --------------------------------------------------------------------------- #
+
+
+def test_score_in_context_returns_cds_aligned_scores() -> None:
+    """Scoring in flanks must not move anyone's coordinates."""
+    from bt4.biomodels.splice import default as splice_default
+    from bt4.biomodels.splice import score_in_context
+
+    predictor = splice_default()
+    cds = "ATGGTAAGTGGCGATCGATCGATCGTAA"
+    bare = predictor.score_sequence(cds)
+    flanked = score_in_context(
+        predictor, cds, upstream="GGGCCCAAAGGGCCCAAA", downstream="TTTGGGCCC"
+    )
+    assert len(flanked.donor) == len(flanked.acceptor) == len(cds)
+    # Real flanks change what the model sees near the edges -- the whole point.
+    assert flanked.donor != bare.donor
+    # Better input is NOT calibration.
+    assert flanked.calibrated == bare.calibrated is False
+    # With no flanks it is exactly the plain call.
+    assert score_in_context(predictor, cds).donor == bare.donor
+
+
+def test_splice_audit_in_context_keeps_positions_in_the_cds() -> None:
+    context = ConstructContext(
+        upstream="GGGCCCAAAGGGCCCAAA" * 3, downstream="TTTGGGCCC"
+    )
+    candidate_set = api.candidates(
+        "MVSGDKLWY", api.OptimizeConfig(max_homopolymer=None), n=3
+    )
+    report = api.splice_audit(candidate_set, context=context)
+    cds_length = len(candidate_set.candidates[0].result.dna)
+    positions = [
+        flag.position
+        for candidate in report.candidates
+        for backend in candidate.by_backend
+        for flag in backend.flags
+    ]
+    assert all(0 <= p < cds_length for p in positions)
+    # Still advisory: flanking is an input fix, not a calibration event.
+    assert report.all_calibrated is False
+
+
+def test_tracks_splice_can_use_real_flanks() -> None:
+    cds = "ATGGTAAGTGGCGATCGATCGATCGTAA"
+    context = ConstructContext(upstream="GGGCCCAAAGGGCCCAAA", downstream="TTTGGGCCC")
+    plain = api.tracks(cds, splice=True)
+    flanked = api.tracks(cds, splice=True, context=context)
+    plain_track = plain.get("splice_site")
+    flanked_track = flanked.get("splice_site")
+    assert plain_track is not None and flanked_track is not None
+    assert len(plain_track.values) == len(flanked_track.values) == len(cds)
+    assert plain_track.values != flanked_track.values
+    assert plain.splice_calibrated is flanked.splice_calibrated is False
