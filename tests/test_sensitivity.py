@@ -91,8 +91,10 @@ def test_tai_logw_available_for_human(script: ModuleType) -> None:
     result = script.api.optimize(_PROTEIN, script.api.OptimizeConfig(organism="homo_sapiens"))
     value = script.tai_logw(result.dna, "homo_sapiens")
     assert value is not None
-    # E. coli ships no tRNA table in the bundle, so tAI is unavailable there.
-    assert script.tai_logw(result.dna, "escherichia_coli") is None
+    # E. coli now ships a tRNA table too (it was the last gap), so tAI resolves
+    # there as well; only an organism with no bundled table returns None.
+    assert script.tai_logw(result.dna, "escherichia_coli") is not None
+    assert script.tai_logw(result.dna, "nonexistent_organism") is None
 
 
 def test_json_output_is_valid(script: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:

@@ -23,6 +23,7 @@ pytest.importorskip("PySide6")
 from PySide6 import QtGui, QtWidgets
 
 from bt4 import api
+from bt4.app import studio
 from bt4.app.studio import SequenceViewer, StudioWindow
 from bt4.app.worker import (
     CandidatesResult,
@@ -984,16 +985,34 @@ def test_candidates_failure_resets_panel() -> None:
     assert "satisfy these settings" in window.statusBar().currentMessage()
 
 
-def test_tai_axis_tracks_organism_availability() -> None:
-    """The tAI checkbox is enabled only for organisms with a bundled tRNA table."""
-    window = StudioWindow()
+def test_tai_axis_is_offered_for_every_selectable_organism() -> None:
+    """Every organism the user can pick now ships a tRNA table, so tAI is offered.
 
+    E. coli was the last bundled organism without one -- tAI was unavailable exactly
+    where translational selection is strongest. This asserts the gap is closed from
+    the surface the user actually touches.
+    """
+    window = StudioWindow()
+    for organism in api.available_organisms():
+        window.organism_combo.setCurrentText(organism)
+        window._update_tai_availability()
+        assert window.tai_check.isEnabled(), organism
+
+
+def test_tai_axis_disables_itself_when_a_table_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard must survive: a future organism without tRNA data must disable tAI.
+
+    No bundled organism lacks a table any more, so the negative path is exercised
+    against a stubbed availability list rather than being left uncovered.
+    """
+    window = StudioWindow()
     window.organism_combo.setCurrentText("homo_sapiens")
     window._update_tai_availability()
-    assert window.tai_check.isEnabled()
     window.tai_check.setChecked(True)
 
-    window.organism_combo.setCurrentText("escherichia_coli")
+    monkeypatch.setattr(studio.api, "available_tai_organisms", lambda: ())
     window._update_tai_availability()
     assert not window.tai_check.isEnabled()
     assert not window.tai_check.isChecked()  # auto-unchecked when unavailable

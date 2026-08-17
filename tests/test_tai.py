@@ -8,14 +8,18 @@ provenance-hashed human tRNA table flows through ``bt4.api``.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from bt4 import api
+from bt4.biomodels.codon.tables import available_organisms
 from bt4.biomodels.codon.tai import (
     DOSREIS_2004_S,
     TaiTable,
+    available_tai_organisms,
     build_tai_weights,
     load_tai_provenance,
     load_tai_table,
@@ -56,13 +60,30 @@ def test_ecoli_reference_optimal_codons_are_high() -> None:
     assert w["AAA"] == pytest.approx(1.0)
 
 
-def test_bacterial_ata_scales_with_reader_copy_number() -> None:
-    # sking=1 lysidine reading of Ile ATA must scale with its reader tRNA (anticodon
-    # TAT) copy number, not be a bare constant (dos Reis W[ATA] = p * tRNA[ATA]).
-    low = build_tai_weights({"TAT": 1, "AGC": 20}, sking=1)
-    high = build_tai_weights({"TAT": 40, "AGC": 20}, sking=1)
-    # More ATA-reading tRNA genes -> higher relative adaptiveness for ATA.
-    assert high["ATA"] > low["ATA"]
+def test_bacterial_ata_uses_the_reference_constant_not_a_copy_number() -> None:
+    """sking=1 sets W[ATA] to the bare lysidine contribution, per the reference.
+
+    The reference get.ws is `if(sking == 1) W[35] = p[9]` -- a constant, with NO
+    tRNA factor. That is deliberate: bacteria decode AUA with tRNA-Ile2, whose
+    anticodon is CAU (lysidine-modified), *not* UAU. So the copy-number slot this
+    codon would index (anticodon TAT) is empty in real bacteria -- E. coli K-12 has
+    zero TAT genes -- and scaling by it would drive W[ATA] to 0, which the
+    zero-filling step then replaces with the geometric mean: an arbitrary value.
+
+    This test previously asserted the opposite (that ATA scales with TAT copies).
+    That encoded a misreading of the reference and would have shipped a wrong Ile
+    weight the moment a bacterial table existed, which it now does.
+    """
+    # W[ATA] does not move with the (biologically empty) TAT slot...
+    none_ = build_tai_weights({"AGC": 20}, sking=1)
+    some = build_tai_weights({"TAT": 40, "AGC": 20}, sking=1)
+    assert none_["ATA"] == pytest.approx(some["ATA"])
+    # ...and it equals the lysidine contribution p[8], normalized by max(W).
+    p8 = 1.0 - DOSREIS_2004_S[8]
+    assert some["ATA"] == pytest.approx(p8 / (1.0 * 20))
+    # Under the eukaryotic model the same counts leave ATA with no reader at all,
+    # so the two branches genuinely differ.
+    assert build_tai_weights({"AGC": 20}, sking=0)["ATA"] != pytest.approx(none_["ATA"])
 
 
 def test_svalues_must_have_nine_entries() -> None:
@@ -157,5 +178,76 @@ def test_tai_weight_hashes_trna_table_into_manifest() -> None:
 
 
 def test_tai_weight_on_organism_without_data_raises() -> None:
+    # Every *bundled* organism now ships a tRNA table (E. coli was the last gap),
+    # so the refusal is exercised with an organism that has no table at all rather
+    # than one that merely used to lack one.
     with pytest.raises(ValueError, match="no bundled tAI table"):
-        api.optimize("MAAL", api.OptimizeConfig(organism="escherichia_coli", tai_weight=1.0))
+        load_tai_table("nonexistent_organism")
+
+
+def test_every_selectable_organism_has_a_tai_table() -> None:
+    """tAI must be offered for every organism a user can actually pick.
+
+    The inverse failure shipped for a long time: six organisms had authentic tRNA
+    tables that were unreachable because they had no codon table. This asserts the
+    other direction now that E. coli closes the last gap -- a codon table without
+    tRNA data means tAI is silently unavailable exactly where a user asked for it.
+    """
+    assert set(available_organisms()) <= set(available_tai_organisms())
+
+
+# --------------------------------------------------------------------------- #
+# The bundled E. coli table: real GtRNAdb data, and the first bacterial one.
+# --------------------------------------------------------------------------- #
+
+
+def test_ecoli_table_matches_its_documented_totals() -> None:
+    """The shipped counts must agree with the provenance that describes them."""
+    table = load_tai_table("escherichia_coli")
+    provenance = load_tai_provenance("escherichia_coli")
+    assert sum(table.anticodon_counts.values()) == provenance.total_genes
+    # 86 tRNA genes is the standard count for K-12 MG1655 (89 predictions less one
+    # selenocysteine and two undetermined) -- an external cross-check, not a
+    # restatement of our own arithmetic.
+    assert provenance.total_genes == 86
+
+
+def test_ecoli_is_scored_under_the_prokaryotic_model() -> None:
+    """Super-kingdom comes from the table's provenance, never a hardcoded default."""
+    assert load_tai_table("escherichia_coli").sking == 1
+    assert load_tai_table("homo_sapiens").sking == 0
+
+
+def test_ecoli_lysidine_path_gives_ata_a_real_weight() -> None:
+    """The bacterial branch must not leave Ile ATA at the zero-filled geometric mean.
+
+    E. coli has zero TAT-anticodon genes, so before the reference fix this codon's
+    W was 0 and got replaced by the geometric mean of every other weight.
+    """
+    weights = load_tai_table("escherichia_coli").relative_adaptiveness()
+    other = [w for codon, w in weights.items() if codon != "ATA"]
+    geometric_mean = math.exp(sum(math.log(w) for w in other) / len(other))
+    # The zero-filled value is exactly the geometric mean; the real lysidine weight
+    # is not. (Its exact value, p[8]/max(W), is pinned in the unit test above, where
+    # the inputs make max(W) known.)
+    assert weights["ATA"] != pytest.approx(geometric_mean)
+    assert 0.0 < weights["ATA"] < 1.0
+    # Under the eukaryotic model the same counts would leave ATA unread entirely,
+    # so the bacterial branch is genuinely doing something here.
+    eukaryotic = build_tai_weights(load_tai_table("escherichia_coli").anticodon_counts)
+    assert eukaryotic["ATA"] != pytest.approx(weights["ATA"])
+
+
+def test_ecoli_provenance_pins_its_upstream_source() -> None:
+    """Invariant #9: the table must be re-derivable from a pinned public source."""
+    import json
+    from importlib.resources import files
+
+    raw = json.loads(
+        files("bt4.biomodels.codon.data")
+        .joinpath("escherichia_coli.trna.provenance.json")
+        .read_text(encoding="utf-8")
+    )
+    assert raw["source_url"].startswith("https://gtrnadb.ucsc.edu/")
+    assert len(raw["source_sha256"]) == 64
+    assert raw["super_kingdom"] == "bacteria"

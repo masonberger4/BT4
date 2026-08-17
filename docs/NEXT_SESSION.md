@@ -44,14 +44,17 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > `misc_feature` spans put residual violations on the map the user opens, and whose
 > reader turns an existing vector map into a `ConstructContext`. **Tier 4 has now
 > partly landed too** — the functional (bipartite) poly(A) constraint and AAV/LVV
-> packaging accounting. **Start here is now queue item 6 (Phase-5 breadth).**
+> packaging accounting, and **tAI now reaches all nine organisms** (E. coli was the
+> last gap; exercising its bacterial path surfaced and fixed a latent tAI
+> fidelity bug). **Start here is now the rest of queue item 6 (more organisms,
+> bacterial alternative start codons).**
 
 | Component | State | Calibrated? | Primary file(s) |
 |---|---|---|---|
 | Exact-DP codon trellis + certificate | DONE | n/a | `optimize/exact_dp.py` |
 | Rust trellis port (`trellis_solve`, regime-gated) | DONE | n/a | `rust/bt4_core`, `bt4_native` |
 | Objectives: CAI, tAI, GC, ramp, CpG, %MinMax, codon-pair | DONE | n/a | `objectives/` |
-| tAI (real GtRNAdb, 8 organisms) | DONE | n/a | `biomodels/codon/tai.py` |
+| tAI (real GtRNAdb, **all 9 organisms**; prokaryotic `sking` from provenance) | DONE | n/a | `biomodels/codon/tai.py`, `scripts/build_trna_tables.py` |
 | Codon tables: **all 9** recounted from pinned Ensembl CDS (`genome_wide`) | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
 | **Highly-expressed reference sets** (PaxDb top-300, 8 of 9 organisms, the **default**) | DONE | n/a (a declared reference set, not a model) | `scripts/build_highly_expressed_tables.py`, `biomodels/codon/tables.py` |
 | Constraints: homopolymer, GC-run, max-repeat, tandem/inverted, forbidden+presets, restriction, Kozak-ATG, uORF, splice-motif | DONE | n/a | `constraints/` |
@@ -269,10 +272,18 @@ items 1–3 are in
    - **Tissue / cell-type-specific tables: dropped** (maintainer decision) — large
      effort, hard to qualify honestly, small upside over a whole-organism
      highly-expressed reference. Do not re-open without a new reason.
-   - **tAI reach.** *E. coli* is the one bundled organism with no GtRNAdb tRNA
-     table, so tAI is unavailable exactly where translational selection is
-     strongest and where `tai.py`'s bacterial `sking=1` lysidine path would
-     finally be exercised.
+   - **tAI reach — DONE 2026-08.** *E. coli* now ships a GtRNAdb tRNA table (86
+     genes, real data, source-SHA-pinned), so **all nine bundled organisms offer
+     tAI**. Exercising the bacterial `sking=1` path surfaced a **latent fidelity
+     bug**: BT4 computed `W[ATA] = p[8] * t[ATA]`, but the reference `get.ws` is
+     `if(sking == 1) W[35] = p[9]` — a constant with *no* tRNA factor, because the
+     AUA reader is tRNA-Ile2 (anticodon CAU, lysidine-modified), not a UAU tRNA.
+     E. coli has zero TAT-anticodon genes, so the old form drove `W[ATA]` to 0 and
+     the zero-filling step silently replaced it with the geometric mean. Fixed, and
+     a test that had encoded the wrong model is corrected. `super_kingdom` now comes
+     from the table's provenance instead of a hardcoded `sking=0`, and
+     `scripts/build_trna_tables.py` makes tRNA tables re-derivable (`--verify`)
+     for the first time.
 7. **[self-contained] Remaining BT4 Studio work.** *(The control column no longer
    clips its widgets -- it is sized from the form's own size hint, which also
    un-hid the windowed-GC `max` spinbox that was previously off-screen.)*

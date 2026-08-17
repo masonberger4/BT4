@@ -73,6 +73,9 @@ _CODONS: tuple[str, ...] = tuple(
 #   index 8  L:A  lysidine (bacterial Ile ATA only, sking=1)     s=0.89
 DOSREIS_2004_S: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.41, 0.28, 0.9999, 0.68, 0.89)
 
+# Provenance ``super_kingdom`` labels that select the prokaryotic tAI model.
+_PROKARYOTE_LABELS = frozenset({"bacteria", "prokaryota", "prokaryote", "archaea"})
+
 
 def build_tai_weights(
     anticodon_counts: Mapping[str, int],
@@ -119,11 +122,18 @@ def build_tai_weights(
     i_met = _CODONS.index("ATG")
     w_abs[i_met] = p[3] * t[i_met]  # Met: only its Watson-Crick reader, no Ile wobble
     if sking == 1:
-        # Bacterial lysidine reading of Ile ATA: p[8] weighted by the reader's own
-        # copy number (reference get.ws is W[ATA] = p[9] * tRNA[ATA]); the reader
-        # slot is t[ATA] (anticodon == reverse_complement(ATA) == TAT).
+        # Bacterial lysidine reading of Ile ATA. The reference get.ws sets this to
+        # the bare pairing contribution -- `if(sking == 1) W[35] = p[9]` -- with NO
+        # tRNA copy-number factor, and that is deliberate rather than an oversight:
+        # the AUA reader is tRNA-Ile2, whose anticodon is CAU (lysidine-modified at
+        # the wobble C), *not* UAU. So the copy-number slot this codon would index
+        # (t[ATA], i.e. anticodon TAT) is empty in real bacteria -- E. coli K-12 has
+        # zero TAT-anticodon genes -- and multiplying by it would drive W[ATA] to 0,
+        # which the zero-filling step below would then silently replace with the
+        # geometric mean. Matching the reference keeps Ile ATA at its true, weakly
+        # penalised value instead of an arbitrary one.
         idx_ata = _CODONS.index("ATA")
-        w_abs[idx_ata] = p[8] * t[idx_ata]
+        w_abs[idx_ata] = p[8]
 
     # Keep the 60 scoreable codons: drop stops and Met (no synonymous choice).
     kept = [
@@ -150,6 +160,11 @@ class TaiProvenance:
         source: Human-readable origin of the tRNA gene counts (e.g. GtRNAdb).
         build: How the counts were assembled (genome build, filter, exclusions).
         genome: Genome assembly the counts are drawn from.
+        super_kingdom: ``"bacteria"`` or ``"eukaryota"``. This is what selects the
+            tAI model's prokaryotic (``sking=1``) branch, so it is *data*, not a
+            caller's guess -- a bacterial table must not be scored under the
+            eukaryotic model. Sidecars written before this field existed are
+            eukaryotic, which is what the default records.
         total_genes: Total tRNA genes behind the counts.
         retrieved: ISO date the values were retrieved/curated.
         sha256: Hex SHA-256 of the raw anticodon-count TSV bytes.
@@ -163,6 +178,7 @@ class TaiProvenance:
     retrieved: str
     sha256: str
     note: str
+    super_kingdom: str = "eukaryota"
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,7 +303,19 @@ def load_tai_table(organism: str) -> TaiTable:
             f"available: {', '.join(available_tai_organisms())}"
         )
     counts = _parse_trna_tsv(resource.read_text(encoding="utf-8"))
-    return TaiTable(organism=key, anticodon_counts=counts, sking=0)
+    # The super-kingdom is a property of the ORGANISM, so it comes from the table's
+    # own provenance -- not a hardcoded 0. Scoring a bacterial tRNA set under the
+    # eukaryotic model would silently drop the lysidine reading of Ile ATA.
+    return TaiTable(organism=key, anticodon_counts=counts, sking=_sking_for(key))
+
+
+def _sking_for(organism: str) -> int:
+    """Return the dos Reis ``sking`` code for a bundled organism (0 euk, 1 prok)."""
+    try:
+        provenance = load_tai_provenance(organism)
+    except ValueError:
+        return 0
+    return 1 if provenance.super_kingdom.strip().lower() in _PROKARYOTE_LABELS else 0
 
 
 def load_tai_provenance(organism: str) -> TaiProvenance:
@@ -309,4 +337,5 @@ def load_tai_provenance(organism: str) -> TaiProvenance:
         retrieved=str(data["retrieved"]),
         sha256=str(data["sha256"]),
         note=str(data["note"]),
+        super_kingdom=str(data.get("super_kingdom", "eukaryota")),
     )
