@@ -373,6 +373,16 @@ def _cmd_optimize(args: argparse.Namespace) -> int:
     if args.json:
         sys.stdout.write(api.result_to_json(result) + "\n")
         return 0
+    if args.genbank:
+        # The annotated map: residual violations the optimizer could not remove
+        # ride along as misc_feature spans, so they are visible in SnapGene /
+        # Benchling rather than only in the JSON audit.
+        sys.stdout.write(
+            api.write_genbank(
+                result, context=config.context, locus=args.header,
+            )
+        )
+        return 0
     cai = float(result.audit.get("cai", 0.0))  # type: ignore[arg-type]
     cert = result.certificate
     print(f"protein   {result.protein}")
@@ -580,6 +590,11 @@ def _parser() -> argparse.ArgumentParser:
     p_opt.add_argument("protein", help="stop-free amino-acid string")
     p_opt.add_argument("--fasta", action="store_true", help="emit FASTA")
     p_opt.add_argument("--json", action="store_true", help="emit JSON (with manifest)")
+    p_opt.add_argument("--genbank", action="store_true",
+                       help="emit an annotated GenBank record: residual violations "
+                       "become misc_feature spans, so a defect the optimizer could "
+                       "not remove is visible on the map you open. Includes the "
+                       "construct context (--utr5/--utr3) when given")
     p_opt.add_argument("--header", default="bt4", help="FASTA header")
     p_opt.add_argument("--cpg-min", type=int, default=None, dest="cpg_min",
                        help="min total CpG (CG) count over the CDS (exact budget DP)")

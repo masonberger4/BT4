@@ -175,9 +175,11 @@ bt4/
   pipeline/      composes biomodels + objectives + constraints + solver into a
                  run. Owns the two-stage (exact core → non-local refinement)
                  orchestration and the Pareto sweep.
-  io/            fasta, json_out (versioned self-describing schema), run_manifest.
-                 (genbank is INTENDED, not built — see docs/NEXT_SESSION.md item 4;
-                 do not cite it as shipped.)
+  io/            fasta, json_out (versioned self-describing schema), run_manifest,
+                 genbank (annotated reader/writer: residual violations ride out as
+                 `misc_feature` spans; a vector map can be read back in as a
+                 ConstructContext). A standalone manifest file is still INTENDED,
+                 not built — do not cite it as shipped.
   provenance/    config_hash + full manifest (git SHA, table content hashes,
                  model SHAs, seed, tool version). Deterministic, no timestamp.
   api/           stable, print-free: optimize(), frontier(), validate(),
@@ -491,13 +493,17 @@ What the app does (design targets):
   a per-member table, and a multi-record FASTA export — banner-led with
   **sampled, not optimized**, its badge coloured directly from the `SAMPLED`
   certificate so the label cannot drift from the engine's claim.
-- **Export:** FASTA / JSON (the run manifest rides inside the JSON's `audit`), so
-  anything the app shows is reproducible from its stamp (except explicitly
-  network-derived ASSP numbers, which never reach an export — regression-tested).
-  **GenBank export and a standalone manifest file are design targets, not shipped**
-  — and the annotated-construct writer (residual GLOBAL violations emitted as
-  `misc_feature`s, so honest residuals reach the map the user opens) is the highest
-  value-per-line item in the current queue.
+- **Export:** FASTA / JSON (the run manifest rides inside the JSON's `audit`) /
+  **annotated GenBank**, so anything the app shows is reproducible from its stamp
+  (except explicitly network-derived ASSP numbers, which never reach an export —
+  regression-tested). The GenBank writer is the honest-residual surface: every
+  residual violation is emitted as a `misc_feature` span at the base where it
+  occurs, so a defect the optimizer could **not** remove reaches the map the user
+  actually opens (SnapGene/Benchling/ApE) instead of living only in a JSON audit;
+  overlapping findings merge into one readable span that names how many it covers,
+  and the true count stays in the COMMENT block. The record carries **no
+  timestamp** (invariant #7) and stamps the config hash + git commit instead. A
+  standalone manifest file remains a design target, not shipped.
 
 Accessibility, light/dark theming, and responsive layout are in scope — "nice"
 is a requirement, not a nice-to-have. **Landed:** a File/Run/View/Help menu bar

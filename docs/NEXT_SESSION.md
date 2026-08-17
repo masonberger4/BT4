@@ -40,8 +40,10 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > `ConstructContext` + junction-correct constraints + junction folding + the
 > whole-construct audit with restriction-site uniqueness. See
 > [`REVIEW_2026-08_sota_and_roadmap.md`](REVIEW_2026-08_sota_and_roadmap.md) §4.
-> **Start here is now queue item 3's remaining sub-item: real flanks for the
-> wrapped splice CNNs** (they still N-pad), then Tier 3 (GenBank I/O).
+> ✅ **Tier 3 (GenBank I/O) has landed too** — an annotated reader/writer whose
+> `misc_feature` spans put residual violations on the map the user opens, and whose
+> reader turns an existing vector map into a `ConstructContext`. **Start here is
+> now queue item 5 (Tier 4 — per-system biology).**
 
 | Component | State | Calibrated? | Primary file(s) |
 |---|---|---|---|
@@ -66,6 +68,7 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Library / degenerate-design (SAMPLED) mode | DONE | n/a (sampler, not optimizer) | `optimize/sample.py`, `pipeline/library.py` |
 | Restriction catalog (584 enzymes, REBASE-derived + content-hashed) | DONE | n/a | `constraints/restriction.py`, `constraints/data/` |
 | Surfaces: `bt4.api`, `bt4` CLI, FastAPI service, provenance | DONE | n/a | `api/`, `cli/`, `service/`, `provenance/` |
+| **GenBank I/O** — annotated writer (residual violations as `misc_feature`) + reader (vector map -> `ConstructContext`) | DONE | n/a | `io/genbank.py` |
 | **BT4 Studio** — Design / Candidates+splice-audit / Library tabs, RiboNN + ASSP surfaced, menus + runtime theming | DONE | n/a | `app/studio.py`, `app/worker.py`, `app/theme.py` |
 | Expression backend registry (`available_expression_backends` / `resolve_expression_backend`) | DONE | n/a | `biomodels/expression/__init__.py`, `api/` |
 | Packaged installers (PyInstaller/Briefcase) | NOT-STARTED | n/a | `packaging/` |
@@ -102,8 +105,10 @@ manufacturability constraints**, not yet an expression optimizer — because at 
 time of that audit **the optimizer only ever saw the CDS**. *(Partly addressed
 since: the CDS is no longer designed in isolation — a construct context now feeds
 junction-correct constraints, junction folding, leader-aware uORF pairing, and a
-whole-construct audit. The splice CNNs still float the CDS in 5,000 literal `N`
-bases, and RiboNN still sits where it cannot influence delivery.)* The audit also
+whole-construct audit. `score_in_context` now feeds the splice CNNs real flanking
+sequence when the user supplies it -- literal `N` padding remains only for the
+residual width beyond that, which a ~10 kb-context CNN unavoidably needs. RiboNN
+still sits where it cannot influence delivery.)* The audit also
 found **four defects measured by running the code**, three of which broke a §5
 invariant; all four are now fixed.
 
@@ -209,12 +214,21 @@ items 1–3 are in
      `AvoidPattern` over an entire plasmid record, and TIsigner already takes
      `-u/--UTR`. Context-as-*constraint-scope* is not novel; context-as-
      *optimization-substrate* is. Do not claim more than that.
-4. **[self-contained] Tier 3 — GenBank I/O.** A stdlib reader + writer in `io/`.
-   Already named three times in CLAUDE.md (`:105`, `:148`, `:463`) for a module
-   that was never built. The writer emitting **residual GLOBAL violations as
-   `misc_feature` annotations** is the highest value-per-line item in the roadmap.
-   SnapGene `.dna` stays out of scope with a precise "export GenBank instead" error.
-5. **[self-contained] Tier 4 — per-system biology.** Independent of Tier 2, so it
+4. **[DONE 2026-08] Tier 3 — GenBank I/O.** Landed as `io/genbank.py` (stdlib
+   only). The writer emits **residual violations as `misc_feature` spans** at the
+   base where they occur, so a defect the optimizer could not remove reaches the
+   map the user opens rather than living only in a JSON audit; overlapping
+   findings merge into one readable span labelled with how many it covers, and the
+   true count stays in the COMMENT block alongside the certificate and the
+   config-hash/git-commit stamp. The record carries **no timestamp** so it stays
+   byte-reproducible (invariant #7). The reader (`parse_genbank` /
+   `context_from_genbank`) closes the loop with Tier 2: **the vector map a user
+   already has becomes the `ConstructContext` their CDS is designed inside**.
+   Surfaced as `bt4 optimize --genbank`, `api.write_genbank`, and a Studio
+   *Export GenBank* button (Ctrl+G). Verified against Biopython as the reference
+   parser (`tests/test_genbank.py`, skipped when Biopython is absent). SnapGene
+   `.dna` remains out of scope.
+5. **[START HERE · self-contained] Tier 4 — per-system biology.** Independent of Tier 2, so it
    can land early: a *functional* poly(A) constraint (hexamer **plus** downstream
    GU/U-rich element — still LOCAL at `context_len ≈ 36`), donor×acceptor splice
    pairing as a report, AAV packaging-size accounting (reporting only — BT4
@@ -243,8 +257,10 @@ items 1–3 are in
      table, so tAI is unavailable exactly where translational selection is
      strongest and where `tai.py`'s bacterial `sking=1` lysidine path would
      finally be exercised.
-7. **[self-contained] Remaining BT4 Studio work.** Beyond the frontier-point picker
-   in item 2: a **basic/advanced split** (27 undifferentiated controls, of which
+7. **[self-contained] Remaining BT4 Studio work.** *(The control column no longer
+   clips its widgets -- it is sized from the form's own size hint, which also
+   un-hid the windowed-GC `max` spinbox that was previously off-screen.)*
+   Beyond the frontier-point picker in item 2: a **basic/advanced split** (27 undifferentiated controls, of which
    only 2 are ones a bench scientist must set), **protein file open + drag-drop**
    (there is no `getOpenFileName` anywhere in the app today), driving the metrics
    table from the audit dict instead of a hard-coded 9 rows (so
