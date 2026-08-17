@@ -306,12 +306,31 @@ items 1–3 are in
 9. **[self-contained → then human] Packaged installers** — PyInstaller/Briefcase
    for macOS/Windows/Linux. Advance up to the point where signing / tag-pushing /
    release-cutting is needed; those steps are human-only (HTTP 403 in the sandbox).
-10. **[BLOCKED-human] Promote the splice CNNs to `calibrated=True`** — capture
-    reference panels and run `verify_pangolin_fidelity` / `verify_spliceai_fidelity`,
-    then commit a `FidelityAttestation`. Needs the licensed weights on a maintainer
-    machine. Never assign `calibrated=True` by hand — it is earned on data
-    (§10.5/§10.6). **Note the ordering hazard:** an attestation captured on the
-    N-padded path does not transfer to the flanked path of item 3.
+10. **[IN PROGRESS · human-gated] Promote the splice CNNs to `calibrated=True`** —
+    capture reference panels and run `verify_pangolin_fidelity` /
+    `verify_spliceai_fidelity`, then commit a `FidelityAttestation`. Needs the
+    licensed weights on a maintainer machine. Never assign `calibrated=True` by hand
+    — it is earned on data (§10.5/§10.6). **Note the ordering hazard:** an
+    attestation captured on the N-padded path does not transfer to the flanked path
+    of item 3.
+    **The step-by-step runbook is
+    [`DESIGN_splice_cnn_calibration.md`](DESIGN_splice_cnn_calibration.md)**, backed
+    by [`RESEARCH_splice_cnn_calibration.md`](RESEARCH_splice_cnn_calibration.md)
+    (upstream install, verified weight hashes, published benchmarks, panel sources).
+    Four things that research changed:
+    - **All 17 pinned weight hashes are verified correct** against the upstream
+      bytes, so the hash gate should pass first try.
+    - **The attestation layer is wired to nothing** — outside its own test, nothing
+      in `src/` calls `verified_predictor`. Running the gate changes nothing for
+      users until that wiring lands.
+    - **`Illumina/SpliceAI` was archived 2026-04-20** (read-only; the Keras-3
+      breakage will never be fixed upstream), and Pangolin's `custom_usage.py` loads
+      *different weights* (`.3`, 5 folds) than its CLI (`.3.v2`, 3 folds) — which is
+      the set BT4 pins.
+    - **These models are weakest in BT4's own regime:** median prAUC 0.419 exonic vs
+      0.773 intronic (Smith & Kitzman 2023). That belongs wherever BT4 reports
+      splice risk on a CDS, and it is why the plan pairs the fidelity gate with a
+      statistical-calibration gate rather than stopping at the flag flip.
 11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — assemble a
     license-clean, regime-matched **CDS-variant** TE panel and run
     `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
