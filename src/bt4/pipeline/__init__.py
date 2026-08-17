@@ -14,6 +14,7 @@ from bt4.pipeline.candidates import (
     CandidateSet,
     assemble_and_rank_candidates,
 )
+from bt4.pipeline.construct import ConstructAudit, EnzymeOccurrence, audit_construct
 from bt4.pipeline.library import LibraryResult, run_library
 from bt4.pipeline.optimize import (
     FrontierResult,
@@ -45,7 +46,9 @@ __all__ = [
     "ApplicationPreset",
     "Candidate",
     "CandidateSet",
+    "ConstructAudit",
     "CrossCheckSite",
+    "EnzymeOccurrence",
     "FrontierResult",
     "InfeasibleError",
     "LibraryResult",
@@ -57,6 +60,7 @@ __all__ = [
     "apply_preset",
     "assemble_and_rank_candidates",
     "audit_candidate_set",
+    "audit_construct",
     "available_presets",
     "available_splice_backends",
     "rerank_by_expression",

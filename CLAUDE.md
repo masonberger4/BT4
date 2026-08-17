@@ -33,11 +33,20 @@ before writing code, and keep it current as the architecture evolves.
 > GLOBAL rules on the frontier, GLOBAL-aware `validate`, a windowed `folding_dg`, and
 > a new opt-in constraint `relax()` with culprit-named infeasibility; see
 > [`docs/REVIEW_2026-08_sota_and_roadmap.md`](docs/REVIEW_2026-08_sota_and_roadmap.md)
-> §3, which also benchmarks BT4 against 2023–2026 SOTA). What remains: a defensible
-> default operating point (BT4 ships CAI = 1.000 where nine other tools cluster at
-> 0.63–0.83), then **construct context**, the standing architectural gap. Data and
-> human-gated calibration, packaged installers, and breadth follow those — see
-> NEXT_SESSION.md.
+> §3, which also benchmarks BT4 against 2023–2026 SOTA). **The defensible-default
+> pass and the construct-context core have since landed too** (§4 of the same doc):
+> a **windowed-GC** constraint routed honestly by tractability, the IUPAC
+> extra-sites path, regime-tagged **application presets** (none applied by default),
+> real Studio controls (objective weights, hard budgets, FASTA open, a validate
+> panel, a splice track) — and then the standing architectural gap itself:
+> **`ConstructContext`** now carries the 5′UTR / vector backbone, `SeededConstraint`
+> makes every LOCAL rule junction-correct without touching the `Constraint`
+> protocol, `UorfConstraint.cds_offset` catches a leader ATG reading into the CDS,
+> one shared `junction_window()` folds the initiation region, and
+> `api.audit_construct` audits the assembled construct including **restriction-site
+> uniqueness**. What remains: real flanks for the wrapped splice CNNs (still
+> `N`-padded), data and human-gated calibration, packaged installers, and breadth —
+> see NEXT_SESSION.md.
 >
 > This document was written after a full review of the BT3 codebase and *every*
 > BT3 branch (`master`, `almost-there`, `gemini`, `streamlit`, and the merged

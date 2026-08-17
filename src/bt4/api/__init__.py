@@ -38,14 +38,23 @@ from bt4.constraints import (
     resolve_enzyme,
     unknown_enzyme_message,
 )
-from bt4.domain import AMINO_ACIDS, Result, Severity, Violation, validate_protein
+from bt4.domain import (
+    AMINO_ACIDS,
+    ConstructContext,
+    Result,
+    Severity,
+    Violation,
+    validate_protein,
+)
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
 from bt4.pipeline import (
     APPLICATION_PRESETS,
     ApplicationPreset,
     Candidate,
     CandidateSet,
+    ConstructAudit,
     CrossCheckSite,
+    EnzymeOccurrence,
     FrontierResult,
     InfeasibleError,
     LibraryResult,
@@ -57,6 +66,7 @@ from bt4.pipeline import (
     apply_preset,
     assemble_and_rank_candidates,
     audit_candidate_set,
+    audit_construct,
     available_presets,
     available_splice_backends,
     rerank_by_expression,
@@ -80,7 +90,10 @@ __all__ = [
     "ApplicationPreset",
     "Candidate",
     "CandidateSet",
+    "ConstructAudit",
+    "ConstructContext",
     "CrossCheckSite",
+    "EnzymeOccurrence",
     "ExpressionPredictor",
     "ExpressionResult",
     "ForbiddenPreset",
@@ -101,6 +114,7 @@ __all__ = [
     "apply_preset",
     "assemble_and_rank_candidates",
     "audit_candidate_set",
+    "audit_construct",
     "available_enzymes",
     "available_expression_backends",
     "available_forbidden_presets",
@@ -223,12 +237,15 @@ def tracks(
     reference_set: str | None = None,
     nt_window: int = 50,
     codon_window: int = 18,
+    splice: bool = False,
+    splice_predictor: object | None = None,
 ) -> TracksResult:
-    """Compute per-site composition tracks for a coding sequence.
+    """Compute per-site tracks for a coding sequence.
 
     Sliding-window **reporting** profiles (GC fraction, CpG density, and -- when
     codon-aligned -- %MinMax) so a delivered sequence's composition can be
-    audited or plotted position-by-position. Nothing here feeds the optimizer.
+    audited or plotted position-by-position, plus an opt-in per-nucleotide
+    cryptic-splice-site track. Nothing here feeds the optimizer.
 
     Args:
         dna: An ACGT coding sequence (case-insensitive).
@@ -237,9 +254,16 @@ def tracks(
             frequencies (``None`` = its default).
         nt_window: Window (nucleotides) for the GC and CpG tracks.
         codon_window: Window (codons) for the %MinMax track.
+        splice: Add the per-nucleotide ``splice_site`` track. Opt-in because it
+            runs a model, and its numbers inherit that model's calibration
+            status -- with the default PWM baseline they are UNCALIBRATED
+            pseudo-scores showing where consensus-like positions sit, not
+            probabilities.
+        splice_predictor: Backend to score with (``None`` = the baseline).
 
     Returns:
-        A :class:`~bt4.pipeline.tracks.TracksResult` bundling the named tracks.
+        A :class:`~bt4.pipeline.tracks.TracksResult` bundling the named tracks,
+        recording which splice model ran and whether it is calibrated.
 
     Raises:
         ValueError: On non-ACGT input, a non-positive window, or unknown organism.
@@ -250,6 +274,8 @@ def tracks(
         reference_set=reference_set,
         nt_window=nt_window,
         codon_window=codon_window,
+        splice=splice,
+        splice_predictor=splice_predictor,
     )
 
 

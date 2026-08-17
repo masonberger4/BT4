@@ -437,6 +437,49 @@ class StudioWindow(QtWidgets.QMainWindow):
             "exported file headers.",
         )
 
+        self.ctx_upstream_edit = QtWidgets.QPlainTextEdit()
+        self.ctx_upstream_edit.setPlaceholderText(
+            "optional: 5'UTR / vector sequence before the CDS"
+        )
+        self.ctx_upstream_edit.setAccessibleName("Upstream construct context")
+        self.ctx_upstream_edit.setMaximumHeight(60)
+        self._add_row(
+            form, "5' context", self.ctx_upstream_edit,
+            "The sequence that will sit immediately BEFORE your CDS -- the 5'UTR, "
+            "and as much of the vector backbone before it as you know. Give it and "
+            "BT4 stops designing in a vacuum: every rule below is also checked "
+            "across the junction (so a restriction site or repeat formed half in "
+            "the leader and half in codon 1 is caught), and uORF pairing can see an "
+            "ATG in the leader that reads into your CDS. Write N for unknown bases; "
+            "the flank is cut at the N nearest the CDS. It is context only -- it is "
+            "never part of the designed sequence and never exported.",
+        )
+
+        self.ctx_downstream_edit = QtWidgets.QPlainTextEdit()
+        self.ctx_downstream_edit.setPlaceholderText("optional: sequence after the CDS")
+        self.ctx_downstream_edit.setAccessibleName("Downstream construct context")
+        self.ctx_downstream_edit.setMaximumHeight(60)
+        self._add_row(
+            form, "3' context", self.ctx_downstream_edit,
+            "The sequence immediately AFTER your CDS (3'UTR / backbone). Used by the "
+            "whole-construct audit so a defect formed at the 3' junction is visible "
+            "too. Context only; never part of the designed sequence.",
+        )
+
+        self.context_prov_combo = QtWidgets.QComboBox()
+        self.context_prov_combo.addItem("omit (record only its length)", "omit")
+        self.context_prov_combo.addItem("hash (record a content hash)", "hash")
+        self.context_prov_combo.setAccessibleName("Context provenance policy")
+        self._add_row(
+            form, "Context in stamp", self.context_prov_combo,
+            "What the run's provenance stamp records about the sequence above. "
+            "'omit' keeps only its length, so the stamp cannot fingerprint your "
+            "backbone. 'hash' stores a content hash, which makes the run fully "
+            "reproducible from its stamp but does identify the backbone to anyone "
+            "who already has a copy to test against. Your call -- BT4 will not pick "
+            "for you. Either way the sequence itself is never sent anywhere.",
+        )
+
         self.preset_combo = QtWidgets.QComboBox()
         self.preset_combo.addItem(_NO_PRESET)
         for app_preset in api.available_presets():
@@ -1271,7 +1314,10 @@ class StudioWindow(QtWidgets.QMainWindow):
             "scores a whole transcript and cannot accept an empty UTR; the 5' UTR "
             "and initiation region carry most of its signal, so an empty-UTR score "
             "would not be meaningful. Not part of the designed sequence -- it is "
-            "context for the model only and is never exported.",
+            "context for the RiboNN model only and is never exported. NOTE: this is "
+            "separate from the '5' context' box on the Design panel, which is what "
+            "makes the DESIGN construct-aware; this one only feeds the expression "
+            "model's fixed UTR slots.",
         )
 
         self.utr3_edit = QtWidgets.QLineEdit()
@@ -1501,6 +1547,8 @@ class StudioWindow(QtWidgets.QMainWindow):
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("&File")
+        self._add_action(file_menu, "&Open protein FASTA...", self._open_protein, "Ctrl+O")
+        file_menu.addSeparator()
         self.act_export_fasta = self._add_action(
             file_menu, "Export &FASTA...", self._export_fasta, "Ctrl+E"
         )
@@ -1519,6 +1567,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         )
         self.act_cancel = self._add_action(
             run_menu, "&Cancel", self._cancel_optimize, "Esc"
+        )
+        run_menu.addSeparator()
+        self._add_action(
+            run_menu, "&Validate a sequence...", self._validate_sequence, "Ctrl+Shift+V"
         )
         run_menu.addSeparator()
         self.act_rank = self._add_action(
@@ -1911,8 +1963,22 @@ class StudioWindow(QtWidgets.QMainWindow):
             beam=beam if beam > 0 else None,
             seed=0,
             application_preset=str(self.preset_combo.currentData() or ""),
+            context=self._build_context(),
+            context_provenance=str(self.context_prov_combo.currentData() or "omit"),
         )
         return config, self.steps_spin.value()
+
+    def _build_context(self) -> api.ConstructContext | None:
+        """Read the construct-context boxes, or ``None`` when both are empty.
+
+        Returning ``None`` for empty input matters: it is what keeps a run without
+        construct context byte-identical to one from before the feature existed.
+        """
+        upstream = "".join(self.ctx_upstream_edit.toPlainText().split())
+        downstream = "".join(self.ctx_downstream_edit.toPlainText().split())
+        if not upstream and not downstream:
+            return None
+        return api.ConstructContext(upstream=upstream, downstream=downstream)
 
     def _on_preset_chosen(self, index: int) -> None:
         """Fill the design controls in from the chosen application preset.
@@ -2638,12 +2704,15 @@ class StudioWindow(QtWidgets.QMainWindow):
             )
 
     def _render_tracks(self, delivered: api.Result) -> None:
-        """Plot the delivered sequence's per-site GC and CpG-density tracks.
+        """Plot the delivered sequence's per-site GC, CpG-density and splice tracks.
 
-        Honest reporting profiles (``api.tracks``): each point is a sliding-window
-        statistic recomputed from the DNA, never a solver output. Both tracks are
-        fraction-scaled (0-1), so they share the y-axis; %MinMax (a different
-        scale) stays available via ``api.tracks`` / ``bt4 tracks``.
+        The first two are honest reporting profiles (``api.tracks``): each point is
+        a sliding-window statistic recomputed from the DNA, never a solver output.
+        The splice track is different in kind -- it comes from a *model*, so the
+        plot title carries that model's calibration state, and with the shipped PWM
+        baseline it says UNCALIBRATED. All three are fraction-scaled (0-1) so they
+        share a y-axis; %MinMax (a different scale) stays available via
+        ``api.tracks`` / ``bt4 tracks``.
         """
         self.tracks_plot.clear()
         organism, reference_set = self._delivered_tables
@@ -2653,11 +2722,13 @@ class StudioWindow(QtWidgets.QMainWindow):
                 organism or self.organism_combo.currentText(),
                 reference_set=reference_set or None,
                 nt_window=30,
+                splice=True,
             )
         except ValueError:
             return
         gc = tracks.get("gc_fraction")
         cpg = tracks.get("cpg_density")
+        splice = tracks.get("splice_site")
         if gc is not None and gc.values:
             self.tracks_plot.plot(
                 list(range(len(gc.values))),
@@ -2672,6 +2743,20 @@ class StudioWindow(QtWidgets.QMainWindow):
                 pen=pg.mkPen("#e0724a", width=2),
                 name="CpG density",
             )
+        if splice is not None and splice.values:
+            self.tracks_plot.plot(
+                list(range(len(splice.values))),
+                list(splice.values),
+                pen=pg.mkPen("#8a5ad0", width=1),
+                name="splice site",
+            )
+        if tracks.splice_model:
+            state = "calibrated" if tracks.splice_calibrated else "UNCALIBRATED"
+            self.tracks_plot.setTitle(
+                f"per-site tracks - splice: {tracks.splice_model} [{state}]"
+            )
+        else:
+            self.tracks_plot.setTitle("")
 
     def _render_crosscheck(self, report: api.SpliceCrossCheck) -> None:
         """Render an ASSP cross-check, leading with what it is and is not.
@@ -2968,6 +3053,81 @@ class StudioWindow(QtWidgets.QMainWindow):
     def _delivered(self) -> api.Result | None:
         """The currently delivered result, if any."""
         return self._last.delivered() if self._last is not None else None
+
+    def _open_protein(self) -> None:
+        """Load a protein FASTA into the input box (the design target in §6.6).
+
+        The app was paste-only, so a user with a sequence in a file had to route it
+        through a text editor. Multi-record files load the first record and say so,
+        rather than silently designing for a sequence the user did not pick.
+        """
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Open protein FASTA", "", "FASTA (*.fasta *.fa *.faa);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            records = list(api.read_fasta(path))
+        except (OSError, ValueError) as exc:
+            self._warn("Could not read FASTA", str(exc), "")
+            return
+        if not records:
+            self._warn("Empty FASTA", f"{path} contained no records.", "")
+            return
+        header, sequence = records[0]
+        self.protein_edit.setPlainText(sequence)
+        if not self.jobname_edit.text().strip() and header:
+            self.jobname_edit.setText(header.split()[0])
+        note = f"Loaded {header or 'record 1'} ({len(sequence)} residues) from {path}"
+        if len(records) > 1:
+            note += f" - first of {len(records)} records; the rest were not loaded"
+        self.statusBar().showMessage(note)
+
+    def _validate_sequence(self) -> None:
+        """Audit an existing coding sequence against the current design controls.
+
+        ``api.validate`` was fully built and had no UI at all, so a user holding a
+        CDS -- their own, or one a collaborator sent -- had to drop to the CLI to
+        check it. The audit uses the same controls as a design run, and reports
+        every rule they set (LOCAL and non-local alike).
+        """
+        dna, ok = QtWidgets.QInputDialog.getMultiLineText(
+            self, "Validate a coding sequence", "Paste an ACGT coding sequence:", ""
+        )
+        if not ok:
+            return
+        cleaned = "".join(dna.split()).upper()
+        if not cleaned:
+            return
+        enzymes = self._prepare_enzymes()
+        if enzymes is None:  # an unknown enzyme name was already reported
+            return
+        config, _steps = self._build_config(enzymes)
+        try:
+            report = api.validate(cleaned, config)
+        except ValueError as exc:
+            self._warn("Could not validate", str(exc), "")
+            return
+        hard = report.metrics.hard_violations
+        soft = report.metrics.soft_violations
+        verdict = "FEASIBLE" if report.is_feasible else "NOT feasible"
+        lines = [
+            f"{verdict} under the current design controls.",
+            f"{len(report.dna)} nt, GC {report.metrics.gc * 100:.1f}%",
+            f"{hard} hard / {soft} soft violation(s).",
+        ]
+        detail = "\n".join(
+            f"[{v.severity.name}] {v.constraint} @ {v.start}-{v.end}: {v.detail}"
+            for v in report.violations[:100]
+        )
+        if len(report.violations) > 100:
+            detail += f"\n... and {len(report.violations) - 100} more"
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Validation report")
+        box.setText("\n".join(lines))
+        if detail:
+            box.setDetailedText(detail)
+        box.exec()
 
     def _export_fasta(self) -> None:
         """Write the delivered sequence to a FASTA file chosen by the user."""

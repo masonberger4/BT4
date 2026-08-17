@@ -40,12 +40,14 @@ from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint, enzyme_provenance
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
+from bt4.constraints.seeded import seed_constraints
 from bt4.constraints.splice_motif import SpliceSiteMotifConstraint
 from bt4.constraints.uorf import UorfConstraint
 from bt4.domain import (
     CODON_TABLE,
     STOP,
     Constraint,
+    ConstructContext,
     Frontier,
     Metrics,
     ObjectiveTerm,
@@ -277,6 +279,21 @@ class OptimizeConfig:
             applied by default**). Purely a provenance label -- the solver never
             reads it -- but it enters the manifest so two runs that differ only by
             preset do not stamp the same provenance (invariant #9).
+        context: The known sequence around the CDS -- 5'UTR / vector backbone
+            before it and the flank after it (see
+            :class:`~bt4.domain.context.ConstructContext`), or ``None`` to design
+            the CDS in isolation as BT4 always has. With a context set, every LOCAL
+            rule is additionally evaluated **across the 5' junction** (so a site
+            formed between the leader and the first codon is caught) and the uORF
+            rule can see an ATG in the leader that reads into the CDS. With it
+            unset every path is byte-identical to before (invariant #7).
+        context_provenance: What the run manifest records about ``context`` --
+            ``"omit"`` (default) stores only its lengths, ``"hash"`` stores a
+            content hash. This is a genuine trade-off the user owns rather than a
+            default BT4 should pick: hashing satisfies provenance completeness
+            (invariant #9), but a backbone is often unpublished IP and a hash is
+            still a fingerprint of it. Either way the context is never transmitted
+            anywhere (the ASSP cross-check is hard-blocked from seeing it).
     """
 
     organism: str = "homo_sapiens"
@@ -323,6 +340,8 @@ class OptimizeConfig:
     beam: int | None = None
     seed: int = 0
     application_preset: str = ""
+    context: ConstructContext | None = None
+    context_provenance: str = "omit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,7 +521,12 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
         constraints.append(SpliceSiteMotifConstraint())
     if config.avoid_internal_start:
         constraints.append(InternalStartConstraint())
-    return constraints
+    # With a construct context, every LOCAL rule additionally sees the known
+    # sequence before the CDS, so a site formed across the 5' junction is caught
+    # rather than being structurally unreachable. Without one this returns the same
+    # list object, keeping a context-free run byte-identical (invariant #7).
+    upstream = config.context.upstream if config.context is not None else ""
+    return seed_constraints(constraints, upstream)
 
 
 def _build_global_constraints(config: OptimizeConfig) -> list[Constraint]:
@@ -519,18 +543,26 @@ def _build_global_constraints(config: OptimizeConfig) -> list[Constraint]:
     driven down by the refinement layer (see :func:`_refine`), with residuals
     reported honestly by :func:`_global_audit`.
     """
+    upstream = config.context.upstream if config.context is not None else ""
     globals_: list[Constraint] = []
     if config.max_repeat_length is not None and config.max_repeat_length > 0:
         globals_.append(MaxRepeatConstraint(config.max_repeat_length))
     if config.avoid_uorf:
-        globals_.append(UorfConstraint(region_nt=config.uorf_region_nt))
+        # With a 5' leader the rule is scored over `leader + CDS`, so it must be
+        # told where the start codon is: the main frame is (a - cds_offset) % 3, and
+        # a leader whose length is not a multiple of three would otherwise invert
+        # every frame call. This is also what makes the best-evidenced construct
+        # win reachable -- an ATG in the 5'UTR reading into the CDS.
+        globals_.append(
+            UorfConstraint(region_nt=config.uorf_region_nt, cds_offset=len(upstream))
+        )
     if config.gc_window_nt is not None and config.gc_window_nt > _GC_WINDOW_TRELLIS_MAX_NT:
         globals_.append(
             GcWindowConstraint(
                 config.gc_window_nt, config.gc_window_min, config.gc_window_max
             )
         )
-    return globals_
+    return seed_constraints(globals_, upstream)
 
 
 def _global_audit(
@@ -656,7 +688,36 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "beam": config.beam,
         "seed": config.seed,
         "application_preset": config.application_preset,
+        **_context_stamp(config),
     }
+
+
+def _context_stamp(config: OptimizeConfig) -> dict[str, object]:
+    """Return what the manifest records about the construct context.
+
+    Two runs that used different flanking sequence must not stamp the same
+    provenance, so *something* about the context always enters the config hash.
+    How much is the user's call (``context_provenance``), because the honest
+    default is not obvious: a content hash makes the run fully reproducible from
+    its stamp (invariant #9), but a vector backbone is frequently unpublished and
+    a hash is still a fingerprint that can confirm a guess. ``"omit"`` (the
+    default) therefore records only the shape -- lengths and topology -- which
+    still distinguishes runs without carrying the sequence's identity.
+    """
+    context = config.context
+    if context is None:
+        return {"context": None}
+    stamp: dict[str, object] = {
+        "context_upstream_nt": len(context.upstream),
+        "context_downstream_nt": len(context.downstream),
+        "context_topology": context.topology,
+        "context_masked_spans": [list(span) for span in context.masked_spans],
+        "context_provenance": config.context_provenance,
+    }
+    if config.context_provenance == "hash":
+        joined = f"{context.upstream}|{context.downstream}".encode()
+        stamp["context_sha256"] = hashlib.sha256(joined).hexdigest()
+    return stamp
 
 
 def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
@@ -893,15 +954,30 @@ def _refine(
     globals_ = tuple(global_constraints)
 
     model = None
+    fold_region: Callable[[str], str] | None = None
     if with_folding:
-        from bt4.biomodels.folding import default as folding_default  # lazy: keep core light
+        # lazy: keep core light
+        from bt4.biomodels.folding import default as folding_default
+        from bt4.biomodels.folding import junction_window
 
         model = folding_default()
+        upstream = config.context.upstream if config.context is not None else ""
+
+        def fold_region(dna: str, _upstream: str = upstream) -> str:
+            """The exact region folded -- shared by the objective and the audit.
+
+            With a known leader this is the initiation region spanning the 5'
+            junction (structure that occludes ribosome loading straddles the start
+            codon, so a CDS-only fold cannot represent it); without one it is the
+            plain 5' window, unchanged.
+            """
+            return junction_window(_upstream, dna)
 
     def score(dna: str) -> float:
         total = sum(w * term.score(dna) for term, w in pairs)
-        if model is not None:
-            total += weight * model.score_sequence(dna)
+        if model is not None and fold_region is not None:
+            # five_prime_dg(region, None) folds exactly the region handed to it.
+            total += weight * model.five_prime_dg(fold_region(dna), None)
         if globals_:
             hard = sum(
                 1
@@ -923,16 +999,20 @@ def _refine(
     )
     extra_audit: dict[str, object] = {"refined": True}
     manifest_extra: dict[str, object] = {}
-    if model is not None:
+    if model is not None and fold_region is not None:
         extra_audit["folding_model"] = model.name
         extra_audit["folding_calibrated"] = model.calibrated
-        # Report the *same* 5' window the SA optimized, not the whole sequence.
-        # score_sequence returns the 5' window dG directly (folding's fixed
-        # larger-is-better orientation), so this equals the folding objective the
-        # refinement maximized (line above: model.score_sequence(dna)). Reporting a
-        # whole-sequence dG under the CLI's "5' dG" label while optimizing only the
-        # window is a reported-vs-computed lie (invariant #2, defect A.3).
-        extra_audit["folding_dg"] = model.score_sequence(result.dna)
+        # Report the *same* region the SA optimized, via the same function.
+        # Reporting a different region from the one that was optimized is exactly
+        # the reported-vs-computed defect that shipped before (a whole-sequence dG
+        # printed under a "5' dG" label, invariant #2); sharing `fold_region` makes
+        # that mismatch unrepresentable rather than merely fixed.
+        region = fold_region(result.dna)
+        extra_audit["folding_dg"] = model.five_prime_dg(region, None)
+        extra_audit["folding_region_nt"] = len(region)
+        extra_audit["folding_spans_junction"] = bool(
+            config.context is not None and config.context.upstream
+        )
         # The folding backend changed the DNA, so its identity must enter the stamp
         # (invariant #9); folding_dg is an output metric and stays out of the hash.
         manifest_extra["folding_model"] = model.name

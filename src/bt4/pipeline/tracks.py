@@ -14,11 +14,25 @@ statistic recomputed from the DNA:
   (translational ramp / rare-codon clusters), from
   :func:`~bt4.objectives.minmax.min_max_profile`, using the organism's codon
   frequencies.
+* ``splice_site`` -- per-nucleotide cryptic-splice-site score (the larger of the
+  donor and acceptor score at each position), from whichever
+  :class:`~bt4.biomodels.splice.SplicePredictor` backend is asked for. Unlike the
+  three above this one comes from a *model*, so it carries that model's calibration
+  status: with the default PWM baseline the numbers are **uncalibrated
+  pseudo-scores in arbitrary units** and must be read as "where the consensus-like
+  positions are", never as a splice probability (CLAUDE.md §10.6).
 
 Each track carries its window size and unit so the caller can plot or audit it
 without guessing. This is reporting, not optimization; nothing here feeds the
 solver (see the profiles' own module docstrings and the %MinMax / CpG
 additive-vs-reporting split).
+
+There is deliberately **no folding track**. A sliding-window folding deltaG would
+have to fold one window per position, and the dependency-free baseline is
+``O(w^3)`` per window -- seconds to minutes for a real CDS -- so a track would
+either be unusably slow or quietly computed at a coarser stride than its axis
+implies. The 5' folding number the refinement pass actually optimizes is reported
+directly in the result audit instead.
 """
 
 from __future__ import annotations
@@ -77,6 +91,8 @@ class TracksResult:
     tracks: tuple[Track, ...]
     organism: str = ""
     reference_set: str = ""
+    splice_model: str = ""
+    splice_calibrated: bool = False
 
     def get(self, name: str) -> Track | None:
         """Return the track named ``name``, or ``None`` if absent."""
@@ -107,6 +123,8 @@ def run_tracks(
     reference_set: str | None = None,
     nt_window: int = 50,
     codon_window: int = 18,
+    splice: bool = False,
+    splice_predictor: object | None = None,
 ) -> TracksResult:
     """Compute the per-site composition tracks for a coding sequence.
 
@@ -122,10 +140,19 @@ def run_tracks(
             over changes what the track means.
         nt_window: Sliding-window length (nucleotides) for the GC and CpG tracks.
         codon_window: Sliding-window length (codons) for the %MinMax track.
+        splice: When ``True``, add the per-nucleotide ``splice_site`` track. It is
+            opt-in because it runs a model rather than a composition statistic, and
+            because the resulting numbers inherit that model's calibration status.
+        splice_predictor: The :class:`~bt4.biomodels.splice.SplicePredictor` to
+            score with; ``None`` uses :func:`bt4.biomodels.splice.default` (the
+            uncalibrated PWM baseline). The result records which model ran and
+            whether it is calibrated, so a plot can never imply more than the
+            backend claims.
 
     Returns:
         A :class:`TracksResult` with the ``gc_fraction`` and ``cpg_density``
-        tracks always, plus ``minmax`` when the sequence is codon-aligned.
+        tracks always, plus ``minmax`` when the sequence is codon-aligned and
+        ``splice_site`` when ``splice`` is set.
 
     Raises:
         ValueError: On non-ACGT input, or a non-positive window.
@@ -166,11 +193,39 @@ def run_tracks(
                 values=tuple(min_max_profile(d, frequencies, codon_window)),
             )
         )
+    splice_model = ""
+    splice_calibrated = False
+    if splice:
+        # Lazy: keeps `import bt4` light and the splice backends optional.
+        from bt4.biomodels.splice import SplicePredictor
+        from bt4.biomodels.splice import default as splice_default
+
+        predictor = splice_predictor if splice_predictor is not None else splice_default()
+        assert isinstance(predictor, SplicePredictor)
+        scored = predictor.score_sequence(d)
+        splice_model = scored.model_name
+        splice_calibrated = scored.calibrated
+        tracks.append(
+            Track(
+                name="splice_site",
+                window=1,
+                # The unit names the calibration status so a plot legend cannot
+                # quietly upgrade a PWM pseudo-score into a probability.
+                unit="p(site)" if scored.calibrated else "score (UNCALIBRATED)",
+                window_unit="nt",
+                values=tuple(
+                    max(don, acc)
+                    for don, acc in zip(scored.donor, scored.acceptor, strict=True)
+                ),
+            )
+        )
     return TracksResult(
         dna=d,
         tracks=tuple(tracks),
         organism=resolved_organism,
         reference_set=resolved_reference_set,
+        splice_model=splice_model,
+        splice_calibrated=splice_calibrated,
     )
 
 

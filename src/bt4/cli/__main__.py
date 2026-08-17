@@ -143,6 +143,26 @@ def _apply_preset_to_args(args: argparse.Namespace, argv: Sequence[str] | None) 
             setattr(args, dest, value)
 
 
+def _read_flank(value: str | None) -> str:
+    """Read a flank given either literally or as a path to a FASTA file."""
+    if not value:
+        return ""
+    candidate = value.strip()
+    if set(candidate.upper()) <= set("ACGTN"):
+        return candidate
+    # Not a bare sequence -> treat it as a FASTA path (a clear error if it is not).
+    return "".join(seq for _header, seq in api.read_fasta(candidate))
+
+
+def _build_context(args: argparse.Namespace) -> api.ConstructContext | None:
+    """Build the construct context from --utr5/--utr3, or None when neither is set."""
+    upstream = _read_flank(getattr(args, "utr5", None))
+    downstream = _read_flank(getattr(args, "utr3", None))
+    if not upstream and not downstream:
+        return None
+    return api.ConstructContext(upstream=upstream, downstream=downstream)
+
+
 def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     motifs = tuple(m.strip().upper() for m in args.forbid) if args.forbid else ()
     enzymes = tuple(e.strip() for e in args.enzyme) if args.enzyme else ()
@@ -151,6 +171,7 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     )
     presets = tuple(p.strip() for p in args.forbid_preset) if args.forbid_preset else ()
     dinuc_budget, dinuc_min, dinuc_max = _resolve_dinuc_budget(args)
+    context = _build_context(args)
     cpb_cds: tuple[str, ...] = ()
     if args.cpb_cds:
         # Read the reference CDS FASTA now (CLI layer); the engine builds the
@@ -200,6 +221,8 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         beam=None if args.beam <= 0 else args.beam,
         seed=args.seed,
         application_preset=getattr(args, "preset", None) or "",
+        context=context,
+        context_provenance=getattr(args, "context_provenance", "omit"),
     )
 
 
@@ -209,6 +232,25 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         help="start from a named application preset (see 'bt4 presets'). NO preset "
         "is applied by default -- BT4 stays regime-agnostic. A preset only supplies "
         "starting values: any flag you pass explicitly still wins"
+    )
+    parser.add_argument(
+        "--utr5", default=None, metavar="SEQ|FASTA",
+        help="known sequence immediately 5' of the CDS (5'UTR / vector backbone), "
+        "as literal ACGT or a FASTA path. With it, every LOCAL rule is also checked "
+        "ACROSS the junction and uORF pairing can see a leader ATG. Use N for "
+        "unknown bases: each flank is truncated at the N nearest the CDS"
+    )
+    parser.add_argument(
+        "--utr3", default=None, metavar="SEQ|FASTA",
+        help="known sequence immediately 3' of the CDS (same accepted forms)"
+    )
+    parser.add_argument(
+        "--context-provenance", default="omit", dest="context_provenance",
+        choices=("omit", "hash"),
+        help="what the run manifest records about --utr5/--utr3: 'omit' (default) "
+        "stores only their lengths; 'hash' stores a content hash, which makes the "
+        "run fully reproducible from its stamp but fingerprints your backbone. The "
+        "context is never transmitted anywhere either way"
     )
     parser.add_argument("--organism", default="homo_sapiens", help="codon-usage table (alias ok)")
     parser.add_argument(
@@ -434,12 +476,15 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         reference_set=args.reference_set,
         nt_window=args.nt_window,
         codon_window=args.codon_window,
+        splice=args.splice_track,
     )
     if args.json:
         payload = {
             "dna": result.dna,
             "organism": result.organism,
             "codon_reference_set": result.reference_set,
+            "splice_model": result.splice_model,
+            "splice_calibrated": result.splice_calibrated,
             "tracks": [
                 {
                     "name": t.name,
@@ -458,6 +503,9 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         # %MinMax is reference-set-dependent, so the track table is not
         # self-describing without this line.
         print(f"tables  {result.organism} / {result.reference_set}")
+    if result.splice_model:
+        state = "calibrated" if result.splice_calibrated else "UNCALIBRATED (advisory)"
+        print(f"splice  {result.splice_model} [{state}]")
     print(f"{'track':14} {'window':>8} {'n':>5} {'min':>8} {'max':>8} {'mean':>8}")
     for row in api.summarize(result.tracks):
         win = f"{row['window']} {row['window_unit']}"
@@ -601,6 +649,11 @@ def _parser() -> argparse.ArgumentParser:
         help="that organism's reference set for the %%MinMax frequencies "
              "(default: the organism's own default)",
     )
+    p_trk.add_argument("--splice-track", action="store_true", dest="splice_track",
+                       help="add a per-nucleotide cryptic-splice-site track. Opt-in "
+                       "because it runs a model: with the default PWM baseline the "
+                       "values are UNCALIBRATED pseudo-scores showing where "
+                       "consensus-like positions sit, not probabilities")
     p_trk.add_argument("--nt-window", type=int, default=50, dest="nt_window",
                        help="nucleotide window for the GC/CpG tracks")
     p_trk.add_argument("--codon-window", type=int, default=18, dest="codon_window",

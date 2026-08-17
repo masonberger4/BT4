@@ -1184,3 +1184,111 @@ def test_choosing_none_preset_changes_nothing() -> None:
     window.homo_spin.setValue(9)
     window._on_preset_chosen(0)  # the "(none)" entry
     assert window.homo_spin.value() == 9
+
+
+def test_open_protein_fasta_loads_the_first_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Paste-only input was a named gap; a multi-record file says what it loaded."""
+    fasta = tmp_path / "p.fasta"
+    fasta.write_text(">myprot description\nMAALKHETQWY\n>second\nMKV\n")
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(fasta), "")),
+    )
+    window = StudioWindow()
+    window._open_protein()
+    assert window.protein_edit.toPlainText() == "MAALKHETQWY"
+    assert window.jobname_edit.text() == "myprot"
+    assert "first of 2 records" in window.statusBar().currentMessage()
+
+
+def test_validate_panel_reports_violations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """api.validate had no UI at all; this is the surface for an existing CDS."""
+    monkeypatch.setattr(
+        QtWidgets.QInputDialog,
+        "getMultiLineText",
+        staticmethod(lambda *a, **k: ("GGGGGGGGGGAAAA", True)),
+    )
+    seen: dict[str, str] = {}
+
+    class _Box(QtWidgets.QMessageBox):
+        def exec(self) -> int:
+            seen["text"] = self.text()
+            seen["detail"] = self.detailedText()
+            return 0
+
+    monkeypatch.setattr(QtWidgets, "QMessageBox", _Box)
+    window = StudioWindow()
+    window.homo_spin.setValue(4)
+    window._validate_sequence()
+    assert "NOT feasible" in seen["text"]
+    assert "homopolymer" in seen["detail"]
+
+
+def test_tracks_plot_includes_the_splice_track_and_labels_calibration() -> None:
+    """The splice risk track was missing entirely; it must arrive labelled."""
+    window = StudioWindow()
+    result = api.optimize("MAALKHETQWYCDEFGHIKLM", api.OptimizeConfig(max_homopolymer=None))
+    window._render_tracks(result)
+    title = window.tracks_plot.plotItem.titleLabel.text
+    assert "splice" in title
+    # The shipped baseline is not calibrated, so the plot must say so.
+    assert "UNCALIBRATED" in title
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2/3: construct context in the app.
+# --------------------------------------------------------------------------- #
+
+
+def test_no_construct_context_by_default() -> None:
+    """An empty context box must mean None, so a plain run is unchanged."""
+    window = StudioWindow()
+    config, _steps = window._build_config(())
+    assert config.context is None
+    assert config.context_provenance == "omit"
+
+
+def test_construct_context_reaches_the_engine_and_changes_the_design() -> None:
+    """The headline capability, driven from the app exactly as a user would."""
+    window = StudioWindow()
+    window.ctx_upstream_edit.setPlainText("ggcacca")
+    window.ctx_downstream_edit.setPlainText("AAATTT")
+    window.motifs_edit.setText("CCAGTG")
+    window.rc_check.setChecked(False)
+    window.homo_spin.setValue(0)
+
+    config, _steps = window._build_config(())
+    assert config.context is not None
+    assert config.context.upstream == "GGCACCA"
+    assert config.context.downstream == "AAATTT"
+
+    result = api.optimize("VK", config)
+    construct = config.context.assemble(result.dna)
+    # The forbidden motif exists only across the junction, so avoiding it is proof
+    # the design saw the flank.
+    assert "CCAGTG" not in construct
+
+
+def test_context_provenance_policy_is_selectable() -> None:
+    window = StudioWindow()
+    window.ctx_upstream_edit.setPlainText("GGCACCA")
+    window.context_prov_combo.setCurrentIndex(1)
+    config, _steps = window._build_config(())
+    assert config.context_provenance == "hash"
+
+
+def test_the_construct_context_box_is_not_the_ribonn_utr_box() -> None:
+    """Two different 'UTR' inputs coexist; they must not be the same widget.
+
+    The RiboNN boxes are model context (they annotate a score); the Design-panel
+    boxes make the DESIGN construct-aware. Wiring one to the other would silently
+    make a user's backbone change an expression annotation and nothing else.
+    """
+    window = StudioWindow()
+    assert window.ctx_upstream_edit is not window.utr5_edit
+    assert window.ctx_downstream_edit is not window.utr3_edit
+    # The RiboNN tooltip points at the other box so the distinction is discoverable.
+    assert "5' context" in window.utr5_edit.toolTip()
