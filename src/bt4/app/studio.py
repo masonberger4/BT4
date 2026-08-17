@@ -755,6 +755,21 @@ class StudioWindow(QtWidgets.QMainWindow):
             "(purine at -3, G at +4), which could drive spurious re-initiation.",
         )
 
+        self.polya_check = QtWidgets.QCheckBox("avoid functional poly(A) signals")
+        self.polya_check.setAccessibleName("Avoid functional polyadenylation signals")
+        self._add_row(
+            form, "Poly(A)", self.polya_check,
+            "Forbid a poly(A) hexamer (AATAAA/ATTAAA) only when a U/GU-rich element "
+            "follows it downstream -- the bipartite signal the cleavage machinery "
+            "actually recognises (CPSF binds the hexamer, CstF the downstream "
+            "element). A premature poly(A) site truncates the transcript. This is "
+            "deliberately MORE permissive than the 'Poly-A signals' forbidden preset "
+            "above, which bans every bare hexamer even where no site could form. "
+            "Non-local, so enforced by a refinement pass (result labeled heuristic; "
+            "any it cannot remove are reported). Structural, not a calibrated "
+            "cleavage prediction.",
+        )
+
         self.uorf_check = QtWidgets.QCheckBox("avoid out-of-frame uORFs")
         self.uorf_check.setAccessibleName("Avoid out-of-frame uORFs")
         self._add_row(
@@ -1975,6 +1990,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             inverted_loop=self.inverted_loop_spin.value(),
             avoid_splice_sites=self.splice_check.isChecked(),
             avoid_internal_start=self.internal_start_check.isChecked(),
+            avoid_polya=self.polya_check.isChecked(),
             avoid_uorf=self.uorf_check.isChecked(),
             uorf_region_nt=self.uorf_region_spin.value(),
             tai_weight=weight["tai_weight"] if self.tai_check.isChecked() else 0.0,
@@ -2025,6 +2041,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             "cpg_weight": lambda v: self.weight_spins["cpg_weight"].setValue(float(v)),  # type: ignore[arg-type]
             "cpg_mode": lambda v: self.cpg_combo.setCurrentText(str(v)),
             "avoid_splice_sites": lambda v: self.splice_check.setChecked(bool(v)),
+            "avoid_polya": lambda v: self.polya_check.setChecked(bool(v)),
             "avoid_uorf": lambda v: self.uorf_check.setChecked(bool(v)),
             "inverted_stem": lambda v: self.inverted_spin.setValue(int(v)),  # type: ignore[arg-type]
             "inverted_loop": lambda v: self.inverted_loop_spin.setValue(int(v)),  # type: ignore[arg-type]

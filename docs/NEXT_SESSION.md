@@ -42,8 +42,9 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > [`REVIEW_2026-08_sota_and_roadmap.md`](REVIEW_2026-08_sota_and_roadmap.md) §4.
 > ✅ **Tier 3 (GenBank I/O) has landed too** — an annotated reader/writer whose
 > `misc_feature` spans put residual violations on the map the user opens, and whose
-> reader turns an existing vector map into a `ConstructContext`. **Start here is
-> now queue item 5 (Tier 4 — per-system biology).**
+> reader turns an existing vector map into a `ConstructContext`. **Tier 4 has now
+> partly landed too** — the functional (bipartite) poly(A) constraint and AAV/LVV
+> packaging accounting. **Start here is now queue item 6 (Phase-5 breadth).**
 
 | Component | State | Calibrated? | Primary file(s) |
 |---|---|---|---|
@@ -69,6 +70,8 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Restriction catalog (584 enzymes, REBASE-derived + content-hashed) | DONE | n/a | `constraints/restriction.py`, `constraints/data/` |
 | Surfaces: `bt4.api`, `bt4` CLI, FastAPI service, provenance | DONE | n/a | `api/`, `cli/`, `service/`, `provenance/` |
 | **GenBank I/O** — annotated writer (residual violations as `misc_feature`) + reader (vector map -> `ConstructContext`) | DONE | n/a | `io/genbank.py` |
+| **Functional poly(A) constraint** (bipartite hexamer + downstream U/GU element) | DONE | n/a (structural, not a cleavage predictor) | `constraints/polya.py` |
+| **AAV/LVV packaging accounting** (report only — BT4 controls no lever) | DONE | n/a | `pipeline/packaging.py` |
 | **BT4 Studio** — Design / Candidates+splice-audit / Library tabs, RiboNN + ASSP surfaced, menus + runtime theming | DONE | n/a | `app/studio.py`, `app/worker.py`, `app/theme.py` |
 | Expression backend registry (`available_expression_backends` / `resolve_expression_backend`) | DONE | n/a | `biomodels/expression/__init__.py`, `api/` |
 | Packaged installers (PyInstaller/Briefcase) | NOT-STARTED | n/a | `packaging/` |
@@ -228,13 +231,26 @@ items 1–3 are in
    *Export GenBank* button (Ctrl+G). Verified against Biopython as the reference
    parser (`tests/test_genbank.py`, skipped when Biopython is absent). SnapGene
    `.dna` remains out of scope.
-5. **[START HERE · self-contained] Tier 4 — per-system biology.** Independent of Tier 2, so it
+5. **[self-contained] Tier 4 — per-system biology.** *Partly landed 2026-08:* the
+   **functional poly(A) constraint** (`constraints/polya.py`, `avoid_polya`) now
+   forbids an `AATAAA`/`ATTAAA` hexamer **only when a downstream U/GU-rich element
+   follows it** — the bipartite architecture CPSF/CstF actually recognise — so it is
+   strictly more permissive than the blunt `poly_a_signal` hexamer preset, which
+   stays available as the stricter option; its footprint (~45 nt) is far too wide
+   for the trellis, so it is refinement-enforced and its residuals reported. Also
+   landed: **AAV/LVV packaging accounting** (`pipeline/packaging.py`,
+   `api.packaging_report`) — reporting only, since BT4 controls no lever over
+   cassette size, and it names what it could **not** see rather than implying a
+   partial count is a verdict. Both are wired into the AAV/LVV presets, CLI and
+   Studio. **Still ahead in this tier:** donor×acceptor splice pairing as a report,
+   uridine depletion, m1Ψ slippery motifs, and a codon-optimality/CSC term (the
+   last is data-gated — do not ship a fabricated CSC table). Independent of Tier 2, so it
    can land early: a *functional* poly(A) constraint (hexamer **plus** downstream
    GU/U-rich element — still LOCAL at `context_len ≈ 36`), donor×acceptor splice
    pairing as a report, AAV packaging-size accounting (reporting only — BT4
    controls no lever), uridine depletion, m1Ψ slippery motifs, and a codon
    optimality/CSC term.
-6. **[self-contained] Phase-5 breadth, continued.** Nine organisms ship recounted
+6. **[START HERE · self-contained] Phase-5 breadth, continued.** Nine organisms ship recounted
    genome-wide tables and eight also ship a highly-expressed reference set. What
    remains:
    - **Add further organisms** by extending `SPECS` in `build_organism_tables.py`

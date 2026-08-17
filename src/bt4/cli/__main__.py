@@ -114,6 +114,7 @@ _PRESET_FIELD_TO_FLAG: dict[str, tuple[str, str]] = {
     "cpg_weight": ("--cpg-weight", "cpg_weight"),
     "cpg_mode": ("--cpg-mode", "cpg_mode"),
     "avoid_splice_sites": ("--avoid-splice-sites", "avoid_splice_sites"),
+    "avoid_polya": ("--avoid-polya", "avoid_polya"),
     "avoid_uorf": ("--avoid-uorf", "avoid_uorf"),
     "inverted_stem": ("--inverted-stem", "inverted_stem"),
     "inverted_loop": ("--inverted-loop", "inverted_loop"),
@@ -208,6 +209,7 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         inverted_loop=args.inverted_loop,
         avoid_splice_sites=args.avoid_splice_sites,
         avoid_internal_start=args.avoid_internal_start,
+        avoid_polya=args.avoid_polya,
         avoid_uorf=args.avoid_uorf,
         uorf_region_nt=args.uorf_region_nt,
         refine=args.refine,
@@ -339,6 +341,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--avoid-internal-start", action="store_true",
                         dest="avoid_internal_start",
                         help="forbid internal ATG in a strong Kozak context")
+    parser.add_argument("--avoid-polya", action="store_true", dest="avoid_polya",
+                        help="forbid FUNCTIONAL poly(A) signals: an AATAAA/ATTAAA "
+                        "hexamer paired with a downstream U/GU-rich element (the "
+                        "bipartite signal the cleavage machinery recognises). More "
+                        "permissive than --forbid-preset poly_a_signal, which bans "
+                        "every bare hexamer. Refinement-enforced -> HEURISTIC result")
     parser.add_argument("--avoid-uorf", action="store_true", dest="avoid_uorf",
                         help="suppress out-of-frame internal ATG..in-frame-stop uORFs "
                         "(non-local, refinement-enforced -> HEURISTIC; structural, "
