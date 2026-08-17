@@ -9,6 +9,7 @@ logic, biological models, or heavy third-party dependencies.
 from __future__ import annotations
 
 from .certificate import OptimalityCertificate, OptimalityStatus
+from .context import CIRCULAR, LINEAR, ConstructContext
 from .contracts import Constraint, ObjectiveTerm
 from .genetic_code import (
     AA_TO_CODONS,
@@ -28,10 +29,13 @@ from .sequence import DNA_BASES, gc_fraction, validate_dna, validate_protein
 __all__ = [
     "AA_TO_CODONS",
     "AMINO_ACIDS",
+    "CIRCULAR",
     "CODON_TABLE",
     "DNA_BASES",
+    "LINEAR",
     "STOP",
     "Constraint",
+    "ConstructContext",
     "Frontier",
     "Metrics",
     "ObjectiveTerm",

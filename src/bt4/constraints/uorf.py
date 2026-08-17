@@ -77,23 +77,40 @@ class UorfConstraint:
             scanned -- the 5'-proximal window where leaky-scanning re-initiation
             matters (BT3 used 200; the default here is 100 = the first ~33 codons).
             ``None`` scans the whole sequence (rarely feasible for a long CDS).
+            Measured from the start codon, so a leader (see ``cds_offset``) extends
+            the scan backwards rather than eating into the window.
+        cds_offset: Index of the CDS's first base in the sequence handed to
+            :meth:`validate` / :meth:`ok_suffix`. ``0`` (the default) means the
+            sequence *is* the CDS, as it always was. When a
+            :class:`~bt4.domain.context.ConstructContext` supplies a 5' leader the
+            constraint is scored over ``leader + CDS``, and this says where the
+            real start codon sits -- **which is load-bearing, not bookkeeping**:
+            the main reading frame is ``(a - cds_offset) % 3``, so a leader whose
+            length is not a multiple of three would otherwise invert every frame
+            classification, turning real uORFs invisible and inventing fake ones.
+            It also makes the genuinely valuable case reachable: an ATG in the
+            5'UTR that reads out-of-frame into the CDS (an overlapping ORF) is
+            scanned, because ATGs before the start codon always qualify.
     """
 
     min_start: int = 3
     region_nt: int | None = 100
+    cds_offset: int = 0
     name: str = field(default="uorf", init=False)
 
     def __post_init__(self) -> None:
         """Validate the bounds.
 
         Raises:
-            ValueError: If ``min_start`` is negative or ``region_nt`` is set and
-                not positive.
+            ValueError: If ``min_start`` or ``cds_offset`` is negative, or
+                ``region_nt`` is set and not positive.
         """
         if self.min_start < 0:
             raise ValueError(f"min_start must be >= 0, got {self.min_start!r}")
         if self.region_nt is not None and self.region_nt <= 0:
             raise ValueError(f"region_nt must be > 0 or None, got {self.region_nt!r}")
+        if self.cds_offset < 0:
+            raise ValueError(f"cds_offset must be >= 0, got {self.cds_offset!r}")
 
     def scope(self) -> Scope:
         """Return :attr:`~bt4.domain.scope.Scope.GLOBAL`.
@@ -130,10 +147,17 @@ class UorfConstraint:
         """
         n = len(seq)
         spans: list[tuple[int, int]] = []
-        for a in range(self.min_start, n - 2):
-            if self.region_nt is not None and a >= self.region_nt:
+        offset = self.cds_offset
+        # An ATG anywhere in the leader qualifies (that is the whole point of
+        # scanning across the junction); inside the CDS the real start codon is
+        # skipped by min_start, measured from the start codon rather than from
+        # index 0.
+        for a in range(0, n - 2):
+            if a >= offset and a < offset + self.min_start:
+                continue
+            if self.region_nt is not None and a >= offset + self.region_nt:
                 break  # ATGs only open within the 5'-proximal window; a only grows.
-            if a % 3 == 0:
+            if (a - offset) % 3 == 0:
                 continue  # in the main frame -> a Met codon, not an out-of-frame uORF.
             if seq[a : a + 3] != "ATG":
                 continue

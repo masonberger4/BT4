@@ -34,17 +34,20 @@ from bt4.biomodels.codon.tables import (
 from bt4.biomodels.codon.tai import load_tai_provenance, load_tai_table
 from bt4.constraints.forbidden import resolve_forbidden_motifs
 from bt4.constraints.gc_run import GcRunConstraint
+from bt4.constraints.gc_window import GcWindowConstraint
 from bt4.constraints.kozak import InternalStartConstraint
 from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
 from bt4.constraints.restriction import RestrictionSiteConstraint, enzyme_provenance
 from bt4.constraints.rules import ForbiddenMotifConstraint, HomopolymerConstraint
+from bt4.constraints.seeded import seed_constraints
 from bt4.constraints.splice_motif import SpliceSiteMotifConstraint
 from bt4.constraints.uorf import UorfConstraint
 from bt4.domain import (
     CODON_TABLE,
     STOP,
     Constraint,
+    ConstructContext,
     Frontier,
     Metrics,
     ObjectiveTerm,
@@ -81,6 +84,26 @@ __all__ = [
 ]
 
 _NON_SCORED_AA = frozenset({"M", "W"})
+
+# Widest windowed-GC rule still solved *exactly* in the codon trellis.
+#
+# A windowed-GC bound has genuinely bounded context (``window - 1``), so it is
+# LOCAL and the exact DP can enforce it -- but the trellis state key is the
+# literal trailing context, so the reachable-state count grows roughly
+# exponentially in the window. Measured end-to-end on a 128-residue protein:
+# 10 nt -> 0.16 s, 12 nt -> 0.46 s, 14 nt -> 1.45 s, and it keeps roughly tripling
+# per +2 nt -- so the ~50 nt window the synthesis vendors actually specify is not
+# reachable exactly. (Shrinking the window instead is not a fix: a narrow window
+# is *stricter*, and at 8 nt a proline run -- every Pro codon is CCN -- makes the
+# problem genuinely infeasible.)
+#
+# So the rule is routed by tractability, never silently capped (CLAUDE.md §10.1):
+# a window at or under this bound is solved exactly in the trellis and keeps a
+# PROVEN_OPTIMAL certificate; a wider one is enforced by the same refinement pass
+# that carries max-repeat and uORF, with any residual reported honestly and the
+# certificate degraded. Both paths audit the delivered sequence against the same
+# rule, so what is reported never depends on which path ran.
+_GC_WINDOW_TRELLIS_MAX_NT = 12
 
 # Cap on the number of scalarization points swept for a multi-objective frontier.
 # Each point is a full exact solve, so this bounds the frontier's runtime; the
@@ -132,6 +155,24 @@ class OptimizeConfig:
         max_gc_run: Longest allowed run of consecutive strong (G or C) bases -- the
             "max GC length" knob (mixed runs like ``GCGC`` count), or ``None`` to
             disable. A LOCAL constraint solved exactly in the trellis.
+        gc_window_nt: Length (nt) of the sliding window whose GC fraction is bounded
+            by ``gc_window_min``/``gc_window_max``, or ``None`` to disable. This is
+            the *windowed* GC rule the synthesis vendors actually specify (e.g.
+            25-65% GC in any 50 bp): a whole-sequence GC budget pins the total but
+            permits a local GC extreme, which is what breaks synthesis.
+            **Where it is enforced depends on the window**, and the run says which:
+            a window up to :data:`_GC_WINDOW_TRELLIS_MAX_NT` nt is solved exactly in
+            the trellis (``PROVEN_OPTIMAL``), while a wider one -- including the
+            vendor-typical 50 -- is enforced by the refinement pass, because the
+            trellis state space grows roughly exponentially in the window. A
+            refinement-enforced run reports ``gc_window_enforced`` /
+            ``gc_window_residual`` in the audit and degrades its certificate, exactly
+            like the max-repeat rule. Not supported together with a GC/dinucleotide
+            budget when refinement-enforced.
+        gc_window_min: Minimum GC fraction (``[0, 1]``) any full ``gc_window_nt``
+            window may have (only used when ``gc_window_nt`` is set).
+        gc_window_max: Maximum GC fraction (``[0, 1]``) any full ``gc_window_nt``
+            window may have (only used when ``gc_window_nt`` is set).
         max_repeat_length: Longest allowed repeated substring anywhere in the
             sequence (direct, inverted, or palindromic; reverse-complement aware),
             or ``None`` to disable. This is a genuinely non-local (GLOBAL)
@@ -151,8 +192,17 @@ class OptimizeConfig:
             motif (applies to both ``forbidden_motifs`` and ``forbidden_presets``).
         restriction_enzymes: Names of restriction enzymes whose recognition
             sites (and their reverse complements) may not appear.
-        ramp_weight: Weight on the 5' translation-ramp term (0 disables it).
-        ramp_codons: Length of the 5' ramp window in codons.
+        restriction_extra_sites: Additional recognition sites to ban directly, as
+            **IUPAC** strings (e.g. ``"GANTC"``, ``"CCNNNNNNNGG"``), each with its
+            reverse complement. This is the escape hatch for an enzyme the bundled
+            REBASE catalog does not carry: ``forbidden_motifs`` accepts only literal
+            ACGT, so a degenerate site can only be expressed here.
+        ramp_weight: Weight on the 5' shaping-prior term (0 disables it). This
+            favours less-adapted codons early; it is a **prior, not a mechanism** --
+            the 5' expression benefit tracks reduced RNA structure rather than codon
+            rarity (Goodman/Church/Kosuri 2013), so ``refine``/``folding_weight`` is
+            the lever for the validated effect. See :mod:`bt4.objectives.ramp`.
+        ramp_codons: Length of the 5' shaping window in codons.
         cpg_weight: Weight on the CpG-dinucleotide term (0 disables it).
         cpg_mode: ``"deplete"`` (fewer CpGs, stealth) or ``"elevate"`` (more,
             immunostimulatory) -- only used when ``cpg_weight`` is non-zero.
@@ -224,6 +274,26 @@ class OptimizeConfig:
         beam: ``None`` for an exact DP; an int caps the trellis beam width
             (certificate then reports ``beam_truncated``).
         seed: Master seed recorded in the manifest (the solver is deterministic).
+        application_preset: Key of the :mod:`bt4.pipeline.presets` preset this
+            config was built from, or ``""`` when none was used (**no preset is
+            applied by default**). Purely a provenance label -- the solver never
+            reads it -- but it enters the manifest so two runs that differ only by
+            preset do not stamp the same provenance (invariant #9).
+        context: The known sequence around the CDS -- 5'UTR / vector backbone
+            before it and the flank after it (see
+            :class:`~bt4.domain.context.ConstructContext`), or ``None`` to design
+            the CDS in isolation as BT4 always has. With a context set, every LOCAL
+            rule is additionally evaluated **across the 5' junction** (so a site
+            formed between the leader and the first codon is caught) and the uORF
+            rule can see an ATG in the leader that reads into the CDS. With it
+            unset every path is byte-identical to before (invariant #7).
+        context_provenance: What the run manifest records about ``context`` --
+            ``"omit"`` (default) stores only its lengths, ``"hash"`` stores a
+            content hash. This is a genuine trade-off the user owns rather than a
+            default BT4 should pick: hashing satisfies provenance completeness
+            (invariant #9), but a backbone is often unpublished IP and a hash is
+            still a fingerprint of it. Either way the context is never transmitted
+            anywhere (the ASSP cross-check is hard-blocked from seeing it).
     """
 
     organism: str = "homo_sapiens"
@@ -236,11 +306,15 @@ class OptimizeConfig:
     cpb_reference_cds: tuple[str, ...] = ()
     max_homopolymer: int | None = 6
     max_gc_run: int | None = None
+    gc_window_nt: int | None = None
+    gc_window_min: float = 0.0
+    gc_window_max: float = 1.0
     max_repeat_length: int | None = None
     forbidden_motifs: tuple[str, ...] = ()
     forbidden_presets: tuple[str, ...] = ()
     avoid_reverse_complement: bool = True
     restriction_enzymes: tuple[str, ...] = ()
+    restriction_extra_sites: tuple[str, ...] = ()
     ramp_weight: float = 0.0
     ramp_codons: int = 35
     cpg_weight: float = 0.0
@@ -265,6 +339,9 @@ class OptimizeConfig:
     folding_weight: float = 1.0
     beam: int | None = None
     seed: int = 0
+    application_preset: str = ""
+    context: ConstructContext | None = None
+    context_provenance: str = "omit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,6 +483,17 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
         constraints.append(HomopolymerConstraint(config.max_homopolymer))
     if config.max_gc_run is not None and config.max_gc_run > 0:
         constraints.append(GcRunConstraint(config.max_gc_run))
+    if (
+        config.gc_window_nt is not None
+        and 0 < config.gc_window_nt <= _GC_WINDOW_TRELLIS_MAX_NT
+    ):
+        # Narrow enough to stay exact in the trellis; wider windows are enforced by
+        # the refinement pass instead (see :data:`_GC_WINDOW_TRELLIS_MAX_NT`).
+        constraints.append(
+            GcWindowConstraint(
+                config.gc_window_nt, config.gc_window_min, config.gc_window_max
+            )
+        )
     motifs = _forbidden_motifs(config)
     if motifs:
         constraints.append(
@@ -414,9 +502,12 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
                 reverse_complement=config.avoid_reverse_complement,
             )
         )
-    if config.restriction_enzymes:
+    if config.restriction_enzymes or config.restriction_extra_sites:
         constraints.append(
-            RestrictionSiteConstraint(enzymes=tuple(config.restriction_enzymes))
+            RestrictionSiteConstraint(
+                enzymes=tuple(config.restriction_enzymes),
+                extra_sites=tuple(config.restriction_extra_sites),
+            )
         )
     if config.tandem_unit is not None:
         constraints.append(
@@ -430,22 +521,48 @@ def _build_constraints(config: OptimizeConfig) -> list[Constraint]:
         constraints.append(SpliceSiteMotifConstraint())
     if config.avoid_internal_start:
         constraints.append(InternalStartConstraint())
-    return constraints
+    # With a construct context, every LOCAL rule additionally sees the known
+    # sequence before the CDS, so a site formed across the 5' junction is caught
+    # rather than being structurally unreachable. Without one this returns the same
+    # list object, keeping a context-free run byte-identical (invariant #7).
+    upstream = config.context.upstream if config.context is not None else ""
+    return seed_constraints(constraints, upstream)
 
 
 def _build_global_constraints(config: OptimizeConfig) -> list[Constraint]:
-    """Build the non-local (``Scope.GLOBAL``) constraints.
+    """Build the rules enforced outside the exact-DP trellis.
 
-    Currently just the dispersed max-repeat rule. These are never fed to the
-    exact-DP trellis; they are reported by ``validate`` and enforced in the
-    refinement layer (see :func:`_refine`).
+    Two kinds live here. The dispersed max-repeat and uORF rules are genuinely
+    ``Scope.GLOBAL`` (their two halves can lie any distance apart). A *wide*
+    windowed-GC rule is different: it has bounded context and is honestly LOCAL,
+    but a window past :data:`_GC_WINDOW_TRELLIS_MAX_NT` blows up the trellis state
+    space, so it is enforced here instead of being silently dropped or capped
+    (CLAUDE.md §10.1).
+
+    None of these is fed to the trellis; all are reported by ``validate`` and
+    driven down by the refinement layer (see :func:`_refine`), with residuals
+    reported honestly by :func:`_global_audit`.
     """
+    upstream = config.context.upstream if config.context is not None else ""
     globals_: list[Constraint] = []
     if config.max_repeat_length is not None and config.max_repeat_length > 0:
         globals_.append(MaxRepeatConstraint(config.max_repeat_length))
     if config.avoid_uorf:
-        globals_.append(UorfConstraint(region_nt=config.uorf_region_nt))
-    return globals_
+        # With a 5' leader the rule is scored over `leader + CDS`, so it must be
+        # told where the start codon is: the main frame is (a - cds_offset) % 3, and
+        # a leader whose length is not a multiple of three would otherwise invert
+        # every frame call. This is also what makes the best-evidenced construct
+        # win reachable -- an ATG in the 5'UTR reading into the CDS.
+        globals_.append(
+            UorfConstraint(region_nt=config.uorf_region_nt, cds_offset=len(upstream))
+        )
+    if config.gc_window_nt is not None and config.gc_window_nt > _GC_WINDOW_TRELLIS_MAX_NT:
+        globals_.append(
+            GcWindowConstraint(
+                config.gc_window_nt, config.gc_window_min, config.gc_window_max
+            )
+        )
+    return seed_constraints(globals_, upstream)
 
 
 def _global_audit(
@@ -537,11 +654,15 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "cpb_reference_cds_count": len(config.cpb_reference_cds),
         "max_homopolymer": config.max_homopolymer,
         "max_gc_run": config.max_gc_run,
+        "gc_window_nt": config.gc_window_nt,
+        "gc_window_min": config.gc_window_min,
+        "gc_window_max": config.gc_window_max,
         "max_repeat_length": config.max_repeat_length,
         "forbidden_motifs": list(config.forbidden_motifs),
         "forbidden_presets": list(config.forbidden_presets),
         "avoid_reverse_complement": config.avoid_reverse_complement,
         "restriction_enzymes": list(config.restriction_enzymes),
+        "restriction_extra_sites": list(config.restriction_extra_sites),
         "ramp_weight": config.ramp_weight,
         "ramp_codons": config.ramp_codons,
         "cpg_weight": config.cpg_weight,
@@ -566,7 +687,37 @@ def _config_dict(config: OptimizeConfig) -> dict[str, object]:
         "folding_weight": config.folding_weight,
         "beam": config.beam,
         "seed": config.seed,
+        "application_preset": config.application_preset,
+        **_context_stamp(config),
     }
+
+
+def _context_stamp(config: OptimizeConfig) -> dict[str, object]:
+    """Return what the manifest records about the construct context.
+
+    Two runs that used different flanking sequence must not stamp the same
+    provenance, so *something* about the context always enters the config hash.
+    How much is the user's call (``context_provenance``), because the honest
+    default is not obvious: a content hash makes the run fully reproducible from
+    its stamp (invariant #9), but a vector backbone is frequently unpublished and
+    a hash is still a fingerprint that can confirm a guess. ``"omit"`` (the
+    default) therefore records only the shape -- lengths and topology -- which
+    still distinguishes runs without carrying the sequence's identity.
+    """
+    context = config.context
+    if context is None:
+        return {"context": None}
+    stamp: dict[str, object] = {
+        "context_upstream_nt": len(context.upstream),
+        "context_downstream_nt": len(context.downstream),
+        "context_topology": context.topology,
+        "context_masked_spans": [list(span) for span in context.masked_spans],
+        "context_provenance": config.context_provenance,
+    }
+    if config.context_provenance == "hash":
+        joined = f"{context.upstream}|{context.downstream}".encode()
+        stamp["context_sha256"] = hashlib.sha256(joined).hexdigest()
+    return stamp
 
 
 def _manifest(config: OptimizeConfig, extra: dict[str, object]) -> Manifest:
@@ -803,15 +954,30 @@ def _refine(
     globals_ = tuple(global_constraints)
 
     model = None
+    fold_region: Callable[[str], str] | None = None
     if with_folding:
-        from bt4.biomodels.folding import default as folding_default  # lazy: keep core light
+        # lazy: keep core light
+        from bt4.biomodels.folding import default as folding_default
+        from bt4.biomodels.folding import junction_window
 
         model = folding_default()
+        upstream = config.context.upstream if config.context is not None else ""
+
+        def fold_region(dna: str, _upstream: str = upstream) -> str:
+            """The exact region folded -- shared by the objective and the audit.
+
+            With a known leader this is the initiation region spanning the 5'
+            junction (structure that occludes ribosome loading straddles the start
+            codon, so a CDS-only fold cannot represent it); without one it is the
+            plain 5' window, unchanged.
+            """
+            return junction_window(_upstream, dna)
 
     def score(dna: str) -> float:
         total = sum(w * term.score(dna) for term, w in pairs)
-        if model is not None:
-            total += weight * model.score_sequence(dna)
+        if model is not None and fold_region is not None:
+            # five_prime_dg(region, None) folds exactly the region handed to it.
+            total += weight * model.five_prime_dg(fold_region(dna), None)
         if globals_:
             hard = sum(
                 1
@@ -833,16 +999,20 @@ def _refine(
     )
     extra_audit: dict[str, object] = {"refined": True}
     manifest_extra: dict[str, object] = {}
-    if model is not None:
+    if model is not None and fold_region is not None:
         extra_audit["folding_model"] = model.name
         extra_audit["folding_calibrated"] = model.calibrated
-        # Report the *same* 5' window the SA optimized, not the whole sequence.
-        # score_sequence returns the 5' window dG directly (folding's fixed
-        # larger-is-better orientation), so this equals the folding objective the
-        # refinement maximized (line above: model.score_sequence(dna)). Reporting a
-        # whole-sequence dG under the CLI's "5' dG" label while optimizing only the
-        # window is a reported-vs-computed lie (invariant #2, defect A.3).
-        extra_audit["folding_dg"] = model.score_sequence(result.dna)
+        # Report the *same* region the SA optimized, via the same function.
+        # Reporting a different region from the one that was optimized is exactly
+        # the reported-vs-computed defect that shipped before (a whole-sequence dG
+        # printed under a "5' dG" label, invariant #2); sharing `fold_region` makes
+        # that mismatch unrepresentable rather than merely fixed.
+        region = fold_region(result.dna)
+        extra_audit["folding_dg"] = model.five_prime_dg(region, None)
+        extra_audit["folding_region_nt"] = len(region)
+        extra_audit["folding_spans_junction"] = bool(
+            config.context is not None and config.context.upstream
+        )
         # The folding backend changed the DNA, so its identity must enter the stamp
         # (invariant #9); folding_dg is an output metric and stays out of the hash.
         manifest_extra["folding_model"] = model.name
@@ -916,10 +1086,17 @@ def run_optimize(protein: str, config: OptimizeConfig | None = None) -> Result:
             f"refine is not supported together with a {budget_label}: "
             "the budget is a global constraint that refinement would not re-enforce"
         )
-    if (config.max_repeat_length is not None or config.avoid_uorf) and has_budget:
+    wide_gc_window = (
+        config.gc_window_nt is not None
+        and config.gc_window_nt > _GC_WINDOW_TRELLIS_MAX_NT
+    )
+    if (
+        config.max_repeat_length is not None or config.avoid_uorf or wide_gc_window
+    ) and has_budget:
         raise ValueError(
-            f"max_repeat_length / avoid_uorf are not supported together with a "
-            f"{budget_label}: enforcing a non-local rule needs a refinement "
+            f"max_repeat_length / avoid_uorf / a gc_window_nt wider than "
+            f"{_GC_WINDOW_TRELLIS_MAX_NT} nt are not supported together with a "
+            f"{budget_label}: enforcing them needs a refinement "
             "pass that would not re-enforce the budget"
         )
     p = validate_protein(protein)

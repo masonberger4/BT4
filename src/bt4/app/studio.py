@@ -48,6 +48,58 @@ __all__ = ["StudioWindow", "main"]
 #: The engine's default organism (``api.OptimizeConfig().organism``).
 _DEFAULT_ORGANISM = api.OptimizeConfig().organism
 
+#: Shown as the first entry of the application-preset combo. BT4 applies no preset
+#: by default (it stays regime-agnostic), so this is the selected entry at launch.
+_NO_PRESET = "(none)"
+
+# One row per objective weight: (config field, label, min, max, default, tooltip).
+# CAI defaults to 1.0 to match the engine; everything else is off (0.0) until the
+# user asks for it. Codon-pair bias allows a negative weight -- that is the
+# attenuated-vaccine (deoptimization) case the engine supports and the app could
+# not previously reach.
+_WEIGHT_CONTROLS: tuple[tuple[str, str, float, float, float, str], ...] = (
+    (
+        "cai_weight", "CAI", 0.0, 100.0, 1.0,
+        "Pull toward the organism's preferred codons (the classic codon-adaptation "
+        "index). A weak proxy for expression on its own -- which is why it is one "
+        "axis among several here.",
+    ),
+    (
+        "gc_weight", "GC proximity", 0.0, 100.0, 0.0,
+        "Pull the overall GC fraction toward the 'GC target' above. At 0 the GC "
+        "target does nothing in a single solve (the frontier still sweeps it).",
+    ),
+    (
+        "tai_weight", "tAI", 0.0, 100.0, 1.0,
+        "Pull toward codons matched to the organism's tRNA pool, from real tRNA "
+        "gene copy numbers. Strength only -- the tAI checkbox above switches it on,\n"
+        "and it needs bundled tRNA data for the chosen organism.",
+    ),
+    (
+        "cpb_weight", "Codon-pair bias", -100.0, 100.0, 1.0,
+        "Favour codon PAIRS that are over-represented in the reference CDS set. A "
+        "NEGATIVE weight deoptimizes them, which is how attenuated-vaccine designs "
+        "are made. Strength/sign only -- the codon-pair checkbox switches it on,\n"
+        "and it requires a reference CDS FASTA.",
+    ),
+    (
+        "ramp_weight", "5' ramp", 0.0, 100.0, 0.0,
+        "Favour less-adapted codons in the first few dozen codons. A shaping PRIOR, "
+        "not a mechanism: the 5' benefit tracks reduced RNA structure rather than "
+        "codon rarity, so use folding refinement for that lever.",
+    ),
+    (
+        "cpg_weight", "CpG", 0.0, 100.0, 1.0,
+        "Strength of the CpG objective; the direction (deplete/elevate) is the CpG "
+        "control above, which also switches it off.",
+    ),
+    (
+        "minmax_weight", "%MinMax", 0.0, 100.0, 1.0,
+        "Strength of the codon-commonness (%MinMax) prior; the direction is the "
+        "%MinMax control above, which also switches it off.",
+    ),
+)
+
 # Shown on the reference-set combo and its label. A module constant because
 # _update_reference_sets has to restore it whenever the organism changes.
 _REFERENCE_SET_TOOLTIP = (
@@ -385,6 +437,70 @@ class StudioWindow(QtWidgets.QMainWindow):
             "exported file headers.",
         )
 
+        self.ctx_upstream_edit = QtWidgets.QPlainTextEdit()
+        self.ctx_upstream_edit.setPlaceholderText(
+            "optional: 5'UTR / vector sequence before the CDS"
+        )
+        self.ctx_upstream_edit.setAccessibleName("Upstream construct context")
+        self.ctx_upstream_edit.setMaximumHeight(60)
+        self._add_row(
+            form, "5' context", self.ctx_upstream_edit,
+            "The sequence that will sit immediately BEFORE your CDS -- the 5'UTR, "
+            "and as much of the vector backbone before it as you know. Give it and "
+            "BT4 stops designing in a vacuum: every rule below is also checked "
+            "across the junction (so a restriction site or repeat formed half in "
+            "the leader and half in codon 1 is caught), and uORF pairing can see an "
+            "ATG in the leader that reads into your CDS. Write N for unknown bases; "
+            "the flank is cut at the N nearest the CDS. It is context only -- it is "
+            "never part of the designed sequence and never exported.",
+        )
+
+        self.ctx_downstream_edit = QtWidgets.QPlainTextEdit()
+        self.ctx_downstream_edit.setPlaceholderText("optional: sequence after the CDS")
+        self.ctx_downstream_edit.setAccessibleName("Downstream construct context")
+        self.ctx_downstream_edit.setMaximumHeight(60)
+        self._add_row(
+            form, "3' context", self.ctx_downstream_edit,
+            "The sequence immediately AFTER your CDS (3'UTR / backbone). Used by the "
+            "whole-construct audit so a defect formed at the 3' junction is visible "
+            "too. Context only; never part of the designed sequence.",
+        )
+
+        self.context_prov_combo = QtWidgets.QComboBox()
+        self.context_prov_combo.addItem("omit (record only its length)", "omit")
+        self.context_prov_combo.addItem("hash (record a content hash)", "hash")
+        self.context_prov_combo.setAccessibleName("Context provenance policy")
+        self._add_row(
+            form, "Context in stamp", self.context_prov_combo,
+            "What the run's provenance stamp records about the sequence above. "
+            "'omit' keeps only its length, so the stamp cannot fingerprint your "
+            "backbone. 'hash' stores a content hash, which makes the run fully "
+            "reproducible from its stamp but does identify the backbone to anyone "
+            "who already has a copy to test against. Your call -- BT4 will not pick "
+            "for you. Either way the sequence itself is never sent anywhere.",
+        )
+
+        self.preset_combo = QtWidgets.QComboBox()
+        self.preset_combo.addItem(_NO_PRESET)
+        for app_preset in api.available_presets():
+            self.preset_combo.addItem(app_preset.label, app_preset.key)
+        self.preset_combo.setAccessibleName("Application preset")
+        self._add_row(
+            form, "Preset", self.preset_combo,
+            "Optional starting point for a kind of construct (AAV, lentiviral, "
+            "plasmid, IVT mRNA, or plain synthesis limits). NO preset is applied by "
+            "default. Choosing one fills the controls below in -- you can then change "
+            "anything, and what you change wins. Hover an entry for why it sets what "
+            "it sets; these are conventions, not calibrated expression predictions.",
+        )
+        for index, app_preset in enumerate(api.available_presets(), start=1):
+            self.preset_combo.setItemData(
+                index,
+                f"{app_preset.description}\n\nWhy: {app_preset.rationale}",
+                QtCore.Qt.ItemDataRole.ToolTipRole,
+            )
+        self.preset_combo.activated.connect(self._on_preset_chosen)
+
         self.gc_spin = QtWidgets.QDoubleSpinBox()
         self.gc_spin.setRange(0.0, 1.0)
         self.gc_spin.setSingleStep(0.05)
@@ -422,6 +538,45 @@ class StudioWindow(QtWidgets.QMainWindow):
             "structure and are hard to synthesize. 0 = off.",
         )
 
+        self.gc_window_spin = QtWidgets.QSpinBox()
+        self.gc_window_spin.setRange(0, 200)
+        self.gc_window_spin.setValue(0)
+        self.gc_window_spin.setSpecialValueText("off")
+        self.gc_window_spin.setAccessibleName("GC window length in nucleotides (0 = off)")
+        self._add_row(
+            form, "GC window (nt)", self.gc_window_spin,
+            "Bound the GC fraction of EVERY window of this many nucleotides -- the "
+            "rule synthesis vendors actually specify (e.g. 25-65% per 50 nt). A "
+            "whole-sequence GC number can look fine while a local stretch is extreme, "
+            "and the local extreme is what fails synthesis. Up to 12 nt this stays "
+            "exact in the trellis (proven-optimal); wider windows are enforced by the "
+            "refinement pass instead (labeled heuristic, residuals reported), because "
+            "the exact search grows exponentially with the window. 0 = off.",
+        )
+
+        gc_bounds = QtWidgets.QWidget()
+        gc_bounds_row = QtWidgets.QHBoxLayout(gc_bounds)
+        gc_bounds_row.setContentsMargins(0, 0, 0, 0)
+        self.gc_window_min_spin = QtWidgets.QDoubleSpinBox()
+        self.gc_window_min_spin.setRange(0.0, 1.0)
+        self.gc_window_min_spin.setSingleStep(0.05)
+        self.gc_window_min_spin.setValue(0.25)
+        self.gc_window_min_spin.setAccessibleName("Minimum GC fraction per window")
+        self.gc_window_max_spin = QtWidgets.QDoubleSpinBox()
+        self.gc_window_max_spin.setRange(0.0, 1.0)
+        self.gc_window_max_spin.setSingleStep(0.05)
+        self.gc_window_max_spin.setValue(0.65)
+        self.gc_window_max_spin.setAccessibleName("Maximum GC fraction per window")
+        gc_bounds_row.addWidget(QtWidgets.QLabel("min"))
+        gc_bounds_row.addWidget(self.gc_window_min_spin)
+        gc_bounds_row.addWidget(QtWidgets.QLabel("max"))
+        gc_bounds_row.addWidget(self.gc_window_max_spin)
+        self._add_row(
+            form, "GC window bounds", gc_bounds,
+            "Lowest and highest GC fraction any window may have (used only when "
+            "'GC window (nt)' is on). The vendor-typical band is 0.25-0.65.",
+        )
+
         self.repeat_spin = QtWidgets.QSpinBox()
         self.repeat_spin.setRange(0, 40)
         self.repeat_spin.setValue(0)
@@ -442,8 +597,19 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.motifs_edit.setAccessibleName("Forbidden motifs")
         self._add_row(
             form, "Forbidden motifs", self.motifs_edit,
-            "Extra DNA substrings to ban, comma-separated; each motif's reverse "
-            "complement is banned too.",
+            "Extra DNA substrings to ban, comma-separated (literal A/C/G/T only -- "
+            "for a degenerate site use 'Extra sites (IUPAC)' below).",
+        )
+
+        self.rc_check = QtWidgets.QCheckBox("also ban each motif's reverse complement")
+        self.rc_check.setChecked(True)
+        self.rc_check.setAccessibleName("Ban reverse complements of forbidden motifs")
+        self._add_row(
+            form, "Both strands", self.rc_check,
+            "On (the default), a forbidden motif is banned on both strands, which "
+            "is what you want for anything double-stranded DNA is read on. Turn it "
+            "off for a rule that is genuinely sense-strand-only, such as an mRNA "
+            "regulatory motif that means nothing on the template strand.",
         )
 
         self._add_forbidden_presets(form)
@@ -461,6 +627,18 @@ class StudioWindow(QtWidgets.QMainWindow):
             f"Start typing to search the {len(enzyme_names)}-enzyme REBASE "
             "catalog. Only the recognition sequence is modelled -- not cut "
             "position, star activity, or methylation sensitivity.",
+        )
+
+        self.enzyme_sites_edit = QtWidgets.QLineEdit()
+        self.enzyme_sites_edit.setPlaceholderText("comma-separated IUPAC, e.g. GANTC")
+        self.enzyme_sites_edit.setAccessibleName("Extra recognition sites to avoid (IUPAC)")
+        self._add_row(
+            form, "Extra sites (IUPAC)", self.enzyme_sites_edit,
+            "Ban recognition sites directly, written in IUPAC (e.g. GANTC, "
+            "CCNNNNNNNGG); each site's reverse complement is banned too. Use this "
+            "for an enzyme the catalog above does not carry: 'Forbidden motifs' "
+            "accepts only literal A/C/G/T, so a degenerate site can only be given "
+            "here.",
         )
 
         self.cpg_combo = QtWidgets.QComboBox()
@@ -513,6 +691,17 @@ class StudioWindow(QtWidgets.QMainWindow):
             "back-to-back (e.g. unit 3 bans CAGCAGCAG). 0 = off.",
         )
 
+        self.tandem_copies_spin = QtWidgets.QSpinBox()
+        self.tandem_copies_spin.setRange(2, 10)
+        self.tandem_copies_spin.setValue(3)
+        self.tandem_copies_spin.setAccessibleName("Tandem-repeat copy count")
+        self._add_row(
+            form, "Tandem copies", self.tandem_copies_spin,
+            "How many back-to-back copies count as a banned tandem repeat (used "
+            "only when 'Tandem unit' is on). 3 copies of a 3-nt unit bans "
+            "CAGCAGCAG; 2 would also ban CAGCAG.",
+        )
+
         self.inverted_spin = QtWidgets.QSpinBox()
         self.inverted_spin.setRange(0, 20)
         self.inverted_spin.setValue(0)
@@ -521,7 +710,22 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._add_row(
             form, "Hairpin stem", self.inverted_spin,
             "Ban a hairpin (inverted repeat) with arms of this length -- a stem "
-            "that folds back on itself and can occlude ribosome loading. 0 = off.",
+            "that folds back on itself and can occlude ribosome loading. Note this "
+            "is an EXACT trellis rule, so its cost grows steeply with stem+loop; "
+            "for a broad repeat limit prefer 'Max repeat length', which is "
+            "reverse-complement aware and already covers hairpins. 0 = off.",
+        )
+
+        self.inverted_loop_spin = QtWidgets.QSpinBox()
+        self.inverted_loop_spin.setRange(0, 12)
+        self.inverted_loop_spin.setValue(0)
+        self.inverted_loop_spin.setAccessibleName("Inverted-repeat maximum loop length")
+        self._add_row(
+            form, "Hairpin loop", self.inverted_loop_spin,
+            "Longest loop allowed between the hairpin arms (used only when "
+            "'Hairpin stem' is on). 0 means only arms that sit directly "
+            "back-to-back are banned; a larger loop catches more real hairpins but "
+            "widens the exact search sharply.",
         )
 
         self.splice_check = QtWidgets.QCheckBox("avoid strong splice-consensus motifs")
@@ -573,6 +777,9 @@ class StudioWindow(QtWidgets.QMainWindow):
             "gene copy numbers; available only for organisms with bundled tRNA "
             "data.",
         )
+
+        self._add_objective_weights(form)
+        self._add_budgets(form)
 
         self.steps_spin = QtWidgets.QSpinBox()
         self.steps_spin.setRange(1, 25)
@@ -650,6 +857,105 @@ class StudioWindow(QtWidgets.QMainWindow):
             form, "Forbidden presets", container,
             "Tick named groups of sequences to forbid (their reverse complements "
             "too). Hover each option for what it bans.",
+        )
+
+    def _add_objective_weights(self, form: QtWidgets.QFormLayout) -> None:
+        """Add a spin box per objective term so weights are continuous, not on/off.
+
+        Without these every optional objective was pinned to 1.0, so a user could
+        not trade (say) CpG depletion against CAI, and the negative ``cpb_weight``
+        that expresses codon-pair *de*-optimization was unreachable from the app.
+        """
+        container = QtWidgets.QWidget()
+        grid = QtWidgets.QFormLayout(container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(2)
+        self.weight_spins: dict[str, QtWidgets.QDoubleSpinBox] = {}
+        for field, label, low, high, default, tip in _WEIGHT_CONTROLS:
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setRange(low, high)
+            spin.setSingleStep(0.1)
+            spin.setDecimals(2)
+            spin.setValue(default)
+            spin.setAccessibleName(f"{label} objective weight")
+            spin.setToolTip(tip)
+            spin.setAccessibleDescription(tip)
+            self.weight_spins[field] = spin
+            row_label = QtWidgets.QLabel(label)
+            row_label.setBuddy(spin)
+            row_label.setToolTip(tip)
+            grid.addRow(row_label, spin)
+        self._add_row(
+            form, "Objective weights", container,
+            "Relative pull of each objective in a single solve. The Pareto frontier "
+            "sweeps its own weights across the active axes, so these mainly shape "
+            "which axes are active and how a single solve trades them off. A weight "
+            "of 0 switches an objective off; codon-pair bias accepts a NEGATIVE "
+            "weight, which deoptimizes pairs (attenuated-vaccine design).",
+        )
+
+    def _add_budgets(self, form: QtWidgets.QFormLayout) -> None:
+        """Add the hard whole-sequence count budgets (GC and a dinucleotide).
+
+        These are *hard* windows enforced exactly by the amount-bucketed DP, as
+        opposed to the soft GC-proximity objective -- the engine has always had
+        them and the app could not reach them.
+        """
+        gc_box = QtWidgets.QWidget()
+        gc_row = QtWidgets.QHBoxLayout(gc_box)
+        gc_row.setContentsMargins(0, 0, 0, 0)
+        self.gc_min_spin = QtWidgets.QSpinBox()
+        self.gc_min_spin.setRange(-1, 100000)
+        self.gc_min_spin.setValue(-1)
+        self.gc_min_spin.setSpecialValueText("off")
+        self.gc_min_spin.setAccessibleName("Minimum total GC base count")
+        self.gc_max_spin = QtWidgets.QSpinBox()
+        self.gc_max_spin.setRange(-1, 100000)
+        self.gc_max_spin.setValue(-1)
+        self.gc_max_spin.setSpecialValueText("off")
+        self.gc_max_spin.setAccessibleName("Maximum total GC base count")
+        gc_row.addWidget(QtWidgets.QLabel("min"))
+        gc_row.addWidget(self.gc_min_spin)
+        gc_row.addWidget(QtWidgets.QLabel("max"))
+        gc_row.addWidget(self.gc_max_spin)
+        self._add_row(
+            form, "GC count budget", gc_box,
+            "HARD bound on the total number of G/C bases in the whole sequence "
+            "(a count, not a fraction), enforced exactly. This is the strict "
+            "counterpart of the soft 'GC target' above. Not combinable with the "
+            "refinement-enforced rules (max repeat length, uORFs, a wide GC window).",
+        )
+
+        dinuc_box = QtWidgets.QWidget()
+        dinuc_row = QtWidgets.QHBoxLayout(dinuc_box)
+        dinuc_row.setContentsMargins(0, 0, 0, 0)
+        self.dinuc_combo = QtWidgets.QComboBox()
+        self.dinuc_combo.addItem("off", "")
+        self.dinuc_combo.addItem("CpG (CG)", "CG")
+        self.dinuc_combo.addItem("UpA (TA)", "TA")
+        self.dinuc_combo.setAccessibleName("Dinucleotide to budget")
+        self.dinuc_min_spin = QtWidgets.QSpinBox()
+        self.dinuc_min_spin.setRange(-1, 100000)
+        self.dinuc_min_spin.setValue(-1)
+        self.dinuc_min_spin.setSpecialValueText("off")
+        self.dinuc_min_spin.setAccessibleName("Minimum dinucleotide count")
+        self.dinuc_max_spin = QtWidgets.QSpinBox()
+        self.dinuc_max_spin.setRange(-1, 100000)
+        self.dinuc_max_spin.setValue(-1)
+        self.dinuc_max_spin.setSpecialValueText("off")
+        self.dinuc_max_spin.setAccessibleName("Maximum dinucleotide count")
+        dinuc_row.addWidget(self.dinuc_combo)
+        dinuc_row.addWidget(QtWidgets.QLabel("min"))
+        dinuc_row.addWidget(self.dinuc_min_spin)
+        dinuc_row.addWidget(QtWidgets.QLabel("max"))
+        dinuc_row.addWidget(self.dinuc_max_spin)
+        self._add_row(
+            form, "Dinucleotide budget", dinuc_box,
+            "HARD bound on how many times a dinucleotide occurs in the whole "
+            "sequence -- a CpG cap for stealth, or a CpG floor for an "
+            "immunostimulatory design; UpA is a comparable stability knob. Enforced "
+            "exactly (a 2-mer straddling a codon boundary is still counted), and "
+            "mutually exclusive with the GC count budget.",
         )
 
     def _add_row(
@@ -1008,7 +1314,10 @@ class StudioWindow(QtWidgets.QMainWindow):
             "scores a whole transcript and cannot accept an empty UTR; the 5' UTR "
             "and initiation region carry most of its signal, so an empty-UTR score "
             "would not be meaningful. Not part of the designed sequence -- it is "
-            "context for the model only and is never exported.",
+            "context for the RiboNN model only and is never exported. NOTE: this is "
+            "separate from the '5' context' box on the Design panel, which is what "
+            "makes the DESIGN construct-aware; this one only feeds the expression "
+            "model's fixed UTR slots.",
         )
 
         self.utr3_edit = QtWidgets.QLineEdit()
@@ -1238,6 +1547,8 @@ class StudioWindow(QtWidgets.QMainWindow):
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("&File")
+        self._add_action(file_menu, "&Open protein FASTA...", self._open_protein, "Ctrl+O")
+        file_menu.addSeparator()
         self.act_export_fasta = self._add_action(
             file_menu, "Export &FASTA...", self._export_fasta, "Ctrl+E"
         )
@@ -1256,6 +1567,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         )
         self.act_cancel = self._add_action(
             run_menu, "&Cancel", self._cancel_optimize, "Esc"
+        )
+        run_menu.addSeparator()
+        self._add_action(
+            run_menu, "&Validate a sequence...", self._validate_sequence, "Ctrl+Shift+V"
         )
         run_menu.addSeparator()
         self.act_rank = self._add_action(
@@ -1547,8 +1862,10 @@ class StudioWindow(QtWidgets.QMainWindow):
             else:
                 detail = f"The catalog has {len(catalog)} enzymes. "
             detail += (
-                "If BT4 does not carry your enzyme, add its recognition sequence "
-                "to 'Forbidden motifs' instead of substituting a similar name."
+                "If BT4 does not carry your enzyme, ban its recognition sequence "
+                "directly instead of substituting a similar name: put it in 'Extra "
+                "sites (IUPAC)', which accepts degenerate codes such as GANTC "
+                "('Forbidden motifs' takes only literal A/C/G/T)."
             )
             self._warn(
                 "Unknown restriction enzyme",
@@ -1583,26 +1900,46 @@ class StudioWindow(QtWidgets.QMainWindow):
             m.strip().upper() for m in self.motifs_edit.text().split(",") if m.strip()
         )
         presets = tuple(key for key, check in self.preset_checks.items() if check.isChecked())
+        # Each optional objective has an on/off control (a combo or a checkbox) and
+        # a strength spin. The control gates; the spin sets magnitude, so a weight
+        # is continuous rather than pinned to 1.0 as it used to be.
+        weight = {field: spin.value() for field, spin in self.weight_spins.items()}
         cpg = self.cpg_combo.currentText()
-        cpg_weight = 0.0 if cpg == "off" else 1.0
+        cpg_weight = 0.0 if cpg == "off" else weight["cpg_weight"]
         cpg_mode = "deplete" if cpg == "off" else cpg
         minmax = self.minmax_combo.currentText()
-        minmax_weight = 0.0 if minmax == "off" else 1.0
+        minmax_weight = 0.0 if minmax == "off" else weight["minmax_weight"]
         minmax_direction = "max" if minmax == "off" else minmax
         cpb_weight, cpb_cds = self._read_cpb()
         tandem = self.tandem_spin.value()
         inverted = self.inverted_spin.value()
+        gc_window = self.gc_window_spin.value()
+        extra_sites = tuple(
+            s.strip().upper()
+            for s in self.enzyme_sites_edit.text().split(",")
+            if s.strip()
+        )
+        gc_min, gc_max = self.gc_min_spin.value(), self.gc_max_spin.value()
+        dinuc = str(self.dinuc_combo.currentData() or "")
+        dinuc_min, dinuc_max = self.dinuc_min_spin.value(), self.dinuc_max_spin.value()
         config = api.OptimizeConfig(
             organism=self.organism_combo.currentText(),
             reference_set=self.reference_combo.currentText() or None,
             gc_target=self.gc_spin.value(),
+            cai_weight=weight["cai_weight"],
+            gc_weight=weight["gc_weight"],
+            ramp_weight=weight["ramp_weight"],
             max_homopolymer=homo if homo > 0 else None,
             max_gc_run=gc_run if gc_run > 0 else None,
+            gc_window_nt=gc_window if gc_window > 0 else None,
+            gc_window_min=self.gc_window_min_spin.value(),
+            gc_window_max=self.gc_window_max_spin.value(),
             max_repeat_length=repeat if repeat > 0 else None,
             forbidden_motifs=motifs,
             forbidden_presets=presets,
-            avoid_reverse_complement=True,
+            avoid_reverse_complement=self.rc_check.isChecked(),
             restriction_enzymes=enzymes,
+            restriction_extra_sites=extra_sites,
             cpg_weight=cpg_weight,
             cpg_mode=cpg_mode,
             cpb_weight=cpb_weight,
@@ -1610,16 +1947,76 @@ class StudioWindow(QtWidgets.QMainWindow):
             minmax_weight=minmax_weight,
             minmax_direction=minmax_direction,
             tandem_unit=tandem if tandem > 0 else None,
+            tandem_copies=self.tandem_copies_spin.value(),
             inverted_stem=inverted if inverted > 0 else None,
+            inverted_loop=self.inverted_loop_spin.value(),
             avoid_splice_sites=self.splice_check.isChecked(),
             avoid_internal_start=self.internal_start_check.isChecked(),
             avoid_uorf=self.uorf_check.isChecked(),
             uorf_region_nt=self.uorf_region_spin.value(),
-            tai_weight=1.0 if self.tai_check.isChecked() else 0.0,
+            tai_weight=weight["tai_weight"] if self.tai_check.isChecked() else 0.0,
+            gc_min=gc_min if gc_min >= 0 else None,
+            gc_max=gc_max if gc_max >= 0 else None,
+            dinuc_budget=dinuc or None,
+            dinuc_min=dinuc_min if dinuc and dinuc_min >= 0 else None,
+            dinuc_max=dinuc_max if dinuc and dinuc_max >= 0 else None,
             beam=beam if beam > 0 else None,
             seed=0,
+            application_preset=str(self.preset_combo.currentData() or ""),
+            context=self._build_context(),
+            context_provenance=str(self.context_prov_combo.currentData() or "omit"),
         )
         return config, self.steps_spin.value()
+
+    def _build_context(self) -> api.ConstructContext | None:
+        """Read the construct-context boxes, or ``None`` when both are empty.
+
+        Returning ``None`` for empty input matters: it is what keeps a run without
+        construct context byte-identical to one from before the feature existed.
+        """
+        upstream = "".join(self.ctx_upstream_edit.toPlainText().split())
+        downstream = "".join(self.ctx_downstream_edit.toPlainText().split())
+        if not upstream and not downstream:
+            return None
+        return api.ConstructContext(upstream=upstream, downstream=downstream)
+
+    def _on_preset_chosen(self, index: int) -> None:
+        """Fill the design controls in from the chosen application preset.
+
+        The preset's values are written into the visible controls rather than
+        applied invisibly at run time, so the user can see exactly what it changed
+        and edit anything afterwards -- what they change wins. Choosing ``(none)``
+        leaves every control alone (there is no default preset to restore).
+        """
+        key = self.preset_combo.itemData(index)
+        if not key:
+            return
+        preset = api.resolve_preset(str(key))
+        setters: dict[str, Callable[[object], None]] = {
+            "gc_window_nt": lambda v: self.gc_window_spin.setValue(int(v)),  # type: ignore[arg-type]
+            "gc_window_min": lambda v: self.gc_window_min_spin.setValue(float(v)),  # type: ignore[arg-type]
+            "gc_window_max": lambda v: self.gc_window_max_spin.setValue(float(v)),  # type: ignore[arg-type]
+            "max_homopolymer": lambda v: self.homo_spin.setValue(int(v)),  # type: ignore[arg-type]
+            "max_gc_run": lambda v: self.gc_run_spin.setValue(int(v)),  # type: ignore[arg-type]
+            "max_repeat_length": lambda v: self.repeat_spin.setValue(int(v)),  # type: ignore[arg-type]
+            "cpg_weight": lambda v: self.weight_spins["cpg_weight"].setValue(float(v)),  # type: ignore[arg-type]
+            "cpg_mode": lambda v: self.cpg_combo.setCurrentText(str(v)),
+            "avoid_splice_sites": lambda v: self.splice_check.setChecked(bool(v)),
+            "avoid_uorf": lambda v: self.uorf_check.setChecked(bool(v)),
+            "inverted_stem": lambda v: self.inverted_spin.setValue(int(v)),  # type: ignore[arg-type]
+            "inverted_loop": lambda v: self.inverted_loop_spin.setValue(int(v)),  # type: ignore[arg-type]
+            "refine": lambda v: None,  # no refinement control in the app yet
+        }
+        unmapped = sorted(set(preset.overrides) - set(setters))
+        for field, value in preset.overrides.items():
+            setter = setters.get(field)
+            if setter is not None:
+                setter(value)
+        message = f"Applied preset '{preset.label}'. Change anything below - your edits win."
+        if unmapped:
+            # Never let a preset silently set something with no visible control.
+            message += f" (Not shown in this panel: {', '.join(unmapped)}.)"
+        self.statusBar().showMessage(message)
 
     def _read_cpb(self) -> tuple[float, tuple[str, ...]]:
         """Read the codon-pair controls into a (weight, reference-CDS) pair.
@@ -1644,7 +2041,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         if not cds:
             self._cpb_warning = "Codon-pair CDS FASTA had no sequences; ignoring it."
             return 0.0, ()
-        return 1.0, cds
+        # The weight spin carries the strength AND the sign: a negative weight is
+        # codon-pair deoptimization (attenuated-vaccine design), which the engine
+        # supports and the app previously could not express.
+        return self.weight_spins["cpb_weight"].value(), cds
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Shut running workers down before the window (and its threads) die.
@@ -2304,12 +2704,15 @@ class StudioWindow(QtWidgets.QMainWindow):
             )
 
     def _render_tracks(self, delivered: api.Result) -> None:
-        """Plot the delivered sequence's per-site GC and CpG-density tracks.
+        """Plot the delivered sequence's per-site GC, CpG-density and splice tracks.
 
-        Honest reporting profiles (``api.tracks``): each point is a sliding-window
-        statistic recomputed from the DNA, never a solver output. Both tracks are
-        fraction-scaled (0-1), so they share the y-axis; %MinMax (a different
-        scale) stays available via ``api.tracks`` / ``bt4 tracks``.
+        The first two are honest reporting profiles (``api.tracks``): each point is
+        a sliding-window statistic recomputed from the DNA, never a solver output.
+        The splice track is different in kind -- it comes from a *model*, so the
+        plot title carries that model's calibration state, and with the shipped PWM
+        baseline it says UNCALIBRATED. All three are fraction-scaled (0-1) so they
+        share a y-axis; %MinMax (a different scale) stays available via
+        ``api.tracks`` / ``bt4 tracks``.
         """
         self.tracks_plot.clear()
         organism, reference_set = self._delivered_tables
@@ -2319,11 +2722,13 @@ class StudioWindow(QtWidgets.QMainWindow):
                 organism or self.organism_combo.currentText(),
                 reference_set=reference_set or None,
                 nt_window=30,
+                splice=True,
             )
         except ValueError:
             return
         gc = tracks.get("gc_fraction")
         cpg = tracks.get("cpg_density")
+        splice = tracks.get("splice_site")
         if gc is not None and gc.values:
             self.tracks_plot.plot(
                 list(range(len(gc.values))),
@@ -2338,6 +2743,20 @@ class StudioWindow(QtWidgets.QMainWindow):
                 pen=pg.mkPen("#e0724a", width=2),
                 name="CpG density",
             )
+        if splice is not None and splice.values:
+            self.tracks_plot.plot(
+                list(range(len(splice.values))),
+                list(splice.values),
+                pen=pg.mkPen("#8a5ad0", width=1),
+                name="splice site",
+            )
+        if tracks.splice_model:
+            state = "calibrated" if tracks.splice_calibrated else "UNCALIBRATED"
+            self.tracks_plot.setTitle(
+                f"per-site tracks - splice: {tracks.splice_model} [{state}]"
+            )
+        else:
+            self.tracks_plot.setTitle("")
 
     def _render_crosscheck(self, report: api.SpliceCrossCheck) -> None:
         """Render an ASSP cross-check, leading with what it is and is not.
@@ -2634,6 +3053,81 @@ class StudioWindow(QtWidgets.QMainWindow):
     def _delivered(self) -> api.Result | None:
         """The currently delivered result, if any."""
         return self._last.delivered() if self._last is not None else None
+
+    def _open_protein(self) -> None:
+        """Load a protein FASTA into the input box (the design target in §6.6).
+
+        The app was paste-only, so a user with a sequence in a file had to route it
+        through a text editor. Multi-record files load the first record and say so,
+        rather than silently designing for a sequence the user did not pick.
+        """
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Open protein FASTA", "", "FASTA (*.fasta *.fa *.faa);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            records = list(api.read_fasta(path))
+        except (OSError, ValueError) as exc:
+            self._warn("Could not read FASTA", str(exc), "")
+            return
+        if not records:
+            self._warn("Empty FASTA", f"{path} contained no records.", "")
+            return
+        header, sequence = records[0]
+        self.protein_edit.setPlainText(sequence)
+        if not self.jobname_edit.text().strip() and header:
+            self.jobname_edit.setText(header.split()[0])
+        note = f"Loaded {header or 'record 1'} ({len(sequence)} residues) from {path}"
+        if len(records) > 1:
+            note += f" - first of {len(records)} records; the rest were not loaded"
+        self.statusBar().showMessage(note)
+
+    def _validate_sequence(self) -> None:
+        """Audit an existing coding sequence against the current design controls.
+
+        ``api.validate`` was fully built and had no UI at all, so a user holding a
+        CDS -- their own, or one a collaborator sent -- had to drop to the CLI to
+        check it. The audit uses the same controls as a design run, and reports
+        every rule they set (LOCAL and non-local alike).
+        """
+        dna, ok = QtWidgets.QInputDialog.getMultiLineText(
+            self, "Validate a coding sequence", "Paste an ACGT coding sequence:", ""
+        )
+        if not ok:
+            return
+        cleaned = "".join(dna.split()).upper()
+        if not cleaned:
+            return
+        enzymes = self._prepare_enzymes()
+        if enzymes is None:  # an unknown enzyme name was already reported
+            return
+        config, _steps = self._build_config(enzymes)
+        try:
+            report = api.validate(cleaned, config)
+        except ValueError as exc:
+            self._warn("Could not validate", str(exc), "")
+            return
+        hard = report.metrics.hard_violations
+        soft = report.metrics.soft_violations
+        verdict = "FEASIBLE" if report.is_feasible else "NOT feasible"
+        lines = [
+            f"{verdict} under the current design controls.",
+            f"{len(report.dna)} nt, GC {report.metrics.gc * 100:.1f}%",
+            f"{hard} hard / {soft} soft violation(s).",
+        ]
+        detail = "\n".join(
+            f"[{v.severity.name}] {v.constraint} @ {v.start}-{v.end}: {v.detail}"
+            for v in report.violations[:100]
+        )
+        if len(report.violations) > 100:
+            detail += f"\n... and {len(report.violations) - 100} more"
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Validation report")
+        box.setText("\n".join(lines))
+        if detail:
+            box.setDetailedText(detail)
+        box.exec()
 
     def _export_fasta(self) -> None:
         """Write the delivered sequence to a FASTA file chosen by the user."""

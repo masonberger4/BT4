@@ -38,12 +38,23 @@ from bt4.constraints import (
     resolve_enzyme,
     unknown_enzyme_message,
 )
-from bt4.domain import AMINO_ACIDS, Result, Severity, Violation, validate_protein
+from bt4.domain import (
+    AMINO_ACIDS,
+    ConstructContext,
+    Result,
+    Severity,
+    Violation,
+    validate_protein,
+)
 from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
 from bt4.pipeline import (
+    APPLICATION_PRESETS,
+    ApplicationPreset,
     Candidate,
     CandidateSet,
+    ConstructAudit,
     CrossCheckSite,
+    EnzymeOccurrence,
     FrontierResult,
     InfeasibleError,
     LibraryResult,
@@ -52,10 +63,14 @@ from bt4.pipeline import (
     Track,
     TracksResult,
     ValidationReport,
+    apply_preset,
     assemble_and_rank_candidates,
     audit_candidate_set,
+    audit_construct,
+    available_presets,
     available_splice_backends,
     rerank_by_expression,
+    resolve_preset,
     resolve_splice_backend,
     run_frontier,
     run_library,
@@ -68,12 +83,17 @@ from bt4.pipeline import (
 
 __all__ = [
     "AMINO_ACIDS",
+    "APPLICATION_PRESETS",
     "GENOME_WIDE",
     "HIGHLY_EXPRESSED",
     "REFERENCE_SETS",
+    "ApplicationPreset",
     "Candidate",
     "CandidateSet",
+    "ConstructAudit",
+    "ConstructContext",
     "CrossCheckSite",
+    "EnzymeOccurrence",
     "ExpressionPredictor",
     "ExpressionResult",
     "ForbiddenPreset",
@@ -91,12 +111,15 @@ __all__ = [
     "TracksResult",
     "ValidationReport",
     "Violation",
+    "apply_preset",
     "assemble_and_rank_candidates",
     "audit_candidate_set",
+    "audit_construct",
     "available_enzymes",
     "available_expression_backends",
     "available_forbidden_presets",
     "available_organisms",
+    "available_presets",
     "available_reference_sets",
     "available_splice_backends",
     "available_tai_organisms",
@@ -116,6 +139,7 @@ __all__ = [
     "rerank_by_expression",
     "resolve_enzyme",
     "resolve_expression_backend",
+    "resolve_preset",
     "resolve_splice_backend",
     "result_to_dict",
     "result_to_json",
@@ -213,12 +237,16 @@ def tracks(
     reference_set: str | None = None,
     nt_window: int = 50,
     codon_window: int = 18,
+    splice: bool = False,
+    splice_predictor: object | None = None,
+    context: ConstructContext | None = None,
 ) -> TracksResult:
-    """Compute per-site composition tracks for a coding sequence.
+    """Compute per-site tracks for a coding sequence.
 
     Sliding-window **reporting** profiles (GC fraction, CpG density, and -- when
     codon-aligned -- %MinMax) so a delivered sequence's composition can be
-    audited or plotted position-by-position. Nothing here feeds the optimizer.
+    audited or plotted position-by-position, plus an opt-in per-nucleotide
+    cryptic-splice-site track. Nothing here feeds the optimizer.
 
     Args:
         dna: An ACGT coding sequence (case-insensitive).
@@ -227,9 +255,19 @@ def tracks(
             frequencies (``None`` = its default).
         nt_window: Window (nucleotides) for the GC and CpG tracks.
         codon_window: Window (codons) for the %MinMax track.
+        splice: Add the per-nucleotide ``splice_site`` track. Opt-in because it
+            runs a model, and its numbers inherit that model's calibration
+            status -- with the default PWM baseline they are UNCALIBRATED
+            pseudo-scores showing where consensus-like positions sit, not
+            probabilities.
+        splice_predictor: Backend to score with (``None`` = the baseline).
+        context: Known flanking sequence. When given, the splice track is scored
+            with the CDS in its real flanks rather than alone; values stay aligned
+            to the CDS.
 
     Returns:
-        A :class:`~bt4.pipeline.tracks.TracksResult` bundling the named tracks.
+        A :class:`~bt4.pipeline.tracks.TracksResult` bundling the named tracks,
+        recording which splice model ran and whether it is calibrated.
 
     Raises:
         ValueError: On non-ACGT input, a non-positive window, or unknown organism.
@@ -240,6 +278,9 @@ def tracks(
         reference_set=reference_set,
         nt_window=nt_window,
         codon_window=codon_window,
+        splice=splice,
+        splice_predictor=splice_predictor,
+        context=context,
     )
 
 
@@ -351,6 +392,7 @@ def splice_audit(
     predictors: Sequence[SplicePredictor] | None = None,
     threshold: float = 0.5,
     match_window: int = 3,
+    context: ConstructContext | None = None,
 ) -> SpliceAuditReport:
     """Localize-and-flag cryptic splice sites across a candidate set (no editing).
 
@@ -373,6 +415,11 @@ def splice_audit(
         threshold: Site-localization threshold (a heuristic display knob, not a
             calibrated cutoff).
         match_window: +/- nt window for the approximate cross-backend co-occurrence.
+        context: Known flanking sequence. When given, every candidate (and the
+            reference) is scored with the CDS in its real flanks instead of alone --
+            the wrapped CNNs otherwise pad their wide context with literal ``N``.
+            Reported positions stay in CDS coordinates. Better input is not
+            calibration: an uncalibrated backend stays uncalibrated.
 
     Returns:
         A :class:`~bt4.biomodels.splice.audit.SpliceAuditReport`.
@@ -386,6 +433,7 @@ def splice_audit(
         predictors=predictors,
         threshold=threshold,
         match_window=match_window,
+        context=context,
     )
 
 

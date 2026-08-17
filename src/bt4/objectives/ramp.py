@@ -1,18 +1,26 @@
-"""5' translation-ramp shaping term (a heuristic, NOT a validated model).
+"""5' shaping term over the first few dozen codons (a prior, NOT a mechanism).
 
-Natural highly-expressed genes often show a "ramp" of slower (less codon-
-adapted) codons across roughly the first 30-50 codons; the leading hypothesis is
-that this smooths ribosome loading and reduces downstream collisions. BT4 models
-that observation as a deliberately simple *shaping* term rather than a claim
-about biology.
+Natural highly-expressed genes often show a "ramp" of slower (less codon-adapted)
+codons across roughly the first 30-50 codons. BT4 models that *observation* as a
+deliberately simple shaping term -- and is explicit that the mechanism originally
+proposed for it does not survive the experiments.
 
-:class:`RampTerm` is a **heuristic** term: it rewards *lower* codon adaptiveness
-early in the sequence and fades linearly to no effect at and beyond
-``ramp_codons``. It is oriented so that larger is better (CLAUDE.md invariant
-#4, "delta == score"), which -- combined with a CAI/tAI term pulling the other
-way -- creates a genuine 5' trade-off the frontier can expose. It is **not** a
-validated biological model of ribosome loading and must not be presented as one;
-it is a smooth prior over the first few dozen codons.
+**The causal claim is falsified; the 5' effect is real.** Goodman, Church & Kosuri
+(2013) varied 5' codon usage and mRNA structure independently across a large
+synthetic library and concluded that **reduced RNA secondary structure, not codon
+rarity itself**, is responsible for the expression benefit of a "slow" 5' region.
+So this term must never be described as modelling ribosome-loading dynamics: rare
+5' codons are *correlated* with the effect largely because they tend to be
+AT-richer and therefore less structured. The lever BT4 offers for the *validated*
+mechanism is the 5' folding objective (:mod:`bt4.biomodels.folding`, reached via
+``refine``/``folding_weight``), which acts on start-proximal structure directly.
+
+What :class:`RampTerm` is, then: a **shaping prior**. It rewards lower codon
+adaptiveness early in the sequence and fades linearly to no effect at and beyond
+``ramp_codons``. It is oriented so that larger is better (CLAUDE.md invariant #4,
+"delta == score"), which -- combined with a CAI/tAI term pulling the other way --
+creates a genuine 5' trade-off the frontier can expose. It is kept because that
+trade-off is real and useful to see, not because the ramp hypothesis is settled.
 
 Because its ``delta`` reads only ``pos`` and the codon itself (never the growing
 ``prefix``), it is a ``POSITIONAL`` term with ``context_len == 0``, and its

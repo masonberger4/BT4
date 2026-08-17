@@ -33,9 +33,11 @@ from bt4.domain.sequence import validate_dna
 
 __all__ = [
     "DEFAULT_FIVE_PRIME_WINDOW",
+    "DEFAULT_LEADER_WINDOW",
     "FoldingModel",
     "FoldingResult",
     "five_prime_window",
+    "junction_window",
 ]
 
 DEFAULT_FIVE_PRIME_WINDOW: int = 48
@@ -44,6 +46,54 @@ DEFAULT_FIVE_PRIME_WINDOW: int = 48
 48 nt is 16 codons -- a standard span for the translation-initiation region
 where 5' secondary structure most affects ribosome loading.
 """
+
+DEFAULT_LEADER_WINDOW: int = 45
+"""Default number of 5'UTR bases folded together with the CDS start, when known.
+
+Structure that occludes ribosome loading forms over the *initiation region*, which
+straddles the start codon -- the classic causal window runs from roughly nt -4 to
++37 relative to the A of the AUG. A CDS-only fold cannot represent it at all,
+because half of it is in the leader. 45 nt keeps the analysis local to initiation
+rather than folding an entire UTR.
+"""
+
+
+def junction_window(
+    upstream: str,
+    cds: str,
+    *,
+    upstream_nt: int = DEFAULT_LEADER_WINDOW,
+    cds_nt: int = DEFAULT_FIVE_PRIME_WINDOW,
+) -> str:
+    """Return the initiation region spanning the 5'UTR-CDS junction.
+
+    The region a folding model should see around translation initiation is
+    ``upstream[-upstream_nt:] + cds[:cds_nt]``. With no known leader this degrades
+    exactly to the CDS-only 5' window, so a context-free run is unchanged.
+
+    Using one function for **both** the refinement objective and the reported audit
+    is the point: reporting a different region from the one that was optimized is
+    precisely the reported-vs-computed defect that shipped before (a whole-sequence
+    deltaG printed under a "5' dG" label), and a single shared window makes that
+    class of mismatch unrepresentable rather than merely fixed.
+
+    Honest scope: this is *one* number over the initiation region. It is not a
+    model of structure along the whole transcript, and the sign of a structural
+    effect is known to differ between the immediate start-codon neighbourhood and
+    the region further into the CDS -- so it must not be read as "less structure is
+    always better everywhere".
+
+    Args:
+        upstream: Known sequence 5' of the CDS (may be empty).
+        cds: The coding sequence.
+        upstream_nt: How many leader bases to include.
+        cds_nt: How many CDS bases to include.
+
+    Returns:
+        The concatenated window, upper-cased.
+    """
+    leader = upstream[-upstream_nt:].upper() if upstream and upstream_nt > 0 else ""
+    return leader + cds[:cds_nt].upper()
 
 
 def five_prime_window(dna: str, window: int | None) -> str:

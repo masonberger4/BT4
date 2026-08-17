@@ -189,28 +189,100 @@ to `PROVEN_OPTIMAL`.
 
 ---
 
-## 4. Forward roadmap
+## 4. Phase 1 and Phase 2 — what shipped
 
-The live, precondition-tagged queue is [`NEXT_SESSION.md`](NEXT_SESSION.md); this is
-the durable shape. Two maintainer decisions gate Phase 2 (recorded below).
+Both phases below have now landed. The live queue is
+[`NEXT_SESSION.md`](NEXT_SESSION.md).
 
-- **Phase 1 — make the default defensible** (decision-independent). Windowed-GC
-  constraint (LOCAL, exact in the trellis — cheaper and stronger than a refinement
-  rule); reach the IUPAC `extra_sites` path so "ban the degenerate site directly" is
-  actionable; regime-tagged application presets (`pipeline/presets.py`, **no default
-  selected** — see Decision 1); Studio objective weights + ε-budgets, FASTA upload, a
-  validate-an-existing-sequence panel, splice + 5′-folding per-site tracks; relabel
-  the ramp term's claim. Presets depend on this change's `relax()` so a preset can
-  never ship an infeasible `avoid_internal_start`.
-- **Phase 2 — construct context** (the headline capability, strictly serial). A pure
-  `ConstructContext` domain object + an additive `OptimizeConfig.context` (byte-
-  identical when absent); oORF pairing across the UTR-CDS junction (cheapest,
-  best-evidenced, no ML); a `SeededConstraint` wrapper so every LOCAL rule is
-  evaluated across the junction (and the initiator Kozak becomes reachable); a shared
-  `junction_window()` folding function + a `SplicePredictor.score_region()` fed **real
-  flanks** instead of `N`; a whole-construct audit + restriction-site uniqueness with
-  a precomputed k-mer index (so a 6 kb backbone is not re-scanned per SA move).
-- **Phase 3 — construct-context UI + provenance display.**
+### Phase 1 — a defensible default operating point
+
+- **Windowed GC** (`constraints/gc_window.py`), the rule vendors actually specify.
+  Two findings changed the design and are worth recording, because both contradict
+  the plan this work started from:
+  - *"LOCAL ⇒ cheap and exact" is false in practice.* A windowed bound does have
+    bounded context, but the trellis keys on the **literal** trailing context, so
+    cost grows ~exponentially in the window: measured on a 128-residue protein,
+    10 nt → 0.16 s, 12 nt → 0.46 s, 14 nt → 1.45 s. The vendor-typical 50 nt is not
+    reachable exactly, and narrowing the window is **not** a fix — at 8 nt a proline
+    run (every Pro codon is `CCN`) makes the problem genuinely infeasible. So the
+    rule is **routed by tractability**: ≤ 12 nt stays exact in the trellis and keeps
+    `PROVEN_OPTIMAL`; wider windows are refinement-enforced with residuals reported
+    and the certificate degraded — never a silent cap (§10.1).
+  - *Violation granularity is load-bearing.* Merging offending windows into one
+    finding per region gave the annealer a **plateau**: easing a stretch from 74% to
+    66% GC did not change the count, so refinement stalled above the bound even
+    though a compliant sequence provably existed (0.36–0.46). Reporting **one
+    violation per window** restored the gradient and it now converges clean.
+- **IUPAC `extra_sites` wired through** config/CLI/app, so "ban the degenerate site
+  directly" is finally actionable (`forbidden_motifs` takes literal ACGT only). The
+  unknown-enzyme message now points at it.
+- **Application presets** (`pipeline/presets.py`) — synthesis / AAV / LVV / plasmid /
+  IVT mRNA as pure data, **none applied by default** (Decision 1). Feasibility-tested
+  on a protein panel; none enables `avoid_internal_start`. A guard test forbids a
+  preset from building an intractable trellis context — the plasmid preset's original
+  `inverted_stem=12` (context 27) measured **115–339 s per run** and was replaced by
+  the RC-aware max-repeat cap, which covers hairpins anyway.
+- **Studio**: preset picker that fills the visible controls, windowed-GC controls,
+  IUPAC extra sites, per-objective **weight** spins (including the negative
+  codon-pair weight for attenuated-vaccine design), hard **GC/dinucleotide budgets**,
+  and the previously hardcoded `tandem_copies` / `inverted_loop` /
+  `avoid_reverse_complement`. Plus **FASTA open**, a **validate-an-existing-sequence**
+  panel (`api.validate` had no UI at all), and a **splice track** on the per-site plot,
+  labeled with its model's calibration state.
+- **Ramp term relabelled** — the codon-rarity mechanism was falsified
+  (Goodman/Church/Kosuri 2013); it is presented as a shaping prior and points at
+  folding for the validated lever. *No folding track* was added, deliberately: a
+  sliding-window ΔG is `O(w³)` per position with the bundled baseline, so it would be
+  either unusably slow or quietly computed at a coarser stride than its axis implies.
+
+### Phase 2/3 — construct context (the headline gap, now closed)
+
+BT4 no longer optimizes the CDS in a vacuum.
+
+- **`ConstructContext`** (`domain/context.py`, pure/stdlib) carries the 5′ and 3′
+  flanks, the topology, and `masked_spans`. Flanks are truncated at the `N` nearest
+  the CDS, so what reaches a rule is always contiguous and real — nothing invented.
+- **`SeededConstraint`** (`constraints/seeded.py`) tops the growing prefix up from the
+  leader **without changing the `Constraint` protocol** and without touching the
+  trellis accumulator, so state merging stays exact and a context-free run is
+  byte-identical (#7). `validate` is seeded to match and re-maps findings into CDS
+  coordinates, dropping ones that lie wholly in the flank.
+- **uORF pairing across the junction**: `UorfConstraint` gained `cds_offset`, because
+  the main frame is `(a - cds_offset) % 3` — a leader whose length is not a multiple
+  of three would otherwise invert every frame call. A leader ATG reading into the CDS
+  is now detected; a CDS-only scan misses it entirely.
+- **Junction folding**: one shared `junction_window()` used by **both** the refinement
+  objective and the audit, which makes the A.3 class of reported-vs-optimized mismatch
+  unrepresentable rather than merely fixed.
+- **Whole-construct audit** (`pipeline/construct.py`, `api.audit_construct`): rules run
+  over the assembled construct, findings labelled `[insert]` / `[flank]` / `[junction]`,
+  and **restriction-site uniqueness** — "does this enzyme still cut my plasmid once?",
+  a question only a whole-construct view can answer. `masked_spans` excludes AAV ITRs
+  and LVV LTRs, and reports how many findings it excluded.
+- **Surfaces**: CLI `--utr5` / `--utr3` / `--context-provenance`; a Studio *5′/3′
+  context* panel with the provenance policy selector (Decision 2 — asked per run,
+  defaulting to privacy-safe `omit`). The RiboNN UTR boxes are explicitly
+  distinguished from these, since they annotate a score rather than steer a design.
+- **Privacy rider, always on**: the ASSP cross-check is the only outbound path and
+  takes a bare CDS — there is no parameter through which a backbone could be
+  transmitted, and a test pins that.
+
+- **Real flanks for the splice models.** `score_in_context()` scores a CDS inside
+  its known flanks and **slices the result back to the CDS**, so every downstream
+  coordinate (localization, pooling, Δsplicing, the per-site track) is unchanged and
+  no backend needed modifying. `api.splice_audit(..., context=)` and
+  `api.tracks(..., context=)` use it. This replaces the literal `N` padding for the
+  region that matters — which also matters for the *agreement* signal, since both
+  CNNs previously padded identically and so could not disagree about the artifact.
+  **Explicitly not a calibration event:** an uncalibrated backend stays uncalibrated,
+  and a fidelity attestation captured on the N-padded path does **not** transfer to a
+  flanked one, because it is a different input regime.
+
+### Still ahead
+
+Packaged installers, the human/data-gated calibration items (splice CNN fidelity
+attestation, a regime-matched CDS-variant panel for RiboNN), GenBank I/O, and
+LinearDesign-class joint codon+structure optimization.
 
 ### Maintainer decisions on record
 

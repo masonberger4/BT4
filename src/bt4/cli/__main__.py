@@ -100,11 +100,78 @@ def _resolve_dinuc_budget(
     return None, None, None
 
 
+# Every OptimizeConfig field an application preset may set, mapped to the CLI
+# option that overrides it and the argparse dest it lands in. A preset must never
+# be able to set something the user cannot then override from the command line, so
+# a test asserts this table covers every field the bundled presets touch.
+_PRESET_FIELD_TO_FLAG: dict[str, tuple[str, str]] = {
+    "gc_window_nt": ("--gc-window", "gc_window"),
+    "gc_window_min": ("--gc-window-min", "gc_window_min"),
+    "gc_window_max": ("--gc-window-max", "gc_window_max"),
+    "max_homopolymer": ("--max-homopolymer", "max_homopolymer"),
+    "max_gc_run": ("--max-gc-run", "max_gc_run"),
+    "max_repeat_length": ("--max-repeat-length", "max_repeat_length"),
+    "cpg_weight": ("--cpg-weight", "cpg_weight"),
+    "cpg_mode": ("--cpg-mode", "cpg_mode"),
+    "avoid_splice_sites": ("--avoid-splice-sites", "avoid_splice_sites"),
+    "avoid_uorf": ("--avoid-uorf", "avoid_uorf"),
+    "inverted_stem": ("--inverted-stem", "inverted_stem"),
+    "inverted_loop": ("--inverted-loop", "inverted_loop"),
+    "refine": ("--refine", "refine"),
+}
+
+
+def _apply_preset_to_args(args: argparse.Namespace, argv: Sequence[str] | None) -> None:
+    """Fold ``args.preset``'s values into ``args`` without clobbering explicit flags.
+
+    A preset supplies starting values; a flag the user actually typed always wins,
+    so a preset is a starting point rather than a cage. (The values cannot simply
+    be pre-seeded into the argparse namespace: a subparser parses into a fresh
+    namespace and would overwrite them with its own defaults.)
+
+    Raises:
+        KeyError: If ``args.preset`` is not a known preset.
+    """
+    preset = api.resolve_preset(args.preset)
+    tokens = {
+        token.split("=", 1)[0]
+        for token in (sys.argv[1:] if argv is None else argv)
+    }
+    for field, value in preset.overrides.items():
+        flag, dest = _PRESET_FIELD_TO_FLAG[field]
+        if flag not in tokens:  # user did not name it -> the preset supplies it
+            setattr(args, dest, value)
+
+
+def _read_flank(value: str | None) -> str:
+    """Read a flank given either literally or as a path to a FASTA file."""
+    if not value:
+        return ""
+    candidate = value.strip()
+    if set(candidate.upper()) <= set("ACGTN"):
+        return candidate
+    # Not a bare sequence -> treat it as a FASTA path (a clear error if it is not).
+    return "".join(seq for _header, seq in api.read_fasta(candidate))
+
+
+def _build_context(args: argparse.Namespace) -> api.ConstructContext | None:
+    """Build the construct context from --utr5/--utr3, or None when neither is set."""
+    upstream = _read_flank(getattr(args, "utr5", None))
+    downstream = _read_flank(getattr(args, "utr3", None))
+    if not upstream and not downstream:
+        return None
+    return api.ConstructContext(upstream=upstream, downstream=downstream)
+
+
 def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
     motifs = tuple(m.strip().upper() for m in args.forbid) if args.forbid else ()
     enzymes = tuple(e.strip() for e in args.enzyme) if args.enzyme else ()
+    extra_sites = (
+        tuple(s.strip().upper() for s in args.enzyme_site) if args.enzyme_site else ()
+    )
     presets = tuple(p.strip() for p in args.forbid_preset) if args.forbid_preset else ()
     dinuc_budget, dinuc_min, dinuc_max = _resolve_dinuc_budget(args)
+    context = _build_context(args)
     cpb_cds: tuple[str, ...] = ()
     if args.cpb_cds:
         # Read the reference CDS FASTA now (CLI layer); the engine builds the
@@ -121,10 +188,14 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         cpb_reference_cds=cpb_cds,
         max_homopolymer=None if args.max_homopolymer <= 0 else args.max_homopolymer,
         max_gc_run=None if args.max_gc_run <= 0 else args.max_gc_run,
+        gc_window_nt=None if args.gc_window <= 0 else args.gc_window,
+        gc_window_min=args.gc_window_min,
+        gc_window_max=args.gc_window_max,
         max_repeat_length=None if args.max_repeat_length <= 0 else args.max_repeat_length,
         forbidden_motifs=motifs,
         forbidden_presets=presets,
         restriction_enzymes=enzymes,
+        restriction_extra_sites=extra_sites,
         ramp_weight=args.ramp_weight,
         ramp_codons=args.ramp_codons,
         cpg_weight=args.cpg_weight,
@@ -149,10 +220,38 @@ def _build_config(args: argparse.Namespace) -> api.OptimizeConfig:
         dinuc_max=dinuc_max,
         beam=None if args.beam <= 0 else args.beam,
         seed=args.seed,
+        application_preset=getattr(args, "preset", None) or "",
+        context=context,
+        context_provenance=getattr(args, "context_provenance", "omit"),
     )
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--preset", default=None, metavar="KEY",
+        help="start from a named application preset (see 'bt4 presets'). NO preset "
+        "is applied by default -- BT4 stays regime-agnostic. A preset only supplies "
+        "starting values: any flag you pass explicitly still wins"
+    )
+    parser.add_argument(
+        "--utr5", default=None, metavar="SEQ|FASTA",
+        help="known sequence immediately 5' of the CDS (5'UTR / vector backbone), "
+        "as literal ACGT or a FASTA path. With it, every LOCAL rule is also checked "
+        "ACROSS the junction and uORF pairing can see a leader ATG. Use N for "
+        "unknown bases: each flank is truncated at the N nearest the CDS"
+    )
+    parser.add_argument(
+        "--utr3", default=None, metavar="SEQ|FASTA",
+        help="known sequence immediately 3' of the CDS (same accepted forms)"
+    )
+    parser.add_argument(
+        "--context-provenance", default="omit", dest="context_provenance",
+        choices=("omit", "hash"),
+        help="what the run manifest records about --utr5/--utr3: 'omit' (default) "
+        "stores only their lengths; 'hash' stores a content hash, which makes the "
+        "run fully reproducible from its stamp but fingerprints your backbone. The "
+        "context is never transmitted anywhere either way"
+    )
     parser.add_argument("--organism", default="homo_sapiens", help="codon-usage table (alias ok)")
     parser.add_argument(
         "--reference-set", default=None, dest="reference_set",
@@ -185,6 +284,15 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
                         help="longest allowed single-base run (<=0 = off)")
     parser.add_argument("--max-gc-run", type=int, default=0, dest="max_gc_run",
                         help="longest allowed run of consecutive G/C bases (<=0 = off)")
+    parser.add_argument("--gc-window", type=int, default=0, dest="gc_window",
+                        help="sliding-window length in nt for the windowed GC bound "
+                        "(<=0 = off). The rule synthesis vendors specify: bound GC in "
+                        "EVERY window, e.g. --gc-window 50 --gc-window-min 0.25 "
+                        "--gc-window-max 0.65. LOCAL, so it stays exact in the trellis")
+    parser.add_argument("--gc-window-min", type=float, default=0.0, dest="gc_window_min",
+                        help="minimum GC fraction in any --gc-window window (0-1)")
+    parser.add_argument("--gc-window-max", type=float, default=1.0, dest="gc_window_max",
+                        help="maximum GC fraction in any --gc-window window (0-1)")
     parser.add_argument("--max-repeat-length", type=int, default=0, dest="max_repeat_length",
                         help="longest allowed repeated substring anywhere (<=0 = off; "
                         "non-local, refinement-enforced -> HEURISTIC result)")
@@ -194,10 +302,19 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         help="forbid a named preset's motifs (repeatable; see 'bt4 presets')"
     )
     parser.add_argument(
+        "--enzyme-site", action="append", metavar="SITE", dest="enzyme_site",
+        help="forbid a recognition SITE directly, as IUPAC (repeatable; e.g. GANTC). "
+        "Use this for an enzyme the bundled catalog lacks -- --forbid takes only "
+        "literal ACGT, so a degenerate site can only be given here"
+    )
+    parser.add_argument(
         "--enzyme", action="append", metavar="NAME", help="forbid a restriction site (repeatable)"
     )
     parser.add_argument("--ramp-weight", type=float, default=0.0, dest="ramp_weight",
-                        help="5' translation-ramp weight (0 = off)")
+                        help="5' shaping-prior weight (0 = off): favours less-adapted "
+                        "codons early. A PRIOR, not a mechanism -- the 5' benefit is "
+                        "driven by reduced RNA structure, not codon rarity (Goodman "
+                        "2013), so use --refine/--folding-weight for that lever")
     parser.add_argument("--ramp-codons", type=int, default=35, dest="ramp_codons")
     parser.add_argument("--cpg-weight", type=float, default=0.0, dest="cpg_weight",
                         help="CpG-dinucleotide term weight (0 = off)")
@@ -359,12 +476,15 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         reference_set=args.reference_set,
         nt_window=args.nt_window,
         codon_window=args.codon_window,
+        splice=args.splice_track,
     )
     if args.json:
         payload = {
             "dna": result.dna,
             "organism": result.organism,
             "codon_reference_set": result.reference_set,
+            "splice_model": result.splice_model,
+            "splice_calibrated": result.splice_calibrated,
             "tracks": [
                 {
                     "name": t.name,
@@ -383,6 +503,9 @@ def _cmd_tracks(args: argparse.Namespace) -> int:
         # %MinMax is reference-set-dependent, so the track table is not
         # self-describing without this line.
         print(f"tables  {result.organism} / {result.reference_set}")
+    if result.splice_model:
+        state = "calibrated" if result.splice_calibrated else "UNCALIBRATED (advisory)"
+        print(f"splice  {result.splice_model} [{state}]")
     print(f"{'track':14} {'window':>8} {'n':>5} {'min':>8} {'max':>8} {'mean':>8}")
     for row in api.summarize(result.tracks):
         win = f"{row['window']} {row['window_unit']}"
@@ -408,6 +531,17 @@ def _cmd_enzymes(_args: argparse.Namespace) -> int:
 
 
 def _cmd_presets(_args: argparse.Namespace) -> int:
+    print("Application presets (--preset KEY) -- starting points, none applied by default:")
+    print()
+    for app in api.available_presets():
+        settings = ", ".join(f"{k}={v!r}" for k, v in sorted(app.overrides.items()))
+        print(f"{app.key:26} {app.label}  [{app.regime}]")
+        print(f"{'':26} {app.description}")
+        print(f"{'':26} why: {app.rationale}")
+        print(f"{'':26} sets: {settings}")
+        print()
+    print("Forbidden-sequence presets (--forbid-preset KEY):")
+    print()
     for preset in api.available_forbidden_presets():
         motifs = ", ".join(preset.motifs)
         print(f"{preset.key:26} {preset.label}")
@@ -515,6 +649,11 @@ def _parser() -> argparse.ArgumentParser:
         help="that organism's reference set for the %%MinMax frequencies "
              "(default: the organism's own default)",
     )
+    p_trk.add_argument("--splice-track", action="store_true", dest="splice_track",
+                       help="add a per-nucleotide cryptic-splice-site track. Opt-in "
+                       "because it runs a model: with the default PWM baseline the "
+                       "values are UNCALIBRATED pseudo-scores showing where "
+                       "consensus-like positions sit, not probabilities")
     p_trk.add_argument("--nt-window", type=int, default=50, dest="nt_window",
                        help="nucleotide window for the GC/CpG tracks")
     p_trk.add_argument("--codon-window", type=int, default=18, dest="codon_window",
@@ -539,7 +678,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse ``argv`` and dispatch a subcommand; return a process exit code."""
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if getattr(args, "preset", None):
+        try:
+            _apply_preset_to_args(args, argv)
+        except KeyError as exc:
+            print(f"error: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+            return 2
     try:
         exit_code: int = args.func(args)
     except (ValueError, InfeasibleError, OSError) as exc:

@@ -61,6 +61,7 @@ __all__ = [
     "logit",
     "pool_log_odds",
     "pooled_risk",
+    "score_in_context",
 ]
 
 DEFAULT_TOP_K: int = 3
@@ -230,3 +231,52 @@ class SplicePredictor(Protocol):
             The negated added splice risk; larger means less added risk.
         """
         ...
+
+
+def score_in_context(
+    predictor: SplicePredictor,
+    cds: str,
+    upstream: str = "",
+    downstream: str = "",
+) -> SpliceResult:
+    """Score ``cds`` **in its real flanking sequence**, aligned back to the CDS.
+
+    Splice models read a wide window around each position, so a coding sequence
+    scored on its own is scored in a nucleotide vacuum: the wrapped SpliceAI and
+    Pangolin adapters pad their ~10 kb context with literal ``N``, which is a
+    documented boundary-artifact regime, and -- because *both* pad identically --
+    their cross-backend agreement cannot detect the shared artifact. Real flanking
+    sequence, when the user knows it, replaces that padding for the region that
+    matters.
+
+    The returned scores are sliced back to the CDS, so ``donor[i]`` still describes
+    coding position ``i``. That is what keeps this a drop-in: every downstream
+    consumer (localization, pooling, Delta-splicing, the per-site track) keeps its
+    coordinates and needs no remapping, and no backend has to change.
+
+    Honest scope: better *input* is not calibration. A backend that reports
+    ``calibrated=False`` still does after this -- and a fidelity attestation
+    captured on the N-padded path does **not** transfer to a flanked one, because
+    it is a different input regime.
+
+    Args:
+        predictor: Any backend implementing :class:`SplicePredictor`.
+        cds: The coding sequence whose per-position scores are wanted.
+        upstream: Known sequence immediately 5' of ``cds`` (may be empty).
+        downstream: Known sequence immediately 3' of ``cds`` (may be empty).
+
+    Returns:
+        A :class:`SpliceResult` covering exactly ``cds``.
+    """
+    if not upstream and not downstream:
+        return predictor.score_sequence(cds)
+    assembled = f"{upstream}{cds}{downstream}".upper()
+    scored = predictor.score_sequence(assembled)
+    lo = len(upstream)
+    hi = lo + len(cds)
+    return SpliceResult(
+        donor=scored.donor[lo:hi],
+        acceptor=scored.acceptor[lo:hi],
+        model_name=scored.model_name,
+        calibrated=scored.calibrated,
+    )

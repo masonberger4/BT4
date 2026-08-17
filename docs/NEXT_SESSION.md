@@ -32,8 +32,16 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > violates a GLOBAL rule to a `RELAXED` certificate (never `proven_optimal`);
 > `run_validate` / `POST /validate` now audit GLOBAL constraints; `folding_dg` now
 > reports the optimized 5′ window; and `avoid_internal_start` degrades gracefully via a
-> new opt-in `relax()` with a culprit-named `InfeasibleError`. **Start here is now
-> Tier 1** (queue item 2).
+> new opt-in `relax()` with a culprit-named `InfeasibleError`.
+>
+> ✅ **Tier 1 (defensible default) and the Tier 2 construct-context core have also
+> landed** — windowed GC, IUPAC extra sites, application presets, Studio weights /
+> budgets / FASTA open / validate panel / splice track, and then
+> `ConstructContext` + junction-correct constraints + junction folding + the
+> whole-construct audit with restriction-site uniqueness. See
+> [`REVIEW_2026-08_sota_and_roadmap.md`](REVIEW_2026-08_sota_and_roadmap.md) §4.
+> **Start here is now queue item 3's remaining sub-item: real flanks for the
+> wrapped splice CNNs** (they still N-pad), then Tier 3 (GenBank I/O).
 
 | Component | State | Calibrated? | Primary file(s) |
 |---|---|---|---|
@@ -90,12 +98,14 @@ than jointly in the DP.
 [`REVIEW_2026-08_expression_and_context.md`](REVIEW_2026-08_expression_and_context.md)
 is a measured audit of this tree against what BT4 is *supposed* to be. Its verdict:
 BT4 is an unusually well-engineered, unusually honest **CAI optimizer with
-manufacturability constraints**, not yet an expression optimizer — because **the
-optimizer only ever sees the CDS**. Folding is scored on `CDS[0:48]` with no
-leader; the splice CNNs are scored on the CDS floating in 5,000 literal `N` bases;
-RiboNN can take UTRs but sits where it cannot influence delivery. It also found
-**four defects measured by running the code**, three of which break a §5 invariant
-that is shipping today.
+manufacturability constraints**, not yet an expression optimizer — because at the
+time of that audit **the optimizer only ever saw the CDS**. *(Partly addressed
+since: the CDS is no longer designed in isolation — a construct context now feeds
+junction-correct constraints, junction folding, leader-aware uORF pairing, and a
+whole-construct audit. The splice CNNs still float the CDS in 5,000 literal `N`
+bases, and RiboNN still sits where it cannot influence delivery.)* The audit also
+found **four defects measured by running the code**, three of which broke a §5
+invariant; all four are now fixed.
 
 The review's roadmap is the queue below. Note the dependency the two documents
 share: joint codon+structure optimization that knows the real 5′UTR is strictly
@@ -128,7 +138,19 @@ items 1–3 are in
      now used) and `InfeasibleError` names the failing residue + culprit
      constraints (`optimize/exact_dp.py`). A non-opt-in rule (e.g. restriction) is
      never silently dropped. **Tier 1 presets are now unblocked.**
-2. **[START HERE · self-contained] Tier 1 — make the default
+2. **[DONE 2026-08] Tier 1 — make the default defensible.** Landed: the
+   **windowed-GC constraint** (`constraints/gc_window.py`) with honest
+   tractability routing (<=12 nt exact in the trellis, wider refinement-enforced --
+   the exact search grows ~exponentially in the window, measured); the IUPAC
+   **`restriction_extra_sites`** path; **application presets**
+   (`pipeline/presets.py`, none applied by default); Studio **objective weights**,
+   **GC/dinucleotide budgets**, FASTA open, a **validate** panel, a **splice
+   track**, and the previously hardcoded repeat/RC knobs; and the **ramp term
+   relabelled** (its mechanism was falsified). See
+   [`REVIEW_2026-08_sota_and_roadmap.md`](REVIEW_2026-08_sota_and_roadmap.md) §4.
+   *(Superseded queue text for this item follows, kept for its evidence.)*
+
+   **[superseded detail] Tier 1 — make the default
    defensible.** BT4's own `scripts/compare_tools.py` shows nine shipping tools
    clustered at CAI 0.63–0.83 / GC 42–54% while BT4's default sits alone at
    **CAI 1.000 / GC 62.4%**. The engine is not wrong; the operating point is.

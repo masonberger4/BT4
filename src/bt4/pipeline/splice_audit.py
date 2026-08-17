@@ -17,7 +17,9 @@ assert (CLAUDE.md §6, §10.6).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
+from bt4.biomodels.splice import SpliceResult, pooled_risk, score_in_context
 from bt4.biomodels.splice import default as splice_default
 from bt4.biomodels.splice.audit import (
     DEFAULT_MATCH_WINDOW,
@@ -29,6 +31,7 @@ from bt4.biomodels.splice.base import DEFAULT_TOP_K, SplicePredictor
 from bt4.biomodels.splice.baseline import ConsensusPwmSplicePredictor
 from bt4.biomodels.splice.pangolin import PangolinSplicePredictor
 from bt4.biomodels.splice.spliceai import SpliceAiSplicePredictor
+from bt4.domain import ConstructContext
 from bt4.pipeline.candidates import CandidateSet
 
 __all__ = ["audit_candidate_set", "available_splice_backends"]
@@ -50,6 +53,49 @@ def available_splice_backends() -> list[SplicePredictor]:
     return backends
 
 
+@dataclass(frozen=True, slots=True)
+class _FlankedPredictor:
+    """A splice backend that scores each candidate inside its real flanks.
+
+    Wrapping rather than changing the backends is what keeps this safe: every
+    adapter (baseline, SpliceAI, Pangolin, ASSP) is used unmodified, and because
+    :func:`~bt4.biomodels.splice.base.score_in_context` slices its result back to
+    the coding sequence, every downstream coordinate -- localization, pooling,
+    Delta-splicing -- is unchanged.
+    """
+
+    inner: SplicePredictor
+    upstream: str
+    downstream: str
+
+    @property
+    def name(self) -> str:
+        """The wrapped backend's name (unchanged: this is the same model)."""
+        return self.inner.name
+
+    @property
+    def calibrated(self) -> bool:
+        """The wrapped backend's calibration flag -- better input is not calibration."""
+        return self.inner.calibrated
+
+    def score_sequence(self, dna: str) -> SpliceResult:
+        """Score ``dna`` in context, returning CDS-aligned per-position scores."""
+        return score_in_context(self.inner, dna, self.upstream, self.downstream)
+
+    def delta_splicing(self, designed_dna: str, reference_dna: str) -> float:
+        """Added-risk objective with **both** sequences scored in the same flanks.
+
+        Scoring the two in different contexts would conflate a CDS change with a
+        context change, so the flanks are held fixed across the pair -- which is
+        also what keeps ``delta_splicing(seq, seq) == 0.0`` exactly.
+        """
+        designed = pooled_risk(self.score_sequence(designed_dna))
+        reference = pooled_risk(self.score_sequence(reference_dna))
+        # Negated to obey the fixed larger-is-better orientation: positive means
+        # the redesign REMOVED risk.
+        return reference - designed
+
+
 def audit_candidate_set(
     candidate_set: CandidateSet,
     *,
@@ -58,6 +104,7 @@ def audit_candidate_set(
     threshold: float = DEFAULT_SITE_THRESHOLD,
     match_window: int = DEFAULT_MATCH_WINDOW,
     top_k: int = DEFAULT_TOP_K,
+    context: ConstructContext | None = None,
 ) -> SpliceAuditReport:
     """Localize-and-flag cryptic splice sites across a candidate set (no editing).
 
@@ -77,6 +124,13 @@ def audit_candidate_set(
         threshold: Site-localization threshold (a heuristic display knob).
         match_window: +/- nt window for the approximate cross-backend co-occurrence.
         top_k: Pooling depth for ``pooled_risk`` / ``delta_splicing``.
+        context: Known sequence around the CDS. When given, each candidate is
+            scored inside its real flanks instead of alone -- which matters because
+            the wrapped CNNs otherwise pad their wide context with literal ``N``,
+            and both pad identically, so their agreement cannot detect the shared
+            artifact. Scores are sliced back to the CDS, so every reported position
+            still indexes the candidate. Better input is **not** calibration: a
+            backend reporting ``calibrated=False`` still does.
 
     Returns:
         A :class:`~bt4.biomodels.splice.audit.SpliceAuditReport`.
@@ -91,6 +145,10 @@ def audit_candidate_set(
     dnas = [c.result.dna for c in candidate_set.candidates]
     ref = reference if reference is not None else delivered.result.dna
     preds = list(predictors) if predictors is not None else [splice_default()]
+    if context is not None and not context.is_empty:
+        preds = [
+            _FlankedPredictor(p, context.upstream, context.downstream) for p in preds
+        ]
     return audit_splice(
         preds, dnas, ref, threshold=threshold, match_window=match_window, top_k=top_k
     )

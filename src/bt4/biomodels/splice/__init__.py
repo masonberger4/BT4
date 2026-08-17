@@ -69,6 +69,7 @@ from bt4.biomodels.splice.base import (
     logit,
     pool_log_odds,
     pooled_risk,
+    score_in_context,
 )
 from bt4.biomodels.splice.baseline import ConsensusPwmSplicePredictor
 from bt4.biomodels.splice.pangolin import (
@@ -129,6 +130,7 @@ __all__ = [
     "parse_assp_report",
     "pool_log_odds",
     "pooled_risk",
+    "score_in_context",
     "spearman",
     "verified_predictor",
     "verify_pangolin_fidelity",

@@ -1076,3 +1076,219 @@ def test_delivered_tables_are_frozen_at_run_start() -> None:
         # closeEvent cancels the worker and joins the thread; letting a live
         # QThread be garbage-collected aborts the process.
         window.close()
+
+
+# --------------------------------------------------------------------------- #
+# Phase 1: presets, objective weights, epsilon-budgets, and the knobs that used
+# to be hardcoded. The rule these pin down is "no dead control": every visible
+# control must reach a real OptimizeConfig field.
+# --------------------------------------------------------------------------- #
+
+
+def test_no_preset_is_selected_at_launch() -> None:
+    """BT4 is regime-agnostic, so the app must not pick a construct type for you."""
+    window = StudioWindow()
+    config, _steps = window._build_config(())
+    assert window.preset_combo.currentIndex() == 0
+    assert config.application_preset == ""
+    assert config.gc_window_nt is None
+    assert config.max_repeat_length is None
+
+
+def test_new_design_controls_reach_the_config() -> None:
+    """Every control added in this pass maps to its OptimizeConfig field."""
+    window = StudioWindow()
+    window.gc_window_spin.setValue(50)
+    window.gc_window_min_spin.setValue(0.25)
+    window.gc_window_max_spin.setValue(0.65)
+    window.enzyme_sites_edit.setText("GANTC, CCWGG")
+    window.weight_spins["gc_weight"].setValue(2.5)
+    window.weight_spins["ramp_weight"].setValue(0.75)
+    window.tandem_copies_spin.setValue(4)
+    window.inverted_loop_spin.setValue(3)
+    window.rc_check.setChecked(False)
+    window.gc_min_spin.setValue(100)
+    window.gc_max_spin.setValue(200)
+    window.dinuc_combo.setCurrentIndex(1)  # CpG
+    window.dinuc_min_spin.setValue(2)
+    window.dinuc_max_spin.setValue(9)
+
+    config, _steps = window._build_config(())
+
+    assert config.gc_window_nt == 50
+    assert (config.gc_window_min, config.gc_window_max) == (0.25, 0.65)
+    assert config.restriction_extra_sites == ("GANTC", "CCWGG")
+    assert config.gc_weight == 2.5
+    assert config.ramp_weight == 0.75
+    assert config.tandem_copies == 4
+    assert config.inverted_loop == 3
+    assert config.avoid_reverse_complement is False
+    assert (config.gc_min, config.gc_max) == (100, 200)
+    assert config.dinuc_budget == "CG"
+    assert (config.dinuc_min, config.dinuc_max) == (2, 9)
+
+
+def test_budget_controls_are_off_at_their_special_value() -> None:
+    """The 'off' sentinel must mean None, not a literal -1 budget."""
+    window = StudioWindow()
+    config, _steps = window._build_config(())
+    assert config.gc_min is None
+    assert config.gc_max is None
+    assert config.dinuc_budget is None
+    assert config.dinuc_min is None
+    assert config.dinuc_max is None
+
+
+def test_codon_pair_weight_can_be_negative() -> None:
+    """Codon-pair DE-optimization (attenuated-vaccine design) must be reachable."""
+    window = StudioWindow()
+    spin = window.weight_spins["cpb_weight"]
+    assert spin.minimum() < 0, "a negative codon-pair weight must be selectable"
+
+
+def test_choosing_a_preset_fills_the_visible_controls() -> None:
+    """A preset writes into the controls so the user can see and edit what it did."""
+    window = StudioWindow()
+    keys = [window.preset_combo.itemData(i) for i in range(window.preset_combo.count())]
+    index = keys.index("aav_transgene")
+    window.preset_combo.setCurrentIndex(index)
+    window._on_preset_chosen(index)
+
+    assert window.gc_window_spin.value() == 50
+    assert window.repeat_spin.value() == 20
+    assert window.cpg_combo.currentText() == "deplete"
+    assert window.splice_check.isChecked()
+    assert window.uorf_check.isChecked()
+
+    config, _steps = window._build_config(())
+    assert config.application_preset == "aav_transgene"
+    assert config.cpg_mode == "deplete"
+    assert config.cpg_weight > 0
+
+
+def test_a_user_edit_after_a_preset_wins() -> None:
+    """A preset is a starting point, never a cage."""
+    window = StudioWindow()
+    keys = [window.preset_combo.itemData(i) for i in range(window.preset_combo.count())]
+    index = keys.index("synthesis")
+    window.preset_combo.setCurrentIndex(index)
+    window._on_preset_chosen(index)
+    window.homo_spin.setValue(4)  # the preset had set 6
+
+    config, _steps = window._build_config(())
+    assert config.max_homopolymer == 4
+
+
+def test_choosing_none_preset_changes_nothing() -> None:
+    window = StudioWindow()
+    window.homo_spin.setValue(9)
+    window._on_preset_chosen(0)  # the "(none)" entry
+    assert window.homo_spin.value() == 9
+
+
+def test_open_protein_fasta_loads_the_first_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Paste-only input was a named gap; a multi-record file says what it loaded."""
+    fasta = tmp_path / "p.fasta"
+    fasta.write_text(">myprot description\nMAALKHETQWY\n>second\nMKV\n")
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(fasta), "")),
+    )
+    window = StudioWindow()
+    window._open_protein()
+    assert window.protein_edit.toPlainText() == "MAALKHETQWY"
+    assert window.jobname_edit.text() == "myprot"
+    assert "first of 2 records" in window.statusBar().currentMessage()
+
+
+def test_validate_panel_reports_violations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """api.validate had no UI at all; this is the surface for an existing CDS."""
+    monkeypatch.setattr(
+        QtWidgets.QInputDialog,
+        "getMultiLineText",
+        staticmethod(lambda *a, **k: ("GGGGGGGGGGAAAA", True)),
+    )
+    seen: dict[str, str] = {}
+
+    class _Box(QtWidgets.QMessageBox):
+        def exec(self) -> int:
+            seen["text"] = self.text()
+            seen["detail"] = self.detailedText()
+            return 0
+
+    monkeypatch.setattr(QtWidgets, "QMessageBox", _Box)
+    window = StudioWindow()
+    window.homo_spin.setValue(4)
+    window._validate_sequence()
+    assert "NOT feasible" in seen["text"]
+    assert "homopolymer" in seen["detail"]
+
+
+def test_tracks_plot_includes_the_splice_track_and_labels_calibration() -> None:
+    """The splice risk track was missing entirely; it must arrive labelled."""
+    window = StudioWindow()
+    result = api.optimize("MAALKHETQWYCDEFGHIKLM", api.OptimizeConfig(max_homopolymer=None))
+    window._render_tracks(result)
+    title = window.tracks_plot.plotItem.titleLabel.text
+    assert "splice" in title
+    # The shipped baseline is not calibrated, so the plot must say so.
+    assert "UNCALIBRATED" in title
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2/3: construct context in the app.
+# --------------------------------------------------------------------------- #
+
+
+def test_no_construct_context_by_default() -> None:
+    """An empty context box must mean None, so a plain run is unchanged."""
+    window = StudioWindow()
+    config, _steps = window._build_config(())
+    assert config.context is None
+    assert config.context_provenance == "omit"
+
+
+def test_construct_context_reaches_the_engine_and_changes_the_design() -> None:
+    """The headline capability, driven from the app exactly as a user would."""
+    window = StudioWindow()
+    window.ctx_upstream_edit.setPlainText("ggcacca")
+    window.ctx_downstream_edit.setPlainText("AAATTT")
+    window.motifs_edit.setText("CCAGTG")
+    window.rc_check.setChecked(False)
+    window.homo_spin.setValue(0)
+
+    config, _steps = window._build_config(())
+    assert config.context is not None
+    assert config.context.upstream == "GGCACCA"
+    assert config.context.downstream == "AAATTT"
+
+    result = api.optimize("VK", config)
+    construct = config.context.assemble(result.dna)
+    # The forbidden motif exists only across the junction, so avoiding it is proof
+    # the design saw the flank.
+    assert "CCAGTG" not in construct
+
+
+def test_context_provenance_policy_is_selectable() -> None:
+    window = StudioWindow()
+    window.ctx_upstream_edit.setPlainText("GGCACCA")
+    window.context_prov_combo.setCurrentIndex(1)
+    config, _steps = window._build_config(())
+    assert config.context_provenance == "hash"
+
+
+def test_the_construct_context_box_is_not_the_ribonn_utr_box() -> None:
+    """Two different 'UTR' inputs coexist; they must not be the same widget.
+
+    The RiboNN boxes are model context (they annotate a score); the Design-panel
+    boxes make the DESIGN construct-aware. Wiring one to the other would silently
+    make a user's backbone change an expression annotation and nothing else.
+    """
+    window = StudioWindow()
+    assert window.ctx_upstream_edit is not window.utr5_edit
+    assert window.ctx_downstream_edit is not window.utr3_edit
+    # The RiboNN tooltip points at the other box so the distinction is discoverable.
+    assert "5' context" in window.utr5_edit.toolTip()
