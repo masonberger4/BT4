@@ -8,6 +8,55 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **The expression gate can now judge a CDS-variant panel honestly: `within_group`,
+  `recalibrate`, a cluster-bootstrap CI, and a vacuity check.** As written the gate
+  could hand out a **false pass**, and each addition closes one way that happens.
+  Defaults are unchanged, so every previous call behaves exactly as before.
+  - **`within_group=True` -- the strict bar.** Pooled scoring computes one Spearman over
+    the whole test fold; when the groups are proteins that fold mixes proteins with
+    wildly different baselines, so a head that knows nothing about codons but recognises
+    "this is a highly-expressed gene" scores well. That is precisely what training
+    across natural genes teaches and precisely what BT4 cannot use. Within-group mode
+    centres predictions and measurements inside each group and aggregates a per-group
+    Spearman **unweighted across groups** (ProteinGym's aggregation), so a protein with
+    30 variants cannot outvote one with 4. A regression test pins the defect: a
+    gene-identity-only head **passes pooled and fails within-group**.
+  - **`recalibrate=True` -- the fitted link.** A head whose output is in arbitrary units
+    (RiboNN reports a CLR compositional residual) cannot be compared to an assay's units
+    by subtraction. The affine link `measured ≈ slope × predicted + intercept` is fitted
+    on the **calibration fold only** -- fitting it on the fold that is then conformalized
+    would break the independence split conformal requires. `link_slope_spread` (the link
+    refitted inside each calibration group) is reported *instead of* a calibration slope,
+    which is 1.0 by construction once fitted and would be a circular pass.
+  - **The rank metric stays on the head's *raw* predictions, deliberately.** Rank
+    correlation needs no link, and it must describe what BT4 would really do: BT4 ranks
+    candidates by the raw score and never applies a fitted link at design time. Scoring
+    linked predictions would let a head that ranks **backwards** be rescued by a negative
+    fitted slope and reported as passing, while a deployed BT4 handed the user the worst
+    candidate. Pearson, R², the conformal residuals and the interval width *do* use the
+    link, because they live on the measurement scale.
+  - **`width_over_iqr` -- the vacuity check.** Split conformal is valid for *any* score
+    function, so a **constant predictor achieves exactly valid coverage** with a useless
+    interval. Median interval width over the label IQR is the number that exposes it, and
+    a test pins that such a predictor is caught on both the rank and the width axis.
+  - **A cluster-bootstrap CI on the primary metric**, resampling **whole groups** --
+    variants of one protein are a dependent cluster, and resampling individual cases
+    would treat 30 variants as 30 independent observations and produce a CI far too
+    narrow. Seeded and deterministic (invariant #7); reports `nan` with
+    `bootstrap_resamples=0` rather than a CI computed from too little.
+  - **`coverage_conditional_on_group_anchor`.** In within-group mode the target is a
+    variant's offset from its protein's own baseline, so the interval is only achievable
+    at design time when a member of that protein has already been measured to anchor it
+    -- BT4's `delta_logte` framing, but a **narrower claim** than an unconditional
+    interval, so it is stamped as one rather than quietly conflated.
+  - Also reported: `per_group_spearman`, `n_groups_test`, and `n_groups_ranked` -- the
+    last being the effective sample size for a cross-group claim, which is the number of
+    *proteins*, never the number of rows.
+  - **`run_expression_gate` now uses `score_many`** where the backend offers it. Scoring
+    a panel row-by-row through RiboNN would multiply the wall clock by the row count and
+    re-hash 90 weight files each time.
+  - New shared estimators in `bt4.biomodels._stats`: `linear_fit` (least squares, with
+    the honest intercept-only answer when the predictor has no variance) and `iqr`.
 - **`scripts/ribonn_sensitivity.py` -- the zero-data checks that decide whether a
   RiboNN calibration panel is worth acquiring at all.** Four checks, no measured data
   required, driven entirely from a RiboNN checkout plus sequences already in this

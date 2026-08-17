@@ -19,6 +19,8 @@ from collections.abc import Sequence
 __all__ = [
     "conformal_quantile",
     "empirical_coverage",
+    "iqr",
+    "linear_fit",
     "pearson",
     "r2_score",
     "spearman",
@@ -110,6 +112,70 @@ def r2_score(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
     if ss_tot == 0.0:
         return 0.0
     return 1.0 - ss_res / ss_tot
+
+
+def linear_fit(x: Sequence[float], y: Sequence[float]) -> tuple[float, float]:
+    """Return the least-squares ``(slope, intercept)`` of ``y`` on ``x``.
+
+    Used to fit the **link** between a model's arbitrary-unit output and an assay's
+    units, on a held-out fold, before residuals mean anything: a rank-correct
+    predictor on the wrong scale has huge raw residuals that say nothing about its
+    quality (:mod:`bt4.biomodels.expression.gate`).
+
+    Returns:
+        ``(slope, intercept)``. When ``x`` has zero variance no slope is identifiable,
+        and the honest answer is the intercept-only fit ``(0.0, mean(y))`` -- the same
+        convention as the correlation functions returning ``0.0`` for "nothing
+        detectable" rather than raising or returning ``nan``.
+
+    Raises:
+        ValueError: If the series differ in length or are shorter than 2.
+    """
+    if len(x) != len(y):
+        raise ValueError(f"series differ in length: {len(x)} vs {len(y)}")
+    n = len(x)
+    if n < 2:
+        raise ValueError("linear_fit needs at least two points")
+    mean_x = math.fsum(x) / n
+    mean_y = math.fsum(y) / n
+    dx = [xi - mean_x for xi in x]
+    cov = math.fsum(a * (yi - mean_y) for a, yi in zip(dx, y, strict=True))
+    var_x = math.fsum(a * a for a in dx)
+    if var_x == 0.0:
+        return 0.0, mean_y
+    slope = cov / var_x
+    return slope, mean_y - slope * mean_x
+
+
+def iqr(values: Sequence[float]) -> float:
+    """Return the interquartile range of ``values`` (linear-interpolated quartiles).
+
+    The scale a conformal interval must be judged against: an interval is only useful
+    if it is narrow *relative to the spread of the labels*. Coverage alone cannot say
+    that -- a constant predictor achieves exactly valid coverage with a uselessly wide
+    interval -- so the gate reports median interval width divided by this.
+
+    Returns:
+        ``Q3 - Q1``, or ``0.0`` for fewer than two values.
+
+    Raises:
+        ValueError: If ``values`` is empty.
+    """
+    n = len(values)
+    if n < 1:
+        raise ValueError("iqr needs at least one value")
+    if n < 2:
+        return 0.0
+    ordered = sorted(values)
+
+    def _quantile(q: float) -> float:
+        position = q * (n - 1)
+        low = math.floor(position)
+        high = min(low + 1, n - 1)
+        weight = position - low
+        return ordered[low] * (1.0 - weight) + ordered[high] * weight
+
+    return _quantile(0.75) - _quantile(0.25)
 
 
 def conformal_quantile(scores: Sequence[float], coverage: float) -> float:
