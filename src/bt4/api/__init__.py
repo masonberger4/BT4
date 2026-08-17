@@ -24,7 +24,13 @@ from bt4.biomodels.codon.tables import (
     load_provenance,
 )
 from bt4.biomodels.codon.tai import available_tai_organisms
-from bt4.biomodels.expression import ExpressionPredictor, ExpressionResult
+from bt4.biomodels.expression import (
+    ExpressionPanel,
+    ExpressionPredictor,
+    ExpressionResult,
+    PanelRow,
+    read_panel,
+)
 from bt4.biomodels.expression import available_backends as available_expression_backends
 from bt4.biomodels.expression import default as expression_model
 from bt4.biomodels.expression import resolve_backend as resolve_expression_backend
@@ -69,6 +75,8 @@ from bt4.pipeline import (
     CrossCheckSite,
     EnzymeOccurrence,
     FrontierResult,
+    GateComparison,
+    GateSettings,
     InfeasibleError,
     LibraryResult,
     OptimizeConfig,
@@ -95,6 +103,9 @@ from bt4.pipeline import (
     run_validate,
     summarize,
 )
+from bt4.pipeline import (
+    run_panel_gate as expression_gate,
+)
 
 __all__ = [
     "AMINO_ACIDS",
@@ -110,16 +121,20 @@ __all__ = [
     "ConstructContext",
     "CrossCheckSite",
     "EnzymeOccurrence",
+    "ExpressionPanel",
     "ExpressionPredictor",
     "ExpressionResult",
     "ForbiddenPreset",
     "FrontierResult",
+    "GateComparison",
+    "GateSettings",
     "GenBankFeature",
     "GenBankRecord",
     "InfeasibleError",
     "LibraryResult",
     "OptimizeConfig",
     "PackagingReport",
+    "PanelRow",
     "Result",
     "Severity",
     "SpliceAuditReport",
@@ -149,6 +164,7 @@ __all__ = [
     "default_reference_set",
     "enzyme_provenance",
     "enzyme_suggestions",
+    "expression_gate",
     "expression_model",
     "frontier",
     "library",
@@ -159,6 +175,7 @@ __all__ = [
     "parse_genbank",
     "read_fasta",
     "read_genbank",
+    "read_panel",
     "rerank_by_expression",
     "resolve_enzyme",
     "resolve_expression_backend",

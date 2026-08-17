@@ -8,6 +8,34 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **The gate is now a supported surface, not a snippet: `bt4.pipeline.expression_gate`,
+  `api.expression_gate`, `bt4 expression-gate PANEL.tsv`, and
+  `scripts/run_expression_gate.py`.** The orchestration lives in `pipeline/` (per §3, so
+  the CLI reaches it through `api` without crossing a layer) and the script and the CLI
+  both render the same `GateComparison` -- they cannot drift about what a result means.
+  - **Every run is scored against five permanent baselines**: `permutation` (the null --
+    the head's own predictions against a deterministic shuffle), `cai`, `gc3`, `length`,
+    and `constant`. The reason they are not optional: a within-protein Spearman of 0.3
+    is worthless if plain CAI scores 0.35, because BT4 already computes CAI *inside* the
+    optimizer loop and for free. `constant` is there because split conformal is valid for
+    any score function, so a predictor with no information achieves exactly valid
+    coverage -- its "pass" belongs in the same table rather than being a trap the reader
+    has to remember.
+  - **`promotable` requires three things at once** and reports each separately, so a
+    failure says which one failed: the gate's own thresholds, the head's bootstrap CI
+    lower bound above *every* baseline's estimate, and an interval narrower than the
+    label IQR.
+  - **One backend invocation per UTR context, not per row.** A predictor carries its
+    fixed UTRs on the model, so a panel spanning transcripts genuinely needs one
+    predictor each -- and no more; each bucket is scored in a single batched call, and
+    panel order is restored afterwards so a measurement can never be paired with another
+    sequence's score.
+  - Pooled mode still works (it is a useful contrast) but **warns on stderr** that it
+    credits between-protein skill and is not the regime BT4 deploys in.
+  - The report carries the panel's `content_hash`, the settings, and an explicit honesty
+    note: nothing here flips a flag, `promotable` means "the pre-registered conditions
+    held on this panel", and `min_spearman` is a pre-commitment rather than a community
+    standard -- no such standard exists.
 - **A measured CDS-variant panel format and a strict reader**
   (`bt4.biomodels.expression.panel`). The gate consumes in-memory triples, which is
   right for the gate and no help to a maintainer turning a published supplementary table
