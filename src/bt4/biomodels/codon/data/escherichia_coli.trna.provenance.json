@@ -1,0 +1,16 @@
+{
+  "build": "tRNAscan-SE predictions from the pinned GtRNAdb FASTA; genes counted per anticodon. Excluded: SeC, Sup, Und, Undet. Rebuild with scripts/build_trna_tables.py --organism escherichia_coli (--verify diffs against the committed bytes).",
+  "dropped": {
+    "SeC": 1,
+    "Und": 2
+  },
+  "genome": "Escherichia coli K-12 MG1655 (U00096.3); chromosomal, no plasmid",
+  "note": "89 predictions minus 1 SeC (selenocysteine) and 2 undetermined = 86 tRNA genes, matching the standard count for K-12 MG1655. Initiator fMet, elongator Met and the lysidine-modified tRNA-Ile2 all carry the anticodon CAT and are counted together under that key -- Ile2's reading of AUA is applied by the tAI model's prokaryotic (sking=1) term, which the dos Reis reference implements as a constant independent of copy number, so no information is lost by the merge. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant.",
+  "retrieved": "2026-08-17",
+  "sha256": "be85c13c97cbb07e74942fd6a6d8cf066995db65a07038fd342fa86e93b14f69",
+  "source": "GtRNAdb (UCSC Lowe Lab), escherichia_coli tRNA gene set",
+  "source_sha256": "bd31c3b159caea4e5526a51824f15d5595da34cc2ef5421a2f1967edb253a8df",
+  "source_url": "https://gtrnadb.ucsc.edu/genomes/bacteria/Esch_coli_K_12_MG1655/eschColi_K_12_MG1655-tRNAs.fa",
+  "super_kingdom": "bacteria",
+  "total_genes": 86
+}
