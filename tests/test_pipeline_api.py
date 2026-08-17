@@ -7,12 +7,15 @@ stop-codon feasibility (#8), and determinism (#7).
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from bt4 import api
 from bt4.biomodels.codon.tables import load_table
+from bt4.constraints.iupac import reverse_complement_iupac as reverse_complement
 from bt4.domain import gc_fraction
 from bt4.domain.genetic_code import AMINO_ACIDS, translate
 
@@ -449,3 +452,50 @@ def test_frontier_infeasible_names_culprit() -> None:
             ),
         )
     assert "forbidden_motif" in exc_info.value.constraints
+
+
+# --- The IUPAC extra-sites escape hatch (a degenerate site the catalog lacks) ---
+
+
+def test_restriction_extra_sites_bans_a_degenerate_site() -> None:
+    # `forbidden_motifs` takes only literal ACGT, so a degenerate recognition site
+    # can only be expressed through restriction_extra_sites. Before it was wired,
+    # the tool's own advice ("ban the site directly") could not be followed.
+    config = api.OptimizeConfig(
+        restriction_extra_sites=("GANTC",), max_homopolymer=None
+    )
+    result = api.optimize(_RICH, config)
+    assert result.metrics.hard_violations == 0
+    assert re.search("GA.TC", result.dna) is None
+    assert re.search("GA.TC", reverse_complement(result.dna)) is None
+
+
+def test_restriction_extra_sites_surface_in_validation() -> None:
+    report = api.validate(
+        "AAAGACTCAAA",
+        api.OptimizeConfig(restriction_extra_sites=("GANTC",), max_homopolymer=None),
+    )
+    assert not report.is_feasible
+    assert any(v.constraint == "restriction_site" for v in report.violations)
+
+
+def test_forbidden_motifs_still_refuses_iupac() -> None:
+    # The escape hatch exists precisely because this refusal is correct and stays.
+    with pytest.raises(ValueError):
+        api.optimize("MA", api.OptimizeConfig(forbidden_motifs=("GANTC",)))
+
+
+def test_new_constraint_fields_change_the_manifest() -> None:
+    # Invariant #9: a config that changes the constraint set must not stamp the
+    # same provenance as one that does not.
+    base = api.optimize("MAALKHETQWY", api.OptimizeConfig(max_homopolymer=None))
+    with_sites = api.optimize(
+        "MAALKHETQWY",
+        api.OptimizeConfig(max_homopolymer=None, restriction_extra_sites=("GANTC",)),
+    )
+    with_window = api.optimize(
+        "MAALKHETQWY",
+        api.OptimizeConfig(max_homopolymer=None, gc_window_nt=30, gc_window_max=0.6),
+    )
+    assert base.audit["manifest"] != with_sites.audit["manifest"]
+    assert base.audit["manifest"] != with_window.audit["manifest"]

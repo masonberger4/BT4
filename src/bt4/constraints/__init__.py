@@ -14,6 +14,7 @@ from bt4.constraints.forbidden import (
     resolve_forbidden_motifs,
 )
 from bt4.constraints.gc_run import GcRunConstraint
+from bt4.constraints.gc_window import GcWindowConstraint
 from bt4.constraints.kozak import InternalStartConstraint
 from bt4.constraints.max_repeat import MaxRepeatConstraint
 from bt4.constraints.repeats import InvertedRepeatConstraint, TandemRepeatConstraint
@@ -41,6 +42,7 @@ __all__ = [
     "ForbiddenMotifConstraint",
     "ForbiddenPreset",
     "GcRunConstraint",
+    "GcWindowConstraint",
     "HomopolymerConstraint",
     "InternalStartConstraint",
     "InvertedRepeatConstraint",
