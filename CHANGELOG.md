@@ -8,6 +8,45 @@ its first tagged release.
 ## [Unreleased]
 
 ### Changed
+- **The RiboNN adapter now forwards `batch_size` and `num_workers`, and a claim that
+  it could not has been corrected in three places.** `ribonn.py`'s own comment,
+  `CLAUDE.md` and `docs/DESIGN_expression_splice_flow.md` all stated that
+  `predict_using_nested_cross_validation_models` "exposes no worker-count parameter"
+  and that a `num_workers=0` path was therefore deliberately left out. Verified
+  against upstream `src/predict.py`, that is **wrong**: the signature is
+  `(input_path, species, run_df, top_k_models_to_use=5, batch_size=1024,
+  num_workers=4)`. `RiboNNExpressionModel` gains both as validated fields
+  (`batch_size=64`, `num_workers=0`), threaded through `resolve_backend` and into both
+  `predict` call sites.
+  - **Neither knob can change a score,** which is why lowering the defaults is safe
+    rather than a silent behaviour change: RiboNN pads every transcript to a *fixed*
+    width (`max_utr5_len + max_cds_utr3_len` = 13318, set in `predict.py`), not to a
+    batch's longest member, and `RiboNNDataModule.make_dataloader` sets
+    `shuffle=False` for every non-training stage (`reorder = stage == "train"`), so
+    batch composition affects neither the one-hot encoding nor row order. They are
+    memory and throughput only.
+  - **`num_workers=0` is a correctness requirement, not tuning.** The adapter scores
+    from a mutated `sys.path` and a temporary working directory
+    (`_run_predict_with_models_layout`), neither of which a *spawned* worker inherits
+    -- so `num_workers>0` hangs or fails wherever the multiprocessing start method is
+    spawn (Windows, macOS). RiboNN also rebuilds the predict dataloader once per
+    ensemble member (`top_k` x folds, up to 50 times), paying the spawn cost each
+    time.
+  - **`batch_size=1024` OOMs an ordinary CPU box** -- 1024 fixed-width
+    `(channels, 13318)` float32 tensors at once, before worker prefetch.
+  - `calibrated` is untouched and remains `False` for every configuration; a knob is
+    not a gate (CLAUDE.md §10.6). New tests pin the passthrough, the validation, the
+    defaults, and that the helper restores the working directory even when the
+    upstream call raises.
+- **`docs/NEXT_SESSION.md`'s RiboNN environment notes gain three upstream findings**:
+  the licence is an *affiliation* grant ("any person from academic research or
+  non-profit organizations"), not merely a non-commercial one; `max_shift` in the
+  shipped `runs.csv` MLflow params is a determinism hazard because
+  `_stochastic_shift` is not gated on `self.training` and uses an unseeded
+  `torch.randint`; and native Windows is viable but unsupported upstream (no `make`
+  needed, weights folder must be named `models`, `torch.load` is called with no
+  `map_location`). `setuptools<81` corrected to `<82`, and the weights-extraction
+  target clarified (`-C models`, since the zip root holds `human/` and `mouse/`).
 - **Two load-bearing claims in the docs did not survive a fact-checking sweep, and
   are corrected everywhere they appeared.** A six-lens literature review (joint
   codon+structure design, 5'UTR-aware expression models, vector/AAV/LVV sequence

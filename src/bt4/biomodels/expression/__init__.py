@@ -112,6 +112,8 @@ def resolve_backend(
     utr5: str = "",
     utr3: str = "",
     top_k: int = 5,
+    batch_size: int = 64,
+    num_workers: int = 0,
 ) -> ExpressionPredictor:
     """Construct an expression backend by name (the mirror of the splice resolver).
 
@@ -125,6 +127,13 @@ def resolve_backend(
             column as NaN, and the UTRs carry most of its signal).
         utr3: Fixed 3' UTR context, as ``utr5``.
         top_k: Number of RiboNN cross-validation runs to ensemble.
+        batch_size: RiboNN inference batch size (memory/speed only -- it cannot
+            change a score, since RiboNN pads to a fixed width and does not shuffle
+            when predicting). Defaults below RiboNN's own 1024, which OOMs a CPU box.
+        num_workers: RiboNN dataloader worker count. Defaults to ``0``, which is
+            required wherever the multiprocessing start method is *spawn* (Windows,
+            macOS) because the adapter scores from a mutated ``sys.path`` and a
+            temporary working directory that a spawned worker does not inherit.
 
     Returns:
         An :class:`ExpressionPredictor`. Constructing a RiboNN backend does not
@@ -142,6 +151,11 @@ def resolve_backend(
         )
     if key == "ribonn":
         return RiboNNExpressionModel(
-            species=species, top_k=top_k, utr5=utr5, utr3=utr3
+            species=species,
+            top_k=top_k,
+            utr5=utr5,
+            utr3=utr3,
+            batch_size=batch_size,
+            num_workers=num_workers,
         )
     return NullExpressionModel()

@@ -131,8 +131,10 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
 - **Cache by `(sequence, model-version)` hash:** reruns and overlapping designs
   are free and fit BT4's provenance model.
 - **Background thread + `num_workers=0`:** BT4 Studio already runs engine work on
-  a `QThread`; `num_workers=0` removes most of RiboNN's Windows worker-spawn
-  overhead for small batches.
+  a `QThread`; `num_workers=0` is now the adapter default and is **required**, not
+  merely faster, wherever the multiprocessing start method is *spawn* (Windows,
+  macOS) -- a spawned worker re-imports without the adapter's mutated `sys.path` or
+  its temporary working directory.
 
 ## Honest caveats (must survive into the UI and exports)
 
@@ -157,9 +159,12 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
    `RiboNNExpressionModel.score_many` / `.delta_logte_many` reuse the batched
    `_predict_te` path; `delta_logte_many` scores the shared reference once;
    `score_sequence` / `delta_logte` delegate to them; `calibrated` stays `False`.
-   The optional `num_workers=0` path was left out (RiboNN's predict entry point
-   exposes no worker-count parameter; batching already amortizes the one-time
-   worker spawn).
+   **Correction (2026-08):** the earlier claim that RiboNN's predict entry point
+   "exposes no worker-count parameter" was wrong. It takes `batch_size` (default
+   1024) and `num_workers` (default 4); the adapter now forwards both, defaulting to
+   `batch_size=64` / `num_workers=0`. Neither changes a score (fixed-width padding,
+   `shuffle=False` when predicting) and both upstream defaults are hostile here --
+   see CLAUDE.md §9 Phase 3 for the full reasoning.
 2. **Strong splice-consensus motif constraint** — a LOCAL constraint (new file +
    registry entry + `ok_suffix⇔validate` test), donor/acceptor consensus only,
    honestly labeled a heuristic. Wired through config/CLI/app. ✅ **Landed** —

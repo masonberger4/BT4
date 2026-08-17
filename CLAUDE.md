@@ -998,10 +998,22 @@ control.
   RiboNN's large fixed *per-invocation* overhead so scoring a frontier costs roughly
   one call rather than N; `delta_logte_many` scores the shared reference **once**;
   both keep the per-input validation and the `tx_id` realignment and return results
-  in input order, and `score_sequence`/`delta_logte` now delegate to them. A
-  `num_workers=0` path was investigated and left out (RiboNN's predict entry point
-  exposes no worker-count parameter, and batching already amortizes the one-time
-  worker spawn); `calibrated` remains `False` (no calibration claim).
+  in input order, and `score_sequence`/`delta_logte` now delegate to them.
+  **Correction (2026-08, verified against upstream):** an earlier note here claimed
+  RiboNN's predict entry point "exposes no worker-count parameter" and that a
+  `num_workers=0` path was therefore left out. That was **wrong** --
+  `predict_using_nested_cross_validation_models` takes both `batch_size` (default
+  1024) and `num_workers` (default 4). The adapter now **forwards both**, defaulting
+  to `batch_size=64` / `num_workers=0`, and neither can change a score: RiboNN pads
+  every transcript to a *fixed* width (`max_utr5_len + max_cds_utr3_len` = 13318),
+  not to a batch's longest member, and builds its predict dataloader with
+  `shuffle=False`. The defaults are a **correctness requirement, not tuning**: the
+  adapter scores from a mutated `sys.path` and a temporary working directory, which a
+  *spawned* worker (Windows, macOS) does not inherit -- so `num_workers>0` hangs or
+  fails there, and RiboNN rebuilds the dataloader once per ensemble member (up to 50
+  times), paying the spawn cost every time; `batch_size=1024` allocates 1024
+  fixed-width `(channels, 13318)` float32 tensors at once and OOMs an ordinary CPU
+  box. `calibrated` remains `False` (no calibration claim -- a knob is not a gate).
 - **tAI — landed (real data).** The deferred tAI item is now shipped honestly:
   `biomodels/codon/tai.py` builds relative adaptiveness from **real human tRNA
   gene copy numbers** (GtRNAdb hg38, 431 genes/47 anticodons, bundled with a

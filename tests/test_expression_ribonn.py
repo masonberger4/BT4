@@ -324,3 +324,105 @@ def test_reduce_te_preserves_input_order_over_scrambled_df() -> None:
     #   bt4_1: mean(20,20)=20, mean(22,18)=20 -> 20.0
     #   bt4_2: mean(30,30)=30, mean(32,28)=30 -> 30.0
     assert _reduce_te_by_tx_id(out_df, ["bt4_0", "bt4_1", "bt4_2"]) == [10.0, 20.0, 30.0]
+
+
+# --- batch_size / num_workers passthrough -------------------------------------
+#
+# RiboNN's predict_using_nested_cross_validation_models exposes batch_size (its
+# default 1024) and num_workers (its default 4). BT4 forwards both and defaults
+# them down, because both upstream defaults are hostile in this adapter:
+# num_workers>0 spawns workers that re-import without the mutated sys.path or the
+# temporary cwd this adapter scores from (so they hang or fail wherever the start
+# method is spawn -- Windows, macOS), and batch_size=1024 allocates 1024
+# fixed-width (channels, 13318) float32 tensors at once. Neither can change a
+# score: RiboNN pads to a fixed width, not to a batch's longest member, and its
+# predict dataloader is built with shuffle=False.
+
+
+def test_batch_knob_defaults_are_the_safe_ones() -> None:
+    model = RiboNNExpressionModel()
+    assert model.batch_size == 64  # below RiboNN's OOM-prone 1024
+    assert model.num_workers == 0  # required wherever the start method is spawn
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"batch_size": 0}, "batch_size must be >= 1"),
+        ({"batch_size": -1}, "batch_size must be >= 1"),
+        ({"num_workers": -1}, "num_workers must be >= 0"),
+    ],
+)
+def test_batch_knobs_are_validated(kwargs: dict[str, int], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        RiboNNExpressionModel(**kwargs)
+
+
+def test_predict_layout_forwards_batch_knobs(tmp_path: object) -> None:
+    # The load-bearing test for the Windows fix: whatever the adapter is configured
+    # with must actually reach RiboNN's predict call, not be silently dropped.
+    from pathlib import Path
+
+    from bt4.biomodels.expression.ribonn import _run_predict_with_models_layout
+
+    captured: dict[str, object] = {}
+
+    def fake_predict(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return "out"
+
+    # Named "models" so the no-symlink branch runs (symlinks need Developer Mode
+    # or an elevated prompt on Windows, which is exactly what we must not require).
+    weights = Path(str(tmp_path)) / "models"
+    (weights / "human").mkdir(parents=True)
+
+    result = _run_predict_with_models_layout(
+        fake_predict,
+        weights,
+        "in.tsv",
+        "human",
+        run_df="RUNS",
+        top_k=3,
+        batch_size=8,
+        num_workers=0,
+    )
+
+    assert result == "out"
+    assert captured["batch_size"] == 8
+    assert captured["num_workers"] == 0
+    assert captured["top_k_models_to_use"] == 3
+    assert captured["species"] == "human"
+
+
+def test_predict_layout_restores_cwd_even_on_failure(tmp_path: object) -> None:
+    # The helper chdirs into the weights parent; a raising predict must not leave
+    # the process in a different directory (it would break every later relative path).
+    import os
+    from pathlib import Path
+
+    from bt4.biomodels.expression.ribonn import _run_predict_with_models_layout
+
+    weights = Path(str(tmp_path)) / "models"
+    (weights / "human").mkdir(parents=True)
+    before = os.getcwd()
+
+    def boom(**_: object) -> None:
+        raise RuntimeError("upstream failed")
+
+    with pytest.raises(RuntimeError, match="upstream failed"):
+        _run_predict_with_models_layout(
+            boom, weights, "in.tsv", "human", run_df=None, top_k=1,
+            batch_size=1, num_workers=0,
+        )
+    assert os.getcwd() == before
+
+
+def test_resolve_backend_threads_batch_knobs() -> None:
+    from bt4.biomodels.expression import resolve_backend
+
+    model = resolve_backend(
+        "ribonn", utr5="GCCACC", utr3="GCTAAT", batch_size=16, num_workers=2
+    )
+    assert isinstance(model, RiboNNExpressionModel)
+    assert (model.batch_size, model.num_workers) == (16, 2)
+    assert model.calibrated is False  # a knob is not a calibration claim

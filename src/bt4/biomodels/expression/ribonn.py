@@ -137,6 +137,26 @@ class RiboNNExpressionModel:
         weights_dir: Directory holding ``<species>/<run_id>/state_dict.pth`` and
             ``<species>/runs.csv``. ``None`` resolves from ``$BT4_RIBONN_WEIGHTS``
             then ``<repo_dir>/models``.
+        batch_size: Inference batch size handed to RiboNN's ``predict`` (its own
+            default is 1024). **Purely a memory/speed knob -- it cannot change a
+            score.** RiboNN pads every transcript to a *fixed* width
+            (``max_utr5_len + max_cds_utr3_len`` = 13318), not to the longest member
+            of a batch, and its predict dataloader is built with ``shuffle=False``,
+            so batch composition affects neither the encoding nor the row order.
+            BT4 defaults to 64 because a 1024-row batch of
+            ``(channels, 13318)`` float32 tensors is hundreds of MB *per batch*
+            before worker prefetch, which OOMs an ordinary CPU box. Raise it on a
+            GPU.
+        num_workers: DataLoader worker processes handed to RiboNN's ``predict``
+            (its own default is 4). BT4 defaults to **0**, which is a correctness
+            requirement rather than a tuning choice: this adapter scores from a
+            mutated ``sys.path`` and a temporary working directory (see
+            :func:`_run_predict_with_models_layout`), and on any platform whose
+            multiprocessing start method is *spawn* (Windows, macOS) each worker
+            re-imports the module and does not inherit either, so workers hang or
+            fail. RiboNN also rebuilds the dataloader once per ensemble member
+            (``top_k`` x folds = up to 50 times), paying the spawn cost every
+            time. Worker count never affects a score.
         fidelity_verified: Whether this instance passed the CDS-variant acceptance
             gate; mirrored by :attr:`calibrated`. ``False`` by default and in every
             shipped configuration.
@@ -148,6 +168,8 @@ class RiboNNExpressionModel:
     utr3: str = ""
     repo_dir: str | None = None
     weights_dir: str | None = None
+    batch_size: int = 64
+    num_workers: int = 0
     fidelity_verified: bool = field(default=False)
 
     def __post_init__(self) -> None:
@@ -155,6 +177,10 @@ class RiboNNExpressionModel:
             raise ValueError(f"species must be one of {_SPECIES}, got {self.species!r}")
         if self.top_k < 1:
             raise ValueError(f"top_k must be >= 1, got {self.top_k}")
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+        if self.num_workers < 0:
+            raise ValueError(f"num_workers must be >= 0, got {self.num_workers}")
 
     @property
     def name(self) -> str:
@@ -293,7 +319,14 @@ class RiboNNExpressionModel:
                 for tx_id, dna in zip(tx_ids, dnas, strict=True):
                     writer.writerow([tx_id, self.utr5, dna, self.utr3])
             out_df = _run_predict_with_models_layout(
-                predict, weights, str(in_path), self.species, run_df, self.top_k
+                predict,
+                weights,
+                str(in_path),
+                self.species,
+                run_df,
+                self.top_k,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
             )
 
         return _reduce_te_by_tx_id(out_df, tx_ids)
@@ -442,7 +475,15 @@ def _reduce_te_by_tx_id(out_df: Any, tx_ids: list[str]) -> list[float]:
 
 
 def _run_predict_with_models_layout(
-    predict: Any, weights_dir: Path, input_path: str, species: str, run_df: Any, top_k: int
+    predict: Any,
+    weights_dir: Path,
+    input_path: str,
+    species: str,
+    run_df: Any,
+    top_k: int,
+    *,
+    batch_size: int,
+    num_workers: int,
 ) -> Any:
     """Call RiboNN's predict fn with the ``models/<species>/...`` layout it hard-codes.
 
@@ -458,16 +499,24 @@ def _run_predict_with_models_layout(
         RuntimeError: If neither layout can be arranged (e.g. the platform refuses
             the symlink and the directory is not named ``models``).
     """
-    # num_workers note (design step 1, optional): RiboNN's DataLoader worker count
-    # is set inside the repo's own ``predict``/``data`` code, and
-    # ``predict_using_nested_cross_validation_models`` exposes no worker-count
-    # parameter, so the adapter cannot cleanly request ``num_workers=0`` from here
-    # without patching RiboNN internals -- which would violate the "wrap, never
-    # reimplement" contract this adapter is built on. It is therefore deliberately
-    # left out. Batching (``score_many`` / ``delta_logte_many``) already amortizes
-    # the dominant fixed overhead -- weight hashing + model load + the one-time
-    # worker spawn -- across the whole candidate set, which is the real win; the
-    # per-invocation worker spawn is paid once for the batch either way.
+    # ``predict_using_nested_cross_validation_models`` DOES expose ``batch_size``
+    # (default 1024) and ``num_workers`` (default 4) -- an earlier version of this
+    # comment asserted it did not, and that was wrong. Both are forwarded, because
+    # both upstream defaults are actively hostile here:
+    #
+    # * ``num_workers=4`` spawns dataloader workers that re-import the module. This
+    #   adapter has just mutated ``sys.path`` and is about to ``chdir`` into a
+    #   temporary directory, and a *spawned* worker (Windows, macOS) inherits
+    #   neither -- so the workers hang or fail. RiboNN also rebuilds the dataloader
+    #   once per ensemble member (up to 50 times), paying that cost every time.
+    # * ``batch_size=1024`` allocates 1024 fixed-width ``(channels, 13318)`` float32
+    #   tensors at once -- hundreds of MB per batch before prefetch -- which OOMs an
+    #   ordinary CPU box.
+    #
+    # Neither knob can change a score: RiboNN pads to a fixed width rather than to
+    # the longest member of a batch, and its predict dataloader is constructed with
+    # ``shuffle=False`` (``reorder = stage == "train"``), so batch composition
+    # affects neither encoding nor row order. They are memory/throughput only.
     import os as _os
     import tempfile
 
@@ -478,7 +527,8 @@ def _run_predict_with_models_layout(
             _os.chdir(run_root)
             return predict(
                 input_path=input_path, species=species, run_df=run_df,
-                top_k_models_to_use=top_k,
+                top_k_models_to_use=top_k, batch_size=batch_size,
+                num_workers=num_workers,
             )
         finally:
             _os.chdir(prev)
@@ -497,7 +547,8 @@ def _run_predict_with_models_layout(
             _os.chdir(tmp)
             return predict(
                 input_path=input_path, species=species, run_df=run_df,
-                top_k_models_to_use=top_k,
+                top_k_models_to_use=top_k, batch_size=batch_size,
+                num_workers=num_workers,
             )
         finally:
             _os.chdir(prev)
