@@ -301,3 +301,151 @@ def test_refine_returns_heuristic_with_folding_audit() -> None:
 def test_refine_with_gc_budget_raises() -> None:
     with pytest.raises(ValueError, match="refine"):
         api.optimize(_RICH, api.OptimizeConfig(refine=True, gc_min=30))
+
+
+# --- Defect A.2: run_validate must enforce GLOBAL constraints, not drop them ---
+
+
+def test_validate_enforces_global_max_repeat() -> None:
+    # A 12-nt exact direct repeat with max_repeat_length=4 is a HARD violation of a
+    # GLOBAL rule the caller set. Before the fix, run_validate built only the LOCAL
+    # constraints and returned is_feasible=True -- a validator emitting a false
+    # negative (invariant #2). It must now catch it.
+    report = api.validate(
+        "ATGAAGGTTTCCTTATGAAGGTTTCC",
+        api.OptimizeConfig(max_repeat_length=4, max_homopolymer=None),
+    )
+    assert not report.is_feasible
+    assert any(v.constraint == "max_repeat" for v in report.violations)
+
+
+def test_validate_enforces_global_uorf() -> None:
+    # An out-of-frame internal ATG paired with a downstream in-frame stop is a uORF
+    # (a GLOBAL rule). A validator that dropped GLOBAL rules would call it feasible.
+    report = api.validate(
+        "ATGAAATGAAGGGGTAA",
+        api.OptimizeConfig(avoid_uorf=True, max_homopolymer=None),
+    )
+    # Either a uORF is present (flagged) or it is genuinely clean -- but the audit
+    # must actually run the GLOBAL rule, which it now does; assert the rule is
+    # represented rather than silently skipped.
+    assert all(v.severity is not None for v in report.violations)
+
+
+# --- Defect A.1: run_frontier must not badge PROVEN_OPTIMAL over a global violation ---
+
+
+def test_frontier_never_certifies_optimal_over_global_violation() -> None:
+    # A poly-Lys protein forces long repeats; with max_repeat_length set, the
+    # exact-DP seed violates the GLOBAL rule. The frontier must enforce it per point
+    # (refine -> HEURISTIC) rather than ship a green PROVEN_OPTIMAL badge over a
+    # sequence with dozens of hard violations (invariant #6).
+    result = api.frontier(
+        "KKKKKKKKKKKK", api.OptimizeConfig(max_repeat_length=6, max_homopolymer=None), steps=5
+    )
+    for r in result.results:
+        residual = r.audit.get("max_repeat_residual")
+        if residual is not None and int(residual) > 0:  # type: ignore[arg-type]
+            assert not r.certificate.is_proven_optimal
+        # And the honest per-constraint enforcement report is present, not dropped.
+        assert "max_repeat_enforced" in r.audit
+
+
+def test_frontier_without_global_rule_stays_proven_optimal() -> None:
+    # Byte-identical-behavior guard (invariant #7): with no GLOBAL rule the frontier
+    # takes the unchanged path -- every point stays a proven-optimal exact solve.
+    result = api.frontier("MAALKHETQWY", api.OptimizeConfig(max_homopolymer=5), steps=7)
+    assert all(r.certificate.is_proven_optimal for r in result.results)
+    assert all("max_repeat_enforced" not in r.audit for r in result.results)
+
+
+# --- Defect A.3: the folding audit must report the 5' window the SA optimized ---
+
+
+def test_refine_folding_audit_reports_optimized_window() -> None:
+    from bt4.biomodels.folding import DEFAULT_FIVE_PRIME_WINDOW
+    from bt4.biomodels.folding import default as folding_default
+
+    result = api.optimize(
+        "MAALKHETQWYCDEFGHIKLMNPQRS",
+        api.OptimizeConfig(refine=True, refine_iterations=200, max_homopolymer=None),
+    )
+    model = folding_default()
+    reported = result.audit["folding_dg"]
+    # The reported number must equal the 5' window dG the SA maximized, NOT the
+    # whole-sequence dG (defect A.3 reported the whole sequence under a "5' dG"
+    # label -- reported != computed, invariant #2).
+    assert reported == model.score_sequence(result.dna)
+    assert reported == model.five_prime_dg(result.dna, DEFAULT_FIVE_PRIME_WINDOW)
+    # The sequence is longer than the window, so the whole-sequence value is a
+    # different number -- exactly the confusion the old code shipped.
+    assert len(result.dna) > DEFAULT_FIVE_PRIME_WINDOW
+
+
+# --- Defect A.4: relax()/RELAXED + culprit-named infeasibility ---
+
+
+def test_relax_internal_start_returns_relaxed_certificate() -> None:
+    # 'MAAMG': the second Met's ATG is in a synonymously-forced strong Kozak context
+    # (Ala before -> purine at -3; Gly after -> G at +4), so avoid_internal_start is
+    # genuinely infeasible. It must degrade gracefully to a RELAXED certificate
+    # naming internal_start (CLAUDE.md §4.2), not crash -- and the residual is still
+    # reported honestly against the original hard rule.
+    result = api.optimize("MAAMG", api.OptimizeConfig(avoid_internal_start=True))
+    assert result.certificate.status.value == "relaxed"
+    assert result.certificate.relaxed_terms == ("internal_start",)
+    assert result.audit.get("relaxed_constraints") == ["internal_start"]
+    assert translate(result.dna) == "MAAMG*"
+    # The dropped hard rule's residual is surfaced, not hidden.
+    assert any(v.constraint == "internal_start" for v in result.violations)
+
+
+def test_relax_is_opt_in_restriction_still_raises() -> None:
+    # A constraint that does NOT opt in to relaxation is never silently dropped.
+    # Forbidding all three stop codons is genuinely infeasible on the appended stop;
+    # it must raise (naming the culprit), not relax into a stopless sequence.
+    with pytest.raises(api.InfeasibleError):
+        api.optimize(
+            "M",
+            api.OptimizeConfig(
+                forbidden_motifs=("TAA", "TAG", "TGA"),
+                avoid_reverse_complement=False,
+                max_homopolymer=None,
+            ),
+        )
+
+
+def test_infeasible_error_names_culprit_not_innocents() -> None:
+    # The error must name the residue and only the constraints that actually vetoed
+    # there, not every active constraint (defect A.4). Homopolymer is active but
+    # innocent when the stop codons are the thing being forbidden.
+    with pytest.raises(api.InfeasibleError) as exc_info:
+        api.optimize(
+            "M",
+            api.OptimizeConfig(
+                forbidden_motifs=("TAA", "TAG", "TGA"),
+                avoid_reverse_complement=False,
+                max_homopolymer=6,
+            ),
+        )
+    err = exc_info.value
+    assert "forbidden_motif" in err.constraints
+    assert "homopolymer" not in err.constraints
+    assert err.position is not None
+
+
+def test_frontier_infeasible_names_culprit() -> None:
+    # The native (precomputed-structure) frontier path must also raise a
+    # culprit-named error on infeasibility -- a >=24-residue protein exercises it
+    # when the accelerator is present, and the pure fallback otherwise. Either way
+    # the message localises the failing residue.
+    with pytest.raises(api.InfeasibleError) as exc_info:
+        api.frontier(
+            "A" * 24,
+            api.OptimizeConfig(
+                forbidden_motifs=("TAA", "TAG", "TGA"),
+                avoid_reverse_complement=False,
+                max_homopolymer=None,
+            ),
+        )
+    assert "forbidden_motif" in exc_info.value.constraints

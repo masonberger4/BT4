@@ -53,20 +53,65 @@ class InfeasibleError(ValueError):
     """Raised when no coding sequence satisfies every hard constraint.
 
     Attributes:
-        constraints: Names of the constraints in force when feasibility was
-            lost. The offending residue cannot be extended under their combined
-            ``ok_suffix`` vetoes.
+        constraints: Names of the *culprit* constraints -- those that actually
+            vetoed a codon at the failing residue -- not merely everything that
+            was active. A constraint that never rejected a codon at that residue
+            is not blamed (defect A.4: the old message named every active
+            constraint, so an innocent ``homopolymer`` was implicated for a
+            ``internal_start`` infeasibility).
+        position: Index of the residue that admitted no feasible codon, or
+            ``None`` when the failing position is not localised (e.g. a
+            budget-level infeasibility raised by a budget backend).
+        residue: The amino-acid letter at ``position`` (``None`` when unknown).
     """
 
-    def __init__(self, constraints: Iterable[str]) -> None:
-        """Record the constraint names and build a human-readable message.
+    def __init__(
+        self,
+        constraints: Iterable[str],
+        *,
+        position: int | None = None,
+        residue: str | None = None,
+    ) -> None:
+        """Record the culprit names (and, when known, the failing residue).
 
         Args:
-            constraints: The names of the constraints that were active.
+            constraints: The names of the constraints that vetoed at the failing
+                residue.
+            position: Index of the residue that could not be extended, if known.
+            residue: The amino-acid letter at ``position``, if known.
         """
         self.constraints: tuple[str, ...] = tuple(constraints)
+        self.position = position
+        self.residue = residue
         names = ", ".join(self.constraints) if self.constraints else "(none)"
-        super().__init__(f"no feasible codon under constraints: {names}")
+        if position is not None:
+            at = f"residue {position}" + (f" ({residue})" if residue else "")
+            super().__init__(
+                f"no feasible codon at {at}: every synonymous codon is vetoed by: {names}"
+            )
+        else:
+            super().__init__(f"no feasible codon under constraints: {names}")
+
+
+def _culprits(
+    prefixes: Iterable[str],
+    codons: Sequence[str],
+    constraints: Sequence[Constraint],
+) -> list[str]:
+    """Names of the constraints that veto every extension at a failing residue.
+
+    A constraint is a culprit if it rejected at least one ``(prefix, codon)`` pair
+    among the surviving prefixes and candidate codons; a constraint that never
+    vetoed here is not blamed. Returned in ``constraints`` order for determinism
+    (invariant #7).
+    """
+    vetoers: set[str] = set()
+    for prefix in prefixes:
+        for codon in codons:
+            for c in constraints:
+                if c.name not in vetoers and not c.ok_suffix(prefix, codon):
+                    vetoers.add(c.name)
+    return [c.name for c in constraints if c.name in vetoers]
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +225,14 @@ def solve_exact(
                     next_layer[new_key] = (new_score, new_dna)
 
         if not next_layer:
-            raise InfeasibleError([c.name for c in constraints])
+            # Name the residue and the constraints that actually vetoed here, not
+            # every active constraint (defect A.4).
+            culprits = _culprits(
+                (dna for _key, (_score, dna) in layer.items()), codons, constraints
+            )
+            raise InfeasibleError(
+                culprits or [c.name for c in constraints], position=pos, residue=residue
+            )
 
         if beam is not None and len(next_layer) > beam:
             kept = sorted(
@@ -240,6 +292,11 @@ class _TrellisStructure:
     layer_to: tuple[tuple[int, ...], ...]
     layer_codon: tuple[tuple[int, ...], ...]
     feasible: bool
+    # When ``feasible`` is False, these localise the failure for a culprit-named
+    # InfeasibleError (defect A.4), mirroring the pure-Python path.
+    infeasible_pos: int | None = None
+    infeasible_residue: str | None = None
+    infeasible_culprits: tuple[str, ...] = ()
 
 
 def _precompute_structure(
@@ -296,7 +353,10 @@ def _precompute_structure(
 
     reachable: set[int] = {0}
     feasible = True
-    for residue in residues:
+    infeasible_pos: int | None = None
+    infeasible_residue: str | None = None
+    infeasible_culprits: tuple[str, ...] = ()
+    for pos, residue in enumerate(residues):
         syn = synonymous_codons(residue)
         lf: list[int] = []
         lt: list[int] = []
@@ -324,11 +384,17 @@ def _precompute_structure(
         layer_from.append(tuple(lf))
         layer_to.append(tuple(lt))
         layer_codon.append(tuple(lc))
-        reachable = nxt
-        if not reachable:
-            # No feasible extension: this and every later layer are empty.
+        if not nxt:
+            # No feasible extension: this and every later layer are empty. Localise
+            # the culprit before discarding the surviving prefixes (defect A.4).
+            prefixes = [id_to_str[c_id] for c_id in sorted(reachable)]
+            infeasible_pos = pos
+            infeasible_residue = residue
+            infeasible_culprits = tuple(_culprits(prefixes, syn, constraints))
             feasible = False
+            reachable = nxt
             break
+        reachable = nxt
 
     return _TrellisStructure(
         context_len=context_len,
@@ -338,6 +404,9 @@ def _precompute_structure(
         layer_to=tuple(layer_to),
         layer_codon=tuple(layer_codon),
         feasible=feasible,
+        infeasible_pos=infeasible_pos,
+        infeasible_residue=infeasible_residue,
+        infeasible_culprits=infeasible_culprits,
     )
 
 
@@ -386,7 +455,11 @@ def _solve_from_structure(
     the position-independence guarantee; only the inner loop runs in native code.
     """
     if not structure.feasible:
-        raise InfeasibleError([c.name for c in constraints])
+        raise InfeasibleError(
+            structure.infeasible_culprits or [c.name for c in constraints],
+            position=structure.infeasible_pos,
+            residue=structure.infeasible_residue,
+        )
     layer_delta = _delta_tables(structure, scalar_delta)
     out = _accel.trellis_solve(
         list(structure.codons),

@@ -20,6 +20,7 @@ from .genetic_code import (
     translate,
 )
 from .objective import Frontier, ObjectiveVector, dominates, pareto_front
+from .relax import SoftConstraint, is_relaxable, relax_constraint
 from .result import Metrics, Result, Severity, Violation
 from .scope import Scope
 from .sequence import DNA_BASES, gc_fraction, validate_dna, validate_protein
@@ -40,11 +41,14 @@ __all__ = [
     "Result",
     "Scope",
     "Severity",
+    "SoftConstraint",
     "Violation",
     "dominates",
     "gc_fraction",
+    "is_relaxable",
     "is_stop",
     "pareto_front",
+    "relax_constraint",
     "synonymous_codons",
     "translate",
     "validate_dna",

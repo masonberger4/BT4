@@ -81,6 +81,21 @@ class OptimalityCertificate:
         """Construct a certificate for a provably optimal solve."""
         return cls(OptimalityStatus.PROVEN_OPTIMAL, solver, gap=0.0, detail=detail)
 
+    @classmethod
+    def relaxed(
+        cls, solver: str, relaxed_terms: tuple[str, ...], detail: str = ""
+    ) -> OptimalityCertificate:
+        """Construct a certificate for a solve that dropped a hard rule to stay feasible.
+
+        A hard constraint that admits no feasible sequence can be relaxed to a soft
+        rule so the solve returns a best effort rather than dead-ending (CLAUDE.md
+        §4.2). ``relaxed_terms`` names exactly what was relaxed, so the loss of the
+        hard guarantee is never silent (invariant #6).
+        """
+        return cls(
+            OptimalityStatus.RELAXED, solver, relaxed_terms=tuple(relaxed_terms), detail=detail
+        )
+
 
 # Sentinel used before any solver has run (e.g. a validation-only result).
 NOT_OPTIMIZED: OptimalityCertificate = OptimalityCertificate(
