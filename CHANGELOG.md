@@ -8,6 +8,42 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **`scripts/ribonn_sensitivity.py` -- the zero-data checks that decide whether a
+  RiboNN calibration panel is worth acquiring at all.** Four checks, no measured data
+  required, driven entirely from a RiboNN checkout plus sequences already in this
+  repository. Every report is stamped `calibrated: False` and can promote nothing.
+  - **`utr-control`** scores one CDS under two different UTR pairs. It is the positive
+    control that makes a *null* result elsewhere trustworthy: if swapping both UTRs
+    leaves the score untouched, the sequences are not reaching the model and no other
+    number means anything. It refuses a backend with no UTR context rather than
+    crashing on `dataclasses.replace`.
+  - **`cds-spread`** is the decisive check and covers the GC-confound check in the
+    same invocation. Holding UTRs fixed, it reports the spread of scores *within* each
+    protein's synonymous variants against the spread *between* proteins, plus the rank
+    correlation of the within-protein response against CAI, tAI, GC, GC3 and length --
+    every feature recomputed here by BT4's own functions. `within_over_between` near
+    zero means the backend reads gene identity rather than codon choice, which is what
+    RiboNN was trained to do and precisely what BT4 cannot use. It runs on the in-tree
+    `ranaghan2021_tab4.fasta` (93 records, three human proteins x 31 real
+    codon-optimizer outputs, CC BY 4.0) -- which carries **no measurements**, so it is
+    a sensitivity resource and never a validation panel.
+  - **`direction`** builds a max-CAI and a min-CAI design per protein and runs an
+    exact two-sided binomial sign test (`math.comb`, no scipy). **Ties are counted and
+    excluded**, as the sign test requires: scoring them as failures would report a
+    blind backend as "0/N prefer the optimized design", which reads as a strong
+    preference for the deoptimized one.
+  - **`ladder`** walks a real BT4 Pareto frontier for one protein and reports the
+    Spearman of score against CAI along it -- a coherence check, since a jagged
+    response is unusable for ranking even when it is nonzero.
+  - House style throughout: build a dict, render it as a table or `--json`; UTRs are
+    **required** rather than defaulted (a bundled UTR would be a hidden modelling
+    choice) and are identified in the report by content hash rather than printed; the
+    reference set travels with every CAI number; batched backends are driven through
+    `score_many`. Tests pin the verdicts that matter -- a blind backend is reported as
+    blind, a gene-identity backend is *not* credited with synonymous skill, and a
+    GC3-only backend is exposed by the confound correlation -- and an end-to-end CLI
+    rehearsal runs on the `null` placeholder, which needs no weights and is the
+    reference for what "blind" looks like.
 - **RiboNN gains cell-type selection and a fold-resolved read, closing two scope
   errors that would have corrupted a calibration gate before it ever ran.** Both are
   diagnostics and neither touches `calibrated`, which stays `False`.
