@@ -46,7 +46,19 @@ from bt4.domain import (
     Violation,
     validate_protein,
 )
-from bt4.io import parse_fasta, read_fasta, result_to_dict, result_to_json, to_fasta
+from bt4.io import (
+    GenBankFeature,
+    GenBankRecord,
+    context_from_genbank,
+    parse_fasta,
+    parse_genbank,
+    read_fasta,
+    read_genbank,
+    result_to_dict,
+    result_to_json,
+    to_fasta,
+    write_genbank,
+)
 from bt4.pipeline import (
     APPLICATION_PRESETS,
     ApplicationPreset,
@@ -98,6 +110,8 @@ __all__ = [
     "ExpressionResult",
     "ForbiddenPreset",
     "FrontierResult",
+    "GenBankFeature",
+    "GenBankRecord",
     "InfeasibleError",
     "LibraryResult",
     "OptimizeConfig",
@@ -125,6 +139,7 @@ __all__ = [
     "available_tai_organisms",
     "build_table",
     "candidates",
+    "context_from_genbank",
     "count_codons",
     "default_reference_set",
     "enzyme_provenance",
@@ -135,7 +150,9 @@ __all__ = [
     "load_provenance",
     "optimize",
     "parse_fasta",
+    "parse_genbank",
     "read_fasta",
+    "read_genbank",
     "rerank_by_expression",
     "resolve_enzyme",
     "resolve_expression_backend",
@@ -151,6 +168,7 @@ __all__ = [
     "unknown_enzyme_message",
     "validate",
     "validate_protein",
+    "write_genbank",
     "write_table",
 ]
 

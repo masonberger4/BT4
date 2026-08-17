@@ -361,20 +361,29 @@ class StudioWindow(QtWidgets.QMainWindow):
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls_scroll = QtWidgets.QScrollArea()
         controls_scroll.setWidgetResizable(True)
-        controls_scroll.setWidget(self._build_controls())
+        controls = self._build_controls()
+        controls_scroll.setWidget(controls)
         controls_scroll.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        controls_scroll.setMinimumWidth(300)
+        # Size the column from the form's OWN width requirement, plus room for the
+        # vertical scrollbar. Horizontal scrolling is off (a form that scrolls
+        # sideways is miserable to use), so a hard-coded minimum narrower than the
+        # form silently clips its right edge -- checkbox labels and placeholders
+        # were being cut mid-word with no way to reveal them. Clamped so the
+        # controls can never eat the whole window on a small screen.
+        scrollbar_allowance = controls_scroll.verticalScrollBar().sizeHint().width()
+        natural_width = controls.sizeHint().width() + scrollbar_allowance + 4
+        column_width = max(320, min(natural_width, 560))
+        controls_scroll.setMinimumWidth(column_width)
         splitter.addWidget(controls_scroll)
         splitter.addWidget(self._build_results())
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        # Let the results side absorb every resize: the control column is a fixed
-        # form, so a narrow window shrinks the plots/tables rather than clipping
-        # the knobs (which stay reachable through their scroll area).
+        # Let the results side absorb every resize: the control column keeps its
+        # natural width so the knobs stay readable, and the plots/tables shrink.
         splitter.setCollapsible(0, False)
-        splitter.setSizes([380, 800])
+        splitter.setSizes([column_width, 900])
         self.setCentralWidget(splitter)
 
         self._build_menus()
@@ -1068,8 +1077,18 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.export_json_btn = QtWidgets.QPushButton("Export JSON")
         self.export_json_btn.setAccessibleName("Export JSON")
         self.export_json_btn.clicked.connect(self._export_json)
+        self.export_gb_btn = QtWidgets.QPushButton("Export GenBank")
+        self.export_gb_btn.setAccessibleName("Export GenBank")
+        self.export_gb_btn.setToolTip(
+            "Write an annotated GenBank map. Every residual violation becomes a "
+            "misc_feature span, so a defect the optimizer could not remove is "
+            "visible where it occurs when you open the file in SnapGene, Benchling "
+            "or ApE. Includes the 5'/3' construct context when you supplied it."
+        )
+        self.export_gb_btn.clicked.connect(self._export_genbank)
         exports.addWidget(self.export_fasta_btn)
         exports.addWidget(self.export_json_btn)
+        exports.addWidget(self.export_gb_btn)
         exports.addStretch(1)
         layout.addLayout(exports)
 
@@ -1555,6 +1574,9 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.act_export_json = self._add_action(
             file_menu, "Export &JSON...", self._export_json, "Ctrl+J"
         )
+        self.act_export_genbank = self._add_action(
+            file_menu, "Export &GenBank...", self._export_genbank, "Ctrl+G"
+        )
         self.act_export_library = self._add_action(
             file_menu, "Export &library FASTA...", self._export_library, "Ctrl+Shift+E"
         )
@@ -1695,6 +1717,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.cancel_btn,
             self.export_fasta_btn,
             self.export_json_btn,
+            self.export_gb_btn,
             self.assp_btn,
             self.cand_n_spin,
             self.cand_repeat_spin,
@@ -2483,8 +2506,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         for widget in (
             self.export_fasta_btn,
             self.export_json_btn,
+            self.export_gb_btn,
             self.act_export_fasta,
             self.act_export_json,
+            self.act_export_genbank,
         ):
             widget.setEnabled(enabled)
 
@@ -3186,6 +3211,32 @@ class StudioWindow(QtWidgets.QMainWindow):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(api.result_to_json(delivered))
         self.statusBar().showMessage(f"Wrote JSON to {path}")
+
+    def _export_genbank(self) -> None:
+        """Write the delivered result as an annotated GenBank map.
+
+        This is the export that puts BT4's honesty where the user actually looks:
+        every residual violation becomes a ``misc_feature`` span, so a defect the
+        optimizer could not remove is visible in SnapGene / Benchling rather than
+        only in the JSON audit. Uses the run's construct context when one was
+        supplied, so flanks and junction findings are placed correctly.
+        """
+        delivered = self._delivered()
+        if delivered is None:
+            return
+        header = self.jobname_edit.text().strip() or "bt4"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export GenBank", f"{header}.gb", "GenBank (*.gb *.gbk);;All files (*)"
+        )
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(
+                api.write_genbank(
+                    delivered, context=self._build_context(), locus=header
+                )
+            )
+        self.statusBar().showMessage(f"Wrote annotated GenBank to {path}")
 
 
 def main() -> int:
