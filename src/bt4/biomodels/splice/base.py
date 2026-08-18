@@ -55,6 +55,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 __all__ = [
+    "DEFAULT_SITE_PROBABILITY",
     "DEFAULT_TOP_K",
     "SplicePredictor",
     "SpliceResult",
@@ -63,6 +64,36 @@ __all__ = [
     "pooled_risk",
     "score_in_context",
 ]
+
+DEFAULT_SITE_PROBABILITY: float = 0.5
+"""The probability above which a position counts as a *site* rather than background.
+
+One operating point, referenced by every consumer, because it appears in two
+structurally different roles that must not drift apart:
+
+* as the **localization** cutoff -- which positions get flagged and counted
+  (``audit.DEFAULT_SITE_THRESHOLD``, ``splice_crosscheck``, ``api.splice_audit`` /
+  ``api.splice_crosscheck``);
+* as the **background reference** inside :func:`pool_log_odds` -- the probability
+  whose log-odds is zero, below which a position contributes no pooled risk.
+
+The second role was previously implicit: pooling took ``max(0.0, logit(p))``, whose
+zero crossing is *exactly* ``p = 0.5``, unparameterized and undocumented as a
+threshold. That made the two roles silently coupled, so moving the visible cutoff
+without moving the hidden one would have made the two disagree -- a flagged site at
+``p = 0.35`` contributing exactly zero risk, and a variant introducing five such
+sites reporting ``delta_splicing == 0.0``, indistinguishable from introducing none.
+
+**This is a display / localization knob, not a calibrated cutoff.** Every shipped
+backend's per-position score is an uncalibrated pseudo-probability, so ``0.5`` is a
+convention, not evidence. Published work points elsewhere for the *delta* quantity
+(Walker et al., AJHG 2023 calibrate SpliceAI at 0.2, concluding 0.5 "may be
+calibrated too high"), but those cutoffs describe a different functional than BT4's
+pooled top-k log-odds and cannot be imported directly. Deriving BT4's own operating
+point is the job of the statistical-calibration gate
+(``docs/DESIGN_splice_cnn_calibration.md`` Part B), and *this* constant is what it
+would move.
+"""
 
 DEFAULT_TOP_K: int = 3
 """Default number of strongest sites summed by :func:`pool_log_odds`.
@@ -94,12 +125,17 @@ def logit(p: float) -> float:
     return math.log(q / (1.0 - q))
 
 
-def pool_log_odds(probs: Iterable[float], top_k: int = DEFAULT_TOP_K) -> float:
+def pool_log_odds(
+    probs: Iterable[float],
+    top_k: int = DEFAULT_TOP_K,
+    *,
+    background: float = DEFAULT_SITE_PROBABILITY,
+) -> float:
     """Pool per-position site probabilities into one risk via top-k log-odds.
 
-    The positive part of the ``top_k`` largest logits is summed. Only
-    above-background positions (log-odds > 0) count as sites and contribute
-    risk; the background tail contributes nothing. This pooling is **additive
+    The positive part of the ``top_k`` largest *background-relative* logits is
+    summed. Only positions scoring above ``background`` count as sites and
+    contribute risk; the background tail contributes nothing. This pooling is **additive
     and does not saturate**: two strong sites contribute roughly twice the risk
     of one, unlike the noisy-OR aggregation ``1 - prod(1 - p_i)`` that pegs at
     1.0 and masks every site after the first (CLAUDE.md section 10.14).
@@ -109,6 +145,11 @@ def pool_log_odds(probs: Iterable[float], top_k: int = DEFAULT_TOP_K) -> float:
             empty.
         top_k: How many of the highest-scoring sites to sum. Must be positive.
             Fewer than ``top_k`` positive sites simply sum what is present.
+        background: The probability treated as background -- positions at or below
+            it contribute nothing. Defaults to :data:`DEFAULT_SITE_PROBABILITY`,
+            which reproduces the previous ``max(0.0, logit(p))`` behavior exactly
+            (``logit(0.5) == 0``). Made explicit so the pooling background and the
+            localization cutoff can be moved together rather than drifting apart.
 
     Returns:
         A non-negative pooled risk: the summed positive part of the ``top_k``
@@ -120,7 +161,10 @@ def pool_log_odds(probs: Iterable[float], top_k: int = DEFAULT_TOP_K) -> float:
     """
     if top_k <= 0:
         raise ValueError(f"top_k must be a positive integer, got {top_k}")
-    logits = sorted((logit(p) for p in probs), reverse=True)
+    if not 0.0 < background < 1.0:
+        raise ValueError(f"background must be in (0, 1), got {background}")
+    offset = logit(background)
+    logits = sorted((logit(p) - offset for p in probs), reverse=True)
     return math.fsum(max(0.0, value) for value in logits[:top_k])
 
 
@@ -151,7 +195,12 @@ class SpliceResult:
     calibrated: bool
 
 
-def pooled_risk(result: SpliceResult, top_k: int = DEFAULT_TOP_K) -> float:
+def pooled_risk(
+    result: SpliceResult,
+    top_k: int = DEFAULT_TOP_K,
+    *,
+    background: float = DEFAULT_SITE_PROBABILITY,
+) -> float:
     """Pool a :class:`SpliceResult` into one whole-sequence splice risk.
 
     Combines the donor and acceptor per-position scores and pools them with
@@ -160,11 +209,15 @@ def pooled_risk(result: SpliceResult, top_k: int = DEFAULT_TOP_K) -> float:
     Args:
         result: Per-position scores from :meth:`SplicePredictor.score_sequence`.
         top_k: How many of the strongest sites to sum (see :func:`pool_log_odds`).
+        background: The probability below which a position contributes no risk.
+            Threaded through so a caller that moves the localization cutoff can
+            move the pooling background with it; see
+            :data:`DEFAULT_SITE_PROBABILITY` for why the two must agree.
 
     Returns:
         The pooled top-k log-odds splice risk of the sequence.
     """
-    return pool_log_odds((*result.donor, *result.acceptor), top_k)
+    return pool_log_odds((*result.donor, *result.acceptor), top_k, background=background)
 
 
 @runtime_checkable

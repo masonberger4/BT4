@@ -55,6 +55,7 @@ from dataclasses import dataclass
 
 from bt4.biomodels.splice.agreement import AgreementReport, agreement_from_deltas
 from bt4.biomodels.splice.base import (
+    DEFAULT_SITE_PROBABILITY,
     DEFAULT_TOP_K,
     SplicePredictor,
     SpliceResult,
@@ -71,12 +72,18 @@ __all__ = [
     "audit_splice",
 ]
 
-DEFAULT_SITE_THRESHOLD: float = 0.5
+DEFAULT_SITE_THRESHOLD: float = DEFAULT_SITE_PROBABILITY
 """Default per-position score above which a site is localized.
 
 A **display / localization knob**, not a calibrated cutoff: every shipped backend
 is ``calibrated is False``, so this threshold is heuristic for all of them (and
 doubly so for the PWM baseline, whose scores are arbitrary-units pseudo-scores).
+
+Aliases :data:`~bt4.biomodels.splice.base.DEFAULT_SITE_PROBABILITY` rather than
+repeating the literal, because the same operating point also sets the *pooling
+background* inside :func:`~bt4.biomodels.splice.base.pool_log_odds`. Two copies of
+``0.5`` could be moved independently, and then a site flagged here would contribute
+zero pooled risk there.
 """
 
 DEFAULT_MATCH_WINDOW: int = 3

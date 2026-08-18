@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from bt4.biomodels.splice.assp import AsspError, AsspSplicePredictor
 from bt4.biomodels.splice.attestations import promote_if_attested
 from bt4.biomodels.splice.base import (
+    DEFAULT_SITE_PROBABILITY,
     DEFAULT_TOP_K,
     SplicePredictor,
     SpliceResult,
@@ -69,7 +70,7 @@ _DEGRADE_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,
 )
 
-DEFAULT_CROSSCHECK_THRESHOLD: float = 0.5
+DEFAULT_CROSSCHECK_THRESHOLD: float = DEFAULT_SITE_PROBABILITY
 """Per-position score above which a dense-backend track is localized into a site.
 
 A heuristic display knob (every cross-check backend is ``calibrated is False``),

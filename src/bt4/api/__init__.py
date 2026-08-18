@@ -35,6 +35,7 @@ from bt4.biomodels.expression import available_backends as available_expression_
 from bt4.biomodels.expression import default as expression_model
 from bt4.biomodels.expression import resolve_backend as resolve_expression_backend
 from bt4.biomodels.splice import (
+    DEFAULT_SITE_PROBABILITY,
     USE_ATTESTED_SPLICE_ENV_VAR,
     SpliceAuditReport,
     SpliceFlag,
@@ -441,7 +442,7 @@ def splice_audit(
     *,
     reference: str | None = None,
     predictors: Sequence[SplicePredictor] | None = None,
-    threshold: float = 0.5,
+    threshold: float = DEFAULT_SITE_PROBABILITY,
     match_window: int = 3,
     context: ConstructContext | None = None,
 ) -> SpliceAuditReport:
@@ -493,7 +494,7 @@ def splice_crosscheck(
     *,
     backend: str = "assp",
     predictor: SplicePredictor | None = None,
-    threshold: float = 0.5,
+    threshold: float = DEFAULT_SITE_PROBABILITY,
     top_k: int = 3,
 ) -> SpliceCrossCheck:
     """Cross-check one delivered sequence with an opt-in, out-of-loop splice backend.
