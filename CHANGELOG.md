@@ -8,6 +8,28 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **SpliceAI's integration-fidelity tooling, completing Part A's scripts.** Only the
+  licensed weights step is left for that backend.
+  - **`scripts/capture_spliceai_panel.py`** — the sibling of the Pangolin capture, with
+    the same runtime independence guard and the same statically-enforced rule that it
+    never imports `bt4`.
+  - **It imports upstream's own `one_hot_encode` rather than re-deriving it.** Pangolin's
+    CLI encodes inline, which forced that capture to reimplement it; SpliceAI ships the
+    encoder as a reusable function, so importing it is strictly stronger evidence — a
+    transposed layout, a wrong base order, or a mishandled `N` in BT4's own
+    `_one_hot_rows` now surfaces as a gate **failure** instead of being reproduced
+    identically on both sides.
+  - **No fallback encoder, deliberately**, and a test asserts the script defines none.
+    The obvious fix for the NumPy 2 `np.fromstring` breakage — adding a local encoder —
+    would silently destroy the independence while leaving the gate passing. The script
+    refuses and names the `numpy<2` pin instead.
+  - **`run_splice_fidelity_gate.py` now dispatches on the capture payload's own
+    `backend`**, so a Pangolin capture can never be checked against the SpliceAI adapter:
+    the numbers would still be numbers, they would just describe a different model. A
+    payload with no `backend` field is treated as Pangolin, so existing captures keep
+    working. Its panel-strength warning reads both capture shapes — one combined
+    `P(splice)` track for Pangolin's binary head, two for SpliceAI's 3-way softmax — so a
+    two-track capture is no longer reported as a flat, zero panel.
 - **An annotated splice-panel format, and the baselines a splice backend must beat.**
   The runnable half of Part B of `docs/DESIGN_splice_cnn_calibration.md`: everything
   needed to gate a wrapped CNN on real data except the data.

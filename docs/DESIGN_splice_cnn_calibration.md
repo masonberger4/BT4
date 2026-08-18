@@ -315,52 +315,58 @@ Note the `.T` — Pangolin is **channel-major `[4][L]`**. Its P(splice) head is 
 *binary* softmax, so donor and acceptor are **not** separated; that is why BT4 puts
 the combined track in `SpliceResult.donor` and leaves `acceptor` all-zero.
 
-**SpliceAI capture** — the official README snippet, unmodified:
+**SpliceAI capture — `scripts/capture_spliceai_panel.py` (landed).** Same three-step
+workflow as Pangolin, in the *other* virtualenv (TensorFlow 2.15 and PyTorch do not
+coexist):
 
-```python
-# capture_spliceai.py  — run in the spliceai env. Does NOT import bt4.
-# Weights are located from $BT4_SPLICEAI_MODEL_DIR, NOT pkg_resources (removed in
-# setuptools >= 81) -- see the Pangolin note above.
-import json, os
-import numpy as np
-from keras.models import load_model
-from spliceai.utils import one_hot_encode
-
-context = 10000
-MODEL_DIR = os.environ["BT4_SPLICEAI_MODEL_DIR"]
-models = [load_model(os.path.join(MODEL_DIR, f"spliceai{x}.h5"))
-          for x in range(1, 6)]
-
-def acceptor_donor(seq):
-    x = one_hot_encode('N'*(context//2) + seq.upper() + 'N'*(context//2))[None, :]
-    y = np.mean([m.predict(x, verbose=0) for m in models], axis=0)
-    return y[0, :, 1].tolist(), y[0, :, 2].tolist()   # channel 0 = null
-
-panel = []
-for s in SEQUENCES:
-    a, d = acceptor_donor(s)
-    panel.append({"sequence": s, "expected_acceptor": a, "expected_donor": d})
-json.dump(panel, open("spliceai_panel.json", "w"))
+```
+python scripts\make_splice_panel.py --out panel_sequences.json
+python scripts\capture_spliceai_panel.py --panel panel_sequences.json --out expected_spliceai.json
 ```
 
+`make_splice_panel.py` is shared — the *same* panel feeds both backends, so the two
+gates are run on identical sequences.
+
+Two things differ from the Pangolin capture, both deliberate:
+
+- **It imports upstream's own `one_hot_encode`** rather than re-deriving it. Pangolin's
+  CLI encodes inline, which forced the Pangolin capture to reimplement it; SpliceAI
+  ships the encoder as a reusable function, so importing it is strictly stronger
+  evidence — a transposed layout, a wrong base order, or a mishandled `N` in BT4's own
+  `_one_hot_rows` shows up as a gate **failure** instead of being reproduced identically
+  on both sides. There is deliberately **no fallback encoder**: if `spliceai.utils` will
+  not import, the script refuses and names the cause (NumPy 2 removed `np.fromstring`,
+  which `spliceai/utils.py` still calls — pin `numpy<2`). A "helpful" local fallback
+  would silently destroy the independence, so a test asserts the script defines no
+  encoder of its own.
+- **It records two tracks, not one.** SpliceAI's 3-way softmax (null / acceptor / donor)
+  genuinely separates them, so `expected_acceptor` and `expected_donor` must *both*
+  match. Pangolin's binary head emits one combined `P(splice)`, which is why its capture
+  carries a single track and BT4 puts it in `SpliceResult.donor` with `acceptor`
+  all-zero.
+
 SpliceAI is **position-major `[L][4]`** (Keras channels-last) — the opposite of
-Pangolin. Save both panels **in the scratch directory only**: those arrays *are*
-the licensed model outputs and must never enter the repo.
+Pangolin's channel-major `[4][L]`. Save both captures **in the scratch directory only**:
+those arrays *are* the licensed model outputs (GPL-derived for Pangolin, CC BY-NC for
+SpliceAI) and must never enter the repo.
 
 ### A5 — Run the fidelity gate
 
-```bash
-python - <<'PY'
-import json, os
-from bt4.biomodels.splice import PangolinSplicePredictor, FidelityCase, verify_pangolin_fidelity
-panel = [FidelityCase(sequence=c["sequence"], expected_site_scores=tuple(c["expected"]))
-         for c in json.load(open(os.path.expanduser("~/bt4-splice-calib/pangolin_panel.json")))]
-print(verify_pangolin_fidelity(PangolinSplicePredictor(), panel, tolerance=1e-3))
-PY
+```
+python scripts\run_splice_fidelity_gate.py --panel panel_sequences.json --captured expected_pangolin.json
+python scripts\run_splice_fidelity_gate.py --panel panel_sequences.json --captured expected_spliceai.json
 ```
 
-SpliceAI is the same shape with `SpliceAiFidelityCase(sequence, expected_acceptor,
-expected_donor)` and `verify_spliceai_fidelity`.
+The runner reads **which backend from the capture payload itself**, so a Pangolin
+capture can never be checked against the SpliceAI adapter — the numbers would still be
+numbers, they would just be describing a different model. Passing `--panel` binds the
+capture to the panel it came from by content hash, so a stale capture is caught rather
+than silently compared against regenerated sequences.
+
+It also reports the panel's **peak-score spread** and warns when that spread is too
+narrow: a gate that passes on a panel where the model scores ~0 everywhere is nearly
+vacuous, because a wrong channel, a wrong fold set, or a transposed one-hot would match
+within tolerance too. A pass on a flat panel is reported as passing *and* as weak.
 
 `passed=True` requires `max_abs_deviation <= 1e-3`, which is also
 `MAX_ATTESTATION_TOLERANCE`. The tolerance cannot be relaxed to force a pass —
