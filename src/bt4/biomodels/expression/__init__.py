@@ -19,6 +19,16 @@ This package depends only on the standard library.
 
 from __future__ import annotations
 
+from bt4.biomodels.expression.attestation import (
+    MAX_ATTESTATION_COVERAGE_TOLERANCE,
+    MAX_ATTESTATION_WIDTH_OVER_IQR,
+    MIN_ATTESTATION_SPEARMAN,
+    ExpressionAttestation,
+    ExpressionAttestationError,
+    attest_expression,
+    load_expression_attestation,
+    verified_predictor,
+)
 from bt4.biomodels.expression.base import (
     BatchExpressionPredictor,
     ExpressionPredictor,
@@ -48,11 +58,16 @@ from bt4.biomodels.expression.ribonn import (
 )
 
 __all__ = [
+    "MAX_ATTESTATION_COVERAGE_TOLERANCE",
+    "MAX_ATTESTATION_WIDTH_OVER_IQR",
     "MAX_CDS_UTR3_LEN",
     "MAX_UTR5_LEN",
+    "MIN_ATTESTATION_SPEARMAN",
     "PANEL_COLUMNS",
     "PINNED_WEIGHT_SHA256",
     "BatchExpressionPredictor",
+    "ExpressionAttestation",
+    "ExpressionAttestationError",
     "ExpressionEvalCase",
     "ExpressionGateReport",
     "ExpressionPanel",
@@ -62,13 +77,16 @@ __all__ = [
     "PanelRow",
     "RiboNNExpressionModel",
     "RiboNNFoldPrediction",
+    "attest_expression",
     "available_backends",
     "default",
+    "load_expression_attestation",
     "load_pinned_sha256",
     "panel_from_rows",
     "read_panel",
     "resolve_backend",
     "run_expression_gate",
+    "verified_predictor",
     "verify_expression_gate",
 ]
 

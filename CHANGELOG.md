@@ -8,6 +8,33 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **`ExpressionAttestation` -- the single seam that can flip an expression head to
+  `calibrated=True`, replacing a bare `dataclasses.replace`.** Mirrors
+  `bt4.biomodels.splice.attestation`, with the differences a *usefulness* claim needs
+  that a *fidelity* claim does not.
+  - **Licence-clean by construction.** RiboNN's weights are Sanofi non-commercial, so its
+    raw per-sequence outputs must never enter MIT-licensed BT4. An attestation carries
+    only derived scalars plus public content hashes (the 90 pinned weight SHA-256s for
+    its species, and the panel's hash). `_ALLOWED_FIELDS` pins the shape, a module-level
+    assert fails the *import* if the dataclass drifts from it, `from_dict` refuses any
+    unexpected key, and a test asserts no field name could hold an array of scores.
+  - **Four floors, so a run configured to pass cannot self-certify**: the run must have
+    been **within-group** (a pooled run credits between-protein skill and cannot certify
+    BT4's regime, however good it looks), it must have **beaten every baseline**, its
+    interval must be informative (`width_over_iqr` < 1.0), and its `min_spearman` /
+    coverage tolerance must clear `MIN_ATTESTATION_SPEARMAN` / 
+    `MAX_ATTESTATION_COVERAGE_TOLERANCE`. All four are re-checked at promotion, so
+    hand-editing the JSON afterwards buys nothing.
+  - **Scope is part of the claim.** The record carries species, cell-type selection and
+    readout, and `verified_predictor` refuses a predictor whose species or cell types
+    differ — an attestation earned on HEK293T does not certify a head averaging all 78
+    tissues, because those are different quantities. It also refuses unless the weight
+    hashes match the adapter's own pins, binding the claim to the same bytes the adapter
+    hash-verifies before loading.
+  - `content_hash()` is timestamp-free (invariant #7) and scope-sensitive, so it is a
+    stable provenance stamp and two different scopes cannot share one.
+  - The default head is unchanged: `default()` still returns the uncalibrated
+    placeholder, and a bare `RiboNNExpressionModel()` is still `calibrated=False`.
 - **The gate is now a supported surface, not a snippet: `bt4.pipeline.expression_gate`,
   `api.expression_gate`, `bt4 expression-gate PANEL.tsv`, and
   `scripts/run_expression_gate.py`.** The orchestration lives in `pipeline/` (per §3, so
