@@ -337,7 +337,10 @@ items 1–3 are in
     vacuity check, the panel format + strict reader (`api.read_panel`), the baseline
     comparison (`api.expression_gate`, `bt4 expression-gate`,
     `scripts/run_expression_gate.py`), the `ExpressionAttestation` promotion seam, and
-    the zero-data checks (`scripts/ribonn_sensitivity.py`). Evidence and protocol:
+    the zero-data checks (`scripts/ribonn_sensitivity.py`). **The step-by-step runbook
+    is [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md)** (Windows/WSL
+    install, the free Stage-1 checks, the panel hunt, pre-registration, the gate
+    command, and the decision tree), backed by the evidence and corrections in
     [`RESEARCH_ribonn_calibration.md`](RESEARCH_ribonn_calibration.md). **Remaining
     (human):** run the free sanity checks against the licensed weights, obtain a
     licence-clean regime-matched **CDS-variant** panel — no public dataset fully

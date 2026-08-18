@@ -8,6 +8,18 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **`docs/DESIGN_ribonn_calibration.md`** — the step-by-step runbook for `NEXT_SESSION.md`
+  item 11, mirroring the splice side's `DESIGN_splice_cnn_calibration.md`. It carries the
+  operational half that the research doc deliberately left out: the Windows (`cmd.exe`) /
+  WSL install, the `max_shift` determinism check, the free Stage-1 sensitivity checks (run
+  these *before* buying any data — several can end the project decisively), the ranked
+  panel hunt with the panel-TSV format, the pre-registration template, the exact
+  `run_expression_gate` / `bt4 expression-gate` commands, and the Stage-5 decision tree
+  with the `attest_expression` → `verified_predictor` promotion snippet. Every command and
+  API reference is checked against the code that shipped in the previous change; the
+  "wiring caveat" (nothing in `src/` calls `verified_predictor` yet) and the scoped nature
+  of any pass are stated plainly. `NEXT_SESSION.md` item 11 and the research doc now
+  cross-link it.
 - **`docs/RESEARCH_ribonn_calibration.md`** — the evidence behind `NEXT_SESSION.md` item
   11, assembled from primary sources (the paper's full text, the upstream repository, the
   dataset records) with an adversarial verification pass over every dataset and
