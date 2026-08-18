@@ -7,6 +7,26 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **The `pwm` control went blind to every acceptor site when the strata collapsed.**
+  `_tracks` collapses donor and acceptor into one `"splice"` stratum for a
+  combined-track backend, which is right for the *head* — Pangolin's acceptor track is
+  identically zero, so its donor track carries everything. But the **baselines** are
+  scored through the same function, and BT4's PWM baseline is a real two-track
+  predictor. Taking its donor track alone made half the positives unreachable for the
+  control: measured, **0.344 skill instead of 0.654** on a mixed panel, so a
+  Pangolin-class head was easier to beat than it should have been — in exactly the mode
+  Pangolin runs in, and against the very claim the module is built on. The collapse now
+  **unions** the two tracks, which is a no-op for a genuinely combined backend and
+  restores the control otherwise. Found by adversarial review.
+- **The alignment diagnostic reported a residual offset as if it were absolute.** The
+  probe runs on the already-aligned track, so its modal offset is the shift *remaining*
+  after `anchor_offset` is applied. The note printed that number as the value to
+  declare, so a user who had already passed `+1` against a true `+3` was told to pass
+  `+2` — further from the truth, in a message they had every reason to trust. It now
+  reports `recommended_offset` (applied + residual) and names the offset currently in
+  force, and the agreeing message states which anchor it agreed at.
+
 ### Added
 - **SpliceAI's integration-fidelity tooling, completing Part A's scripts.** Only the
   licensed weights step is left for that backend.

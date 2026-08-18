@@ -472,3 +472,91 @@ def test_cli_refuses_the_network_backend(tmp_path: Path) -> None:
                 "assp",
             ]
         )
+
+
+# --------------------------------------------------------------------------
+# Two defects found by adversarial review of this module, pinned
+
+
+def test_the_pwm_control_keeps_its_acceptor_track_when_strata_collapse() -> None:
+    """The control must not go blind to half the positives in combined mode.
+
+    ``_tracks`` collapses two strata into one for a combined-track backend, and that
+    is right for the *head*: Pangolin's acceptor track is identically zero, so its
+    donor track carries everything. But the **baselines** are scored through the same
+    function, and BT4's PWM baseline is a real two-track predictor. Taking its donor
+    track alone made every acceptor site invisible to it -- measured, understating the
+    control by 0.31 skill on a mixed panel (0.344 vs 0.654) and making a
+    Pangolin-class head that much easier to beat.
+
+    The sharpest form of the check: a panel whose sites are **all acceptors**. With
+    the defect the PWM control scores essentially nothing; unioned, it scores well.
+    """
+    rng = random.Random(3)
+    windows = []
+    for index, group in enumerate(("chr1", "chr3")):
+        parts: list[str] = []
+        acceptors: list[int] = []
+        position = 0
+        for _ in range(6):
+            chunk = "".join(rng.choice("ACGT") for _ in range(60))
+            parts.append(chunk)
+            position += len(chunk)
+            parts.append(_ACCEPTOR_SITE)
+            position += len(_ACCEPTOR_SITE)
+            acceptors.append(position - 1)
+        parts.append("".join(rng.choice("ACGT") for _ in range(60)))
+        windows.append(
+            SpliceWindow(f"w{index}", group, "".join(parts), acceptors=tuple(acceptors))
+        )
+    panel = panel_from_windows(windows, negative_construction=_NEG)
+
+    comparison = run_splice_panel_gate(panel, "pwm", results=_oracle(panel, combined=True))
+    pwm = next(report for name, report in comparison.baselines if name == "pwm")
+    assert comparison.strata == ("splice",)
+    assert pwm.strata[0].pr_auc_skill > 0.5, (
+        "the PWM control lost its acceptor track when the strata collapsed"
+    )
+
+
+def test_the_collapse_is_a_no_op_for_a_genuinely_combined_backend() -> None:
+    """Unioning must not change what a real combined-track backend reports.
+
+    Pangolin's acceptor track is identically zero, so ``max(donor, 0)`` is its donor
+    track -- the union is strictly more general, not a different answer.
+    """
+    panel = _hard_panel()
+    results = _oracle(panel, combined=True)
+    assert all(all(value == 0.0 for value in r.acceptor) for r in results)
+    comparison = run_splice_panel_gate(panel, "pwm", results=results)
+    assert comparison.head.strata[0].pr_auc_skill == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("applied", [0, 1, 3, -2])
+def test_the_alignment_note_recommends_an_absolute_offset(applied: int) -> None:
+    """The probe measures a residual; the advice must name the value to pass.
+
+    ``_alignment`` runs on the already-aligned track, so its modal offset is a
+    *residual*. Reporting that as the ``anchor_offset`` to declare would send a user
+    who already passed +1 to +2 when the answer is +3 -- further from the truth, and
+    in a message they have every reason to trust.
+    """
+    panel = _hard_panel()
+    misaligned = _shifted(_oracle(panel), 3)
+    diagnostic = run_splice_panel_gate(
+        panel, "pwm", results=misaligned, anchor_offset=applied
+    ).alignment
+    assert diagnostic.recommended_offset == 3
+    assert diagnostic.modal_offset == 3 - applied
+    if applied != 3:
+        assert "anchor_offset=+3" in diagnostic.note()
+
+
+def test_the_agreeing_note_states_the_offset_it_agreed_at() -> None:
+    """"Anchors agree" is only meaningful next to which anchor was used."""
+    panel = _hard_panel()
+    diagnostic = run_splice_panel_gate(
+        panel, "pwm", results=_shifted(_oracle(panel), 2), anchor_offset=2
+    ).alignment
+    assert "anchor_offset=+2" in diagnostic.note()
+    assert "anchors agree" in diagnostic.note()

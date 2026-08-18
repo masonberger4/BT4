@@ -112,16 +112,28 @@ class AlignmentDiagnostic:
 
     Attributes:
         counts: ``(offset, number of sites peaking there)`` over :data:`PEAK_SEARCH`.
+            These are **residual** shifts, measured on the already-aligned track, so
+            ``0`` means the declared ``anchor_offset`` is right.
         n_sites: Sites the probe ran over.
+        applied_offset: The ``anchor_offset`` that was in force during the probe.
+            Carried so :meth:`note` can name the **absolute** value to declare rather
+            than the residual -- a user told to "pass anchor_offset=+1" while already
+            passing +2 would end up further from the truth, not closer.
     """
 
     counts: tuple[tuple[int, int], ...]
     n_sites: int
+    applied_offset: int = 0
 
     @property
     def modal_offset(self) -> int:
         """The most common peak offset, preferring ``0`` on a tie."""
         return max(self.counts, key=lambda item: (item[1], item[0] == 0), default=(0, 0))[0]
+
+    @property
+    def recommended_offset(self) -> int:
+        """The absolute ``anchor_offset`` to declare: what was applied, plus the residual."""
+        return self.applied_offset + self.modal_offset
 
     @property
     def fraction_at_zero(self) -> float:
@@ -139,12 +151,14 @@ class AlignmentDiagnostic:
                 f"alignment: the backend's score peaks {self.modal_offset:+d} from the "
                 f"declared position for most sites (only {self.fraction_at_zero:.1%} "
                 f"peak exactly on it) -- the anchors DISAGREE. Pass "
-                f"anchor_offset={self.modal_offset:+d} after confirming the backend's "
-                "convention, rather than reading these metrics as model quality"
+                f"anchor_offset={self.recommended_offset:+d} (currently "
+                f"{self.applied_offset:+d}) after confirming the backend's convention, "
+                "rather than reading these metrics as model quality"
             )
         return (
             f"alignment: peaks land on the declared position for "
-            f"{self.fraction_at_zero:.1%} of sites (modal offset 0) -- anchors agree"
+            f"{self.fraction_at_zero:.1%} of sites with anchor_offset="
+            f"{self.applied_offset:+d} -- anchors agree"
         )
 
 
@@ -195,9 +209,24 @@ def _tracks(result: SpliceResult, combined: bool) -> dict[str, tuple[float, ...]
 
     A combined-track backend collapses to one ``"splice"`` stratum rather than being
     credited with an all-zero acceptor track it never claimed to produce.
+
+    **The collapse unions the two tracks rather than taking the donor one.** For a
+    genuinely combined backend the two are equivalent -- Pangolin's acceptor track is
+    identically zero, so the maximum is its donor track -- but the *baselines* are
+    scored through this same function, and BT4's PWM baseline is a real two-track
+    predictor. Taking its donor track alone would make every acceptor site invisible
+    to the control, understating it by ~0.31 skill on a mixed panel and making a
+    combined-track head that much easier to beat. Per position, "is this a splice site
+    of either kind" is the stronger of the two claims, which is also how ``gt_ag``
+    unions its two motifs and how ``pooled_risk`` unions the tracks.
     """
     if combined:
-        return {"splice": result.donor}
+        return {
+            "splice": tuple(
+                max(donor, acceptor)
+                for donor, acceptor in zip(result.donor, result.acceptor, strict=True)
+            )
+        }
     return {"donor": result.donor, "acceptor": result.acceptor}
 
 
@@ -307,7 +336,11 @@ def _alignment(
                 key=lambda d: (_aligned(track, position + d, anchor_offset), -abs(d), -d),
             )
             counts[best] += 1
-    return AlignmentDiagnostic(counts=tuple(sorted(counts.items())), n_sites=n_sites)
+    return AlignmentDiagnostic(
+        counts=tuple(sorted(counts.items())),
+        n_sites=n_sites,
+        applied_offset=anchor_offset,
+    )
 
 
 def baseline_predictions(
@@ -354,6 +387,8 @@ def baseline_predictions(
     if name == "pwm":
         # The PWM baseline anchors on the same intronic dinucleotide the panel format
         # pins, so it is scored at offset 0 by construction rather than by assumption.
+        # In combined mode `_tracks` unions its donor and acceptor tracks, so the
+        # control keeps its full strength instead of going blind to every acceptor.
         results = score_splice_panel(panel, "pwm")
         combined = any(case.kind == "splice" for case in cases)
         tracks = [_tracks(result, combined) for result in results]
@@ -465,7 +500,7 @@ def run_splice_panel_gate(
     cases, refs = _build_cases(panel, scored, combined, anchor_offset)
     head_predictions = [case.predicted for case in cases]
     alignment = _alignment(panel, scored, combined, anchor_offset)
-    notes.append(f"{alignment.note()} (with anchor_offset={anchor_offset:+d})")
+    notes.append(alignment.note())
 
     head = _gate(cases, head_predictions, panel, settings)
     reports = tuple(
