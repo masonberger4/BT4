@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from bt4.biomodels.splice import SpliceResult, pooled_risk, score_in_context
 from bt4.biomodels.splice import default as splice_default
+from bt4.biomodels.splice.attestations import promote_if_attested
 from bt4.biomodels.splice.audit import (
     DEFAULT_MATCH_WINDOW,
     DEFAULT_SITE_THRESHOLD,
@@ -49,7 +50,10 @@ def available_splice_backends() -> list[SplicePredictor]:
     backends: list[SplicePredictor] = [ConsensusPwmSplicePredictor()]
     for cnn in (PangolinSplicePredictor(), SpliceAiSplicePredictor()):
         if cnn.available():
-            backends.append(cnn)
+            # Honors a committed fidelity attestation only when the caller has
+            # opted in ($BT4_SPLICE_USE_ATTESTED); a no-op otherwise, so the
+            # default audit stays advisory.
+            backends.append(promote_if_attested(cnn))
     return backends
 
 

@@ -34,7 +34,14 @@ from bt4.biomodels.expression import (
 from bt4.biomodels.expression import available_backends as available_expression_backends
 from bt4.biomodels.expression import default as expression_model
 from bt4.biomodels.expression import resolve_backend as resolve_expression_backend
-from bt4.biomodels.splice import SpliceAuditReport, SpliceFlag, SplicePredictor
+from bt4.biomodels.splice import (
+    USE_ATTESTED_SPLICE_ENV_VAR,
+    SpliceAuditReport,
+    SpliceFlag,
+    SplicePredictor,
+    attested_splice_promotion_enabled,
+    bundled_splice_attestation,
+)
 from bt4.constraints import (
     ForbiddenPreset,
     available_enzymes,
@@ -114,6 +121,7 @@ __all__ = [
     "HIGHLY_EXPRESSED",
     "PACKAGING_LIMITS",
     "REFERENCE_SETS",
+    "USE_ATTESTED_SPLICE_ENV_VAR",
     "ApplicationPreset",
     "Candidate",
     "CandidateSet",
@@ -147,6 +155,7 @@ __all__ = [
     "Violation",
     "apply_preset",
     "assemble_and_rank_candidates",
+    "attested_splice_promotion_enabled",
     "audit_candidate_set",
     "audit_construct",
     "available_enzymes",
@@ -158,6 +167,7 @@ __all__ = [
     "available_splice_backends",
     "available_tai_organisms",
     "build_table",
+    "bundled_splice_attestation",
     "candidates",
     "context_from_genbank",
     "count_codons",

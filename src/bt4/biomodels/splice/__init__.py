@@ -53,6 +53,12 @@ from bt4.biomodels.splice.attestation import (
     load_attestation,
     verified_predictor,
 )
+from bt4.biomodels.splice.attestations import (
+    USE_ATTESTED_ENV_VAR,
+    attested_promotion_enabled,
+    bundled_attestation,
+    promote_if_attested,
+)
 from bt4.biomodels.splice.audit import (
     DEFAULT_MATCH_WINDOW,
     DEFAULT_SITE_THRESHOLD,
@@ -86,6 +92,12 @@ from bt4.biomodels.splice.spliceai import (
     verify_spliceai_fidelity,
 )
 
+# Names carrying the `splice` qualifier, for re-export through `bt4.api` where
+# "attestation" alone would be ambiguous against the expression head's.
+USE_ATTESTED_SPLICE_ENV_VAR = USE_ATTESTED_ENV_VAR
+attested_splice_promotion_enabled = attested_promotion_enabled
+bundled_splice_attestation = bundled_attestation
+
 __all__ = [
     "ASSP_ENDPOINT",
     "DEFAULT_MATCH_WINDOW",
@@ -94,6 +106,8 @@ __all__ = [
     "DEFAULT_TOP_K",
     "FIXTURE_DIR_ENV_VAR",
     "MAX_ATTESTATION_TOLERANCE",
+    "USE_ATTESTED_ENV_VAR",
+    "USE_ATTESTED_SPLICE_ENV_VAR",
     "AgreementReport",
     "AsspError",
     "AsspReportError",
@@ -120,8 +134,12 @@ __all__ = [
     "SplicePredictor",
     "SpliceResult",
     "attest_backend",
+    "attested_promotion_enabled",
+    "attested_splice_promotion_enabled",
     "audit_splice",
     "backend_agreement",
+    "bundled_attestation",
+    "bundled_splice_attestation",
     "cache_key",
     "default",
     "default_assp_transport",
@@ -130,6 +148,7 @@ __all__ = [
     "parse_assp_report",
     "pool_log_odds",
     "pooled_risk",
+    "promote_if_attested",
     "score_in_context",
     "spearman",
     "verified_predictor",

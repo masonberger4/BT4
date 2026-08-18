@@ -384,12 +384,17 @@ aborting with "no feasible codon".
   `SpliceAiSplicePredictor` (`biomodels/splice/spliceai.py`) — with the
   two-backend agreement harness (`biomodels/splice/agreement.py`,
   `scripts/compare_splice_backends.py`) that makes agreement between two real,
-  independently-trained CNNs reachable. Each reproduces its upstream model's
-  scores **bit-for-bit** (verified against the published weights) yet ships
-  **`calibrated=False`** — no reference panel is bundled (capturing one needs the
-  licensed weights and reproduces licensed outputs), so `default()` keeps
-  returning the PWM baseline and a maintainer promotes to calibrated only after
-  recording the fidelity gate. **Honest scope:** these predict splice-*site
+  independently-trained CNNs reachable. **Pangolin has now passed its
+  integration-fidelity gate** (2026-08, on a maintainer machine holding the GPL
+  weights): 18 cases, **max abs deviation exactly 0.0** — the adapter reproduces
+  upstream's per-position scores bit-for-bit. Its `FidelityAttestation` is
+  committed (`biomodels/splice/data/pangolin.attestation.json`), and
+  `promote_if_attested` honors it **only under an explicit opt-in**
+  (`BT4_SPLICE_USE_ATTESTED=1` / `--use-attested-splice`), so `default()` still
+  returns the PWM baseline. **SpliceAI remains `calibrated=False`** — its gate has
+  not been run. The captured panel itself is never committed: it *is* the licensed
+  model output, and only the attestation's eight license-clean scalars plus the
+  public weight SHA-256s ship. **Honest scope:** these predict splice-*site
   presence*, and a lower Δ means lower *predicted cryptic-splice risk* — a strong
   prior, but not the same as validated expression gain (the same CAI-as-weak-proxy
   caution); SpliceAI's CC BY-NC weights additionally make that backend
@@ -827,10 +832,17 @@ control.
   like GPL ViennaRNA), scored out-of-loop as an audit/reranker, with its
   **weights hash-pinned** (SHA-256 of the published files, verified *before* they
   are loaded) so runs stay reproducible-from-manifest. Each reproduces its
-  upstream model's per-nucleotide scores **bit-for-bit** yet ships
-  `calibrated=False` (no reference panel is bundled — the integration-fidelity
-  gates `verify_pangolin_fidelity` / `verify_spliceai_fidelity` are the promotion
-  path), so `default()` keeps returning the PWM baseline. The **two-backend
+  upstream model's per-nucleotide scores **bit-for-bit**. **Pangolin's gate has
+  been run and passed** (18 cases, deviation 0.0); its attestation is committed and
+  honored under an explicit opt-in, while **SpliceAI stays `calibrated=False`**
+  until its own gate runs. `default()` keeps returning the PWM baseline either way
+  — it needs no per-user weight configuration, so it cannot presume a licensed
+  model is installed or wanted. A pass is **regime-scoped**: it was captured on the
+  bare-CDS, `N`-padded path, so `score_in_context` and `_FlankedPredictor` clear
+  `calibrated` when real flanks are supplied. And it is *integration* fidelity, not
+  statistical calibration — across eight predictors these models score median prAUC
+  **0.419 on exonic** variants vs 0.773 intronic (Smith & Kitzman 2023), and BT4
+  designs coding sequence, so its whole regime is the weaker half. The **two-backend
   agreement harness** (`backend_agreement` + `scripts/compare_splice_backends.py`)
   reports pairwise Spearman rank / sign agreement across whichever backends are
   available — with both CNNs installed, agreement between two real,
