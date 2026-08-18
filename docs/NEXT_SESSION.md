@@ -355,11 +355,22 @@ items 1–3 are in
     from a pinned GENCODE release for site prediction; `kitzmanlab/splicebench2023`,
     MIT, 3,616 pre-scored variants for variant effect), running the gate and deriving
     BT4's own operating point, writing `docs/REVIEW_splice_calibration.md`, the
-    integration-fidelity gate for **SpliceAI** (needs the CC BY-NC weights and a
-    TF 2.15 environment — see the runbook's A1 for the Keras-3 pin), and a Studio
-    checkbox for the opt-in. The reproducible fidelity workflow is three scripts:
-    `make_splice_panel.py` → `capture_pangolin_panel.py` (never imports `bt4`) →
-    `run_splice_fidelity_gate.py`.
+    integration-fidelity gate for **SpliceAI**, and a Studio checkbox for the opt-in.
+
+    **SpliceAI's tooling is now complete — only the licensed weights step is left.**
+    `scripts/capture_spliceai_panel.py` ships alongside the Pangolin one (same
+    independence guard, statically enforced), and `run_splice_fidelity_gate.py`
+    dispatches on the capture payload's own `backend` field, so a Pangolin capture can
+    never be checked against the SpliceAI adapter. The SpliceAI capture **imports
+    upstream's own `one_hot_encode`** instead of re-deriving it — SpliceAI ships it as a
+    reusable function where Pangolin's CLI encodes inline — which makes a transposed
+    layout or wrong base order in BT4's `_one_hot_rows` a gate *failure* rather than an
+    artifact reproduced on both sides. It has **no fallback encoder** on purpose, and a
+    test asserts it defines none: the obvious "fix" for the NumPy 2 `np.fromstring`
+    breakage would silently destroy the independence. Remaining human step: the CC BY-NC
+    weights and a TF 2.15 environment (runbook A1 has the Keras-3 pin). The workflow is
+    `make_splice_panel.py` → `capture_{pangolin,spliceai}_panel.py` (neither imports
+    `bt4`) → `run_splice_fidelity_gate.py`.
 
 11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — **the machinery
     is now built; only the data step is left.** Landed: `within_group` (the strict bar)

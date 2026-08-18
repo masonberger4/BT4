@@ -3,8 +3,16 @@
 Steps **A5** and **A6** of
 [`docs/DESIGN_splice_cnn_calibration.md`](../docs/DESIGN_splice_cnn_calibration.md).
 Takes the panel built by ``scripts/make_splice_panel.py`` and the expectations
-captured by ``scripts/capture_pangolin_panel.py`` (which never imports ``bt4``),
-runs :func:`~bt4.biomodels.splice.verify_pangolin_fidelity`, and reports.
+captured by ``scripts/capture_pangolin_panel.py`` or
+``scripts/capture_spliceai_panel.py`` (neither of which ever imports ``bt4``),
+runs the matching gate, and reports.
+
+The two backends differ in shape, and the difference is real rather than
+cosmetic: Pangolin's head is a **binary softmax** emitting one combined
+``P(splice)``, so its capture carries a single track; SpliceAI's is a **3-way
+softmax** (null / acceptor / donor), so its capture carries two and both must
+match. The ``--backend`` is read from the capture payload itself, so a Pangolin
+capture can never be checked against the SpliceAI adapter.
 
 **What a pass does and does not mean.** Passing proves BT4's adapter reproduces
 the published model's own numbers -- *integration fidelity*. It does **not** show
@@ -26,6 +34,9 @@ Run it::
     python scripts/run_splice_fidelity_gate.py \\
         --panel panel_sequences.json --captured expected_pangolin.json
 
+    python scripts/run_splice_fidelity_gate.py \\
+        --panel panel_sequences.json --captured expected_spliceai.json
+
     python scripts/run_splice_fidelity_gate.py ... \\
         --attest-out src/bt4/biomodels/splice/data/pangolin.attestation.json
 
@@ -39,7 +50,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-__all__ = ["load_cases", "main", "spread_report"]
+__all__ = ["case_peaks", "load_cases", "main", "resolve_backend", "spread_report"]
 
 # Below this range of peak scores the panel cannot distinguish a correct wiring
 # from several wrong ones, so a pass on it is reported as weak.
@@ -50,16 +61,52 @@ MIN_USEFUL_MAX_PEAK = 0.10
 """At least one case should score meaningfully above zero, or nothing is exercised."""
 
 
+def case_peaks(case: dict) -> list[float]:
+    """Return every score in one captured case, whatever shape the capture has.
+
+    Pangolin captures carry a single ``expected_site_scores`` track; SpliceAI
+    captures carry ``expected_acceptor`` and ``expected_donor``. Reading both
+    shapes here keeps the panel-strength warning meaningful for either backend
+    instead of silently reporting zeros for one of them.
+    """
+    if "expected_site_scores" in case:
+        return [float(v) for v in case["expected_site_scores"]]
+    return [
+        float(v)
+        for key in ("expected_acceptor", "expected_donor")
+        for v in case.get(key, ())
+    ]
+
+
+def resolve_backend(captured: dict) -> str:
+    """Return which backend a capture payload came from.
+
+    Defaults to ``"pangolin"`` for a payload with no ``backend`` field, since that
+    is what captures written before the field existed are.
+
+    Raises:
+        ValueError: On an unrecognised backend name -- better than running the
+            wrong adapter against the right numbers.
+    """
+    backend = (captured.get("backend") or "pangolin").strip().lower()
+    if backend not in ("pangolin", "spliceai"):
+        raise ValueError(
+            f"unknown backend {backend!r} in the capture payload; "
+            "expected 'pangolin' or 'spliceai'"
+        )
+    return backend
+
+
 def spread_report(cases: Sequence[dict]) -> dict[str, float]:
     """Return peak-score statistics across the captured panel.
 
     Args:
-        cases: Captured cases, each with ``expected_site_scores``.
+        cases: Captured cases, in either backend's shape (see :func:`case_peaks`).
 
     Returns:
         ``min_peak`` / ``max_peak`` / ``mean_peak`` / ``spread`` over per-case peaks.
     """
-    peaks = [max(c["expected_site_scores"]) for c in cases if c["expected_site_scores"]]
+    peaks = [max(scores) for case in cases if (scores := case_peaks(case))]
     if not peaks:
         return {"min_peak": 0.0, "max_peak": 0.0, "mean_peak": 0.0, "spread": 0.0}
     return {
@@ -71,14 +118,27 @@ def spread_report(cases: Sequence[dict]) -> dict[str, float]:
 
 
 def load_cases(captured: dict) -> list:
-    """Turn a capture payload into ``FidelityCase`` objects.
+    """Turn a capture payload into the fidelity-case objects its backend needs.
+
+    Dispatches on the payload's own ``backend`` field, so a Pangolin capture can
+    never be handed to the SpliceAI gate: the numbers would still be numbers, they
+    would just be describing a different model.
 
     Split out from :func:`main` so the parsing and pairing logic is testable
-    without torch or the licensed weights installed (the gate itself needs the
-    real adapter, but everything around it should still be covered by CI).
+    without torch, TensorFlow, or the licensed weights installed (the gate itself
+    needs the real adapter, but everything around it should still be covered by CI).
     """
-    from bt4.biomodels.splice import FidelityCase
+    from bt4.biomodels.splice import FidelityCase, SpliceAiFidelityCase
 
+    if resolve_backend(captured) == "spliceai":
+        return [
+            SpliceAiFidelityCase(
+                sequence=c["sequence"],
+                expected_acceptor=tuple(c["expected_acceptor"]),
+                expected_donor=tuple(c["expected_donor"]),
+            )
+            for c in captured["cases"]
+        ]
     return [
         FidelityCase(
             sequence=c["sequence"],
@@ -114,15 +174,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     import bt4
-    from bt4.biomodels.splice import (
-        PangolinSplicePredictor,
-        attest_backend,
-        verify_pangolin_fidelity,
-    )
-    from bt4.biomodels.splice.pangolin import PINNED_WEIGHT_SHA256
+    from bt4.biomodels.splice import attest_backend
 
     captured = json.loads(Path(args.captured).read_text(encoding="utf-8"))
     cases_raw = captured["cases"]
+    backend = resolve_backend(captured)
 
     # Bind the capture to the panel it came from, so a mismatched pairing is caught
     # rather than silently compared against the wrong sequences.
@@ -140,9 +196,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     cases = load_cases(captured)
-    report = verify_pangolin_fidelity(PangolinSplicePredictor(), cases, tolerance=args.tolerance)
+    if backend == "spliceai":
+        from bt4.biomodels.splice import SpliceAiSplicePredictor, verify_spliceai_fidelity
+        from bt4.biomodels.splice.spliceai import PINNED_WEIGHT_SHA256
+
+        report = verify_spliceai_fidelity(
+            SpliceAiSplicePredictor(), cases, tolerance=args.tolerance
+        )
+    else:
+        from bt4.biomodels.splice import PangolinSplicePredictor, verify_pangolin_fidelity
+        from bt4.biomodels.splice.pangolin import PINNED_WEIGHT_SHA256
+
+        report = verify_pangolin_fidelity(
+            PangolinSplicePredictor(), cases, tolerance=args.tolerance
+        )
 
     result = {
+        "backend": backend,
         "passed": report.passed,
         "max_abs_deviation": report.max_abs_deviation,
         "n_cases": report.n_cases,
@@ -154,12 +224,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
-        print("\n=== Pangolin integration-fidelity gate ===")
+        print(f"\n=== {backend} integration-fidelity gate ===")
         print(f"  cases              {report.n_cases}")
         print(f"  tolerance          {report.tolerance}")
         print(f"  max abs deviation  {report.max_abs_deviation:.3e}")
         print(f"  PASSED             {report.passed}")
-        print("\n  panel peak P(splice):")
+        label = "acceptor/donor probability" if backend == "spliceai" else "P(splice)"
+        print(f"\n  panel peak {label}:")
         print(f"    min {spread['min_peak']:.4f}   max {spread['max_peak']:.4f}   "
               f"mean {spread['mean_peak']:.4f}   spread {spread['spread']:.4f}")
         if panel_weak:
@@ -177,7 +248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.attest_out:
         attestation = attest_backend(
-            "pangolin", report, dict(PINNED_WEIGHT_SHA256), bt4_version=bt4.__version__
+            backend, report, dict(PINNED_WEIGHT_SHA256), bt4_version=bt4.__version__
         )
         out = Path(args.attest_out)
         out.parent.mkdir(parents=True, exist_ok=True)

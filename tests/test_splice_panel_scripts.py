@@ -72,6 +72,12 @@ def capture_script() -> ModuleType:
     return _load("bt4_capture_pangolin_panel", "capture_pangolin_panel.py")
 
 
+@pytest.fixture(scope="module")
+def spliceai_capture_script() -> ModuleType:
+    """The SpliceAI capture module (imports cleanly without TensorFlow)."""
+    return _load("bt4_capture_spliceai_panel", "capture_spliceai_panel.py")
+
+
 # --------------------------------------------------------------------------
 # The panel
 
@@ -140,14 +146,17 @@ def test_panel_without_designed_needs_no_bt4_api(panel_script: ModuleType) -> No
 # The capture script's independence from bt4
 
 
-def test_capture_script_contains_no_bt4_import() -> None:
-    """Statically assert the capture never imports bt4.
+@pytest.mark.parametrize(
+    "filename", ["capture_pangolin_panel.py", "capture_spliceai_panel.py"]
+)
+def test_capture_script_contains_no_bt4_import(filename: str) -> None:
+    """Statically assert neither capture ever imports bt4.
 
     The runtime guard can only fire if the module is reached; this check is
     structural, so the separation cannot rot silently (the same posture as the
     attestation's license-clean field test).
     """
-    source = (_SCRIPTS / "capture_pangolin_panel.py").read_text(encoding="utf-8")
+    source = (_SCRIPTS / filename).read_text(encoding="utf-8")
     tree = ast.parse(source)
     imported: list[str] = []
     for node in ast.walk(tree):
@@ -156,7 +165,7 @@ def test_capture_script_contains_no_bt4_import() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.append(node.module)
     offenders = [m for m in imported if m == "bt4" or m.startswith("bt4.")]
-    assert not offenders, f"capture script must not import bt4, found {offenders}"
+    assert not offenders, f"{filename} must not import bt4, found {offenders}"
 
 
 def test_independence_guard_fires_when_bt4_is_loaded(capture_script: ModuleType) -> None:
@@ -291,3 +300,175 @@ def test_capture_resolution_order_matches_the_adapter(capture_script: ModuleType
     from bt4.biomodels.splice.pangolin import _WEIGHTS_ENV_VAR
 
     assert _WEIGHTS_ENV_VAR == "BT4_PANGOLIN_MODEL_DIR"
+
+
+# --------------------------------------------------------------------------
+# The SpliceAI capture (the sibling of the Pangolin one, with one extra rule)
+
+
+def test_spliceai_independence_guard_fires_when_bt4_is_loaded(
+    spliceai_capture_script: ModuleType,
+) -> None:
+    """The runtime guard refuses to capture in a process where bt4 is imported."""
+    assert "bt4" in sys.modules
+    with pytest.raises(RuntimeError, match="independent"):
+        spliceai_capture_script._assert_bt4_not_imported()
+
+
+def test_spliceai_capture_constants_agree_with_the_adapter(
+    spliceai_capture_script: ModuleType,
+) -> None:
+    """The independent capture and BT4's adapter must describe the same model.
+
+    They are deliberately separate implementations; if their constants drift, the
+    gate would compare two different models and its verdict would be meaningless.
+    """
+    from bt4.biomodels.splice.spliceai import (
+        ACCEPTOR_CHANNEL,
+        DONOR_CHANNEL,
+        PINNED_WEIGHT_SHA256,
+        SPLICEAI_ENSEMBLE_SIZE,
+        SPLICEAI_FLANK,
+    )
+
+    assert spliceai_capture_script.SPLICEAI_FLANK == SPLICEAI_FLANK
+    assert spliceai_capture_script.ENSEMBLE_SIZE == SPLICEAI_ENSEMBLE_SIZE
+    assert spliceai_capture_script.ACCEPTOR_CHANNEL == ACCEPTOR_CHANNEL
+    assert spliceai_capture_script.DONOR_CHANNEL == DONOR_CHANNEL
+    expected = {
+        spliceai_capture_script.WEIGHT_TEMPLATE.format(index=i)
+        for i in range(1, spliceai_capture_script.ENSEMBLE_SIZE + 1)
+    }
+    assert expected == set(PINNED_WEIGHT_SHA256)
+
+
+def test_spliceai_capture_uses_upstreams_own_one_hot_encoder() -> None:
+    """The distinctive rule for this capture, and the easiest one to break.
+
+    SpliceAI ships ``one_hot_encode`` as a reusable function, so the capture imports
+    it rather than re-deriving the encoding. That is what makes a transposed layout,
+    a wrong base order, or a mishandled ``N`` in BT4's own ``_one_hot_rows`` show up
+    as a gate FAILURE instead of being reproduced identically on both sides.
+
+    A well-meaning "fix" for the NumPy 2 ``np.fromstring`` breakage -- adding a local
+    fallback encoder -- would silently destroy that, and the gate would keep passing.
+    So the absence of a local encoder is asserted structurally.
+    """
+    source = (_SCRIPTS / "capture_spliceai_panel.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    imports_upstream = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "spliceai.utils"
+        and any(alias.name == "one_hot_encode" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    assert imports_upstream, "the capture must import spliceai.utils.one_hot_encode"
+
+    defined = [
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and "one_hot" in node.name
+    ]
+    assert defined == ["_upstream_one_hot"], (
+        "the capture must not define its own one-hot encoder -- re-deriving the "
+        f"encoding makes the gate agree with BT4 by construction (found {defined})"
+    )
+
+
+def test_spliceai_capture_resolution_order_matches_the_adapter(
+    spliceai_capture_script: ModuleType,
+) -> None:
+    """Same env var, same order, so a working adapter setup works here too."""
+    from bt4.biomodels.splice.spliceai import _WEIGHTS_ENV_VAR
+
+    source = (_SCRIPTS / "capture_spliceai_panel.py").read_text(encoding="utf-8")
+    assert _WEIGHTS_ENV_VAR in source
+    assert spliceai_capture_script.resolve_model_dir("/definitely/not/a/dir") is None
+
+
+def test_spliceai_capture_prefers_explicit_dir_over_env(
+    spliceai_capture_script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit --model-dir wins over the environment."""
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    monkeypatch.setenv("BT4_SPLICEAI_MODEL_DIR", str(tmp_path / "from-env"))
+    assert spliceai_capture_script.resolve_model_dir(str(explicit)) == explicit
+
+
+# --------------------------------------------------------------------------
+# The gate runner dispatches on the capture's own backend
+
+
+def test_backend_defaults_to_pangolin_for_a_legacy_capture(gate_script: ModuleType) -> None:
+    """Captures written before the field existed are Pangolin captures."""
+    assert gate_script.resolve_backend({}) == "pangolin"
+    assert gate_script.resolve_backend({"backend": "SpliceAI"}) == "spliceai"
+
+
+def test_an_unknown_backend_is_refused(gate_script: ModuleType) -> None:
+    """Better than running the wrong adapter against the right numbers."""
+    with pytest.raises(ValueError, match="unknown backend"):
+        gate_script.resolve_backend({"backend": "assp"})
+
+
+def test_load_cases_builds_spliceai_cases_for_a_spliceai_capture(
+    gate_script: ModuleType,
+) -> None:
+    """Two tracks, not one -- SpliceAI's 3-way softmax genuinely separates them."""
+    from bt4.biomodels.splice import SpliceAiFidelityCase
+
+    cases = gate_script.load_cases(
+        {
+            "backend": "spliceai",
+            "cases": [
+                {
+                    "sequence": "ACGT",
+                    "expected_acceptor": [0.1, 0.2, 0.3, 0.4],
+                    "expected_donor": [0.5, 0.6, 0.7, 0.8],
+                }
+            ],
+        }
+    )
+    assert len(cases) == 1
+    assert isinstance(cases[0], SpliceAiFidelityCase)
+    assert cases[0].expected_acceptor == (0.1, 0.2, 0.3, 0.4)
+    assert cases[0].expected_donor == (0.5, 0.6, 0.7, 0.8)
+
+
+def test_a_pangolin_capture_cannot_be_checked_against_spliceai(
+    gate_script: ModuleType,
+) -> None:
+    """The shapes are incompatible, so the mismatch surfaces rather than scoring."""
+    from bt4.biomodels.splice import FidelityCase
+
+    pangolin_payload = {
+        "backend": "pangolin",
+        "cases": [{"sequence": "ACGT", "expected_site_scores": [0.1, 0.2, 0.3, 0.4]}],
+    }
+    assert isinstance(gate_script.load_cases(pangolin_payload)[0], FidelityCase)
+    with pytest.raises(KeyError):
+        gate_script.load_cases({**pangolin_payload, "backend": "spliceai"})
+
+
+def test_case_peaks_reads_both_capture_shapes(gate_script: ModuleType) -> None:
+    """The panel-strength warning must stay meaningful for either backend."""
+    assert gate_script.case_peaks({"expected_site_scores": [0.1, 0.9]}) == [0.1, 0.9]
+    assert gate_script.case_peaks(
+        {"expected_acceptor": [0.1], "expected_donor": [0.9]}
+    ) == [0.1, 0.9]
+    assert gate_script.case_peaks({}) == []
+
+
+def test_spread_report_works_on_a_spliceai_capture(gate_script: ModuleType) -> None:
+    """Otherwise a two-track capture would silently report a flat, zero panel."""
+    report = gate_script.spread_report(
+        [
+            {"expected_acceptor": [0.0, 0.02], "expected_donor": [0.9, 0.0]},
+            {"expected_acceptor": [0.01, 0.0], "expected_donor": [0.0, 0.0]},
+        ]
+    )
+    assert report["max_peak"] == pytest.approx(0.9)
+    assert report["min_peak"] == pytest.approx(0.01)
+    assert report["spread"] > gate_script.MIN_USEFUL_PEAK_SPREAD

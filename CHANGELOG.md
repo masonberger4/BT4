@@ -7,7 +7,49 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **The `pwm` control went blind to every acceptor site when the strata collapsed.**
+  `_tracks` collapses donor and acceptor into one `"splice"` stratum for a
+  combined-track backend, which is right for the *head* — Pangolin's acceptor track is
+  identically zero, so its donor track carries everything. But the **baselines** are
+  scored through the same function, and BT4's PWM baseline is a real two-track
+  predictor. Taking its donor track alone made half the positives unreachable for the
+  control: measured, **0.344 skill instead of 0.654** on a mixed panel, so a
+  Pangolin-class head was easier to beat than it should have been — in exactly the mode
+  Pangolin runs in, and against the very claim the module is built on. The collapse now
+  **unions** the two tracks, which is a no-op for a genuinely combined backend and
+  restores the control otherwise. Found by adversarial review.
+- **The alignment diagnostic reported a residual offset as if it were absolute.** The
+  probe runs on the already-aligned track, so its modal offset is the shift *remaining*
+  after `anchor_offset` is applied. The note printed that number as the value to
+  declare, so a user who had already passed `+1` against a true `+3` was told to pass
+  `+2` — further from the truth, in a message they had every reason to trust. It now
+  reports `recommended_offset` (applied + residual) and names the offset currently in
+  force, and the agreeing message states which anchor it agreed at.
+
 ### Added
+- **SpliceAI's integration-fidelity tooling, completing Part A's scripts.** Only the
+  licensed weights step is left for that backend.
+  - **`scripts/capture_spliceai_panel.py`** — the sibling of the Pangolin capture, with
+    the same runtime independence guard and the same statically-enforced rule that it
+    never imports `bt4`.
+  - **It imports upstream's own `one_hot_encode` rather than re-deriving it.** Pangolin's
+    CLI encodes inline, which forced that capture to reimplement it; SpliceAI ships the
+    encoder as a reusable function, so importing it is strictly stronger evidence — a
+    transposed layout, a wrong base order, or a mishandled `N` in BT4's own
+    `_one_hot_rows` now surfaces as a gate **failure** instead of being reproduced
+    identically on both sides.
+  - **No fallback encoder, deliberately**, and a test asserts the script defines none.
+    The obvious fix for the NumPy 2 `np.fromstring` breakage — adding a local encoder —
+    would silently destroy the independence while leaving the gate passing. The script
+    refuses and names the `numpy<2` pin instead.
+  - **`run_splice_fidelity_gate.py` now dispatches on the capture payload's own
+    `backend`**, so a Pangolin capture can never be checked against the SpliceAI adapter:
+    the numbers would still be numbers, they would just describe a different model. A
+    payload with no `backend` field is treated as Pangolin, so existing captures keep
+    working. Its panel-strength warning reads both capture shapes — one combined
+    `P(splice)` track for Pangolin's binary head, two for SpliceAI's 3-way softmax — so a
+    two-track capture is no longer reported as a flat, zero panel.
 - **An annotated splice-panel format, and the baselines a splice backend must beat.**
   The runnable half of Part B of `docs/DESIGN_splice_cnn_calibration.md`: everything
   needed to gate a wrapped CNN on real data except the data.
