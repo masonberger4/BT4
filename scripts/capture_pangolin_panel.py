@@ -24,9 +24,13 @@ fail the gate for a reason that has nothing to do with BT4. This script therefor
 reimplements the **CLI's** path: v2 weights, folds 1-3, channels [1,4,7,10],
 averaged across folds and then across the four tissue heads.
 
-Weights are located from ``$BT4_PANGOLIN_MODEL_DIR`` or ``--model-dir``, **not**
-``pkg_resources`` (removed in setuptools >= 81, which ``pip install torch``
-installs).
+Weights are located from ``--model-dir``, then ``$BT4_PANGOLIN_MODEL_DIR``, then
+the ``models`` directory inside the installed ``pangolin`` package -- the same
+order BT4's adapter uses, so a maintainer who never needed to set the variable
+does not have to discover it here. Resolution deliberately imports ``pangolin``
+rather than ``pkg_resources`` (removed in setuptools >= 81, which
+``pip install torch`` installs). Importing ``pangolin`` is fine; importing ``bt4``
+is what would compromise the capture.
 
 The captured scores are **GPL-derived model outputs**. Write them outside the BT4
 repository and never commit them; only the license-clean scalars of a passing gate
@@ -49,7 +53,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-__all__ = ["capture_panel", "main", "site_scores"]
+__all__ = ["capture_panel", "main", "resolve_model_dir", "site_scores"]
 
 PANGOLIN_FLANK = 5000
 """``N`` bases padded each side; Pangolin returns scores for the middle N-10000."""
@@ -78,6 +82,34 @@ def _assert_bt4_not_imported() -> None:
             "bt4 is imported in this process -- the capture must be independent of "
             f"the adapter under test (found: {leaked[:5]})"
         )
+
+
+def resolve_model_dir(explicit: str | None = None) -> Path | None:
+    """Resolve the Pangolin weights directory, or ``None``.
+
+    Order: ``explicit`` -> ``$BT4_PANGOLIN_MODEL_DIR`` -> the ``models`` directory
+    of the installed ``pangolin`` package. This mirrors
+    :meth:`PangolinSplicePredictor.weights_dir` **without** importing ``bt4``:
+    the independence rule forbids the adapter under test, not the upstream package
+    whose scores are being captured.
+
+    Never raises -- an unresolvable location is reported by the caller.
+    """
+    import os
+
+    for candidate in (explicit, os.environ.get("BT4_PANGOLIN_MODEL_DIR")):
+        if candidate:
+            path = Path(candidate)
+            return path if path.is_dir() else None
+    try:
+        import pangolin
+    except ImportError:
+        return None
+    pkg_file = getattr(pangolin, "__file__", None)
+    if not pkg_file:
+        return None
+    models = Path(pkg_file).resolve().parent / "models"
+    return models if models.is_dir() else None
 
 
 def _one_hot(seq: str):
@@ -188,18 +220,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--model-dir",
         default=None,
-        help="Pangolin weights directory (default: $BT4_PANGOLIN_MODEL_DIR).",
+        help="Pangolin weights directory (default: $BT4_PANGOLIN_MODEL_DIR, "
+        "then the installed pangolin package).",
     )
     parser.add_argument("--limit", type=int, default=None, help="Only score the first N sequences.")
     args = parser.parse_args(argv)
 
-    import os
+    model_dir = resolve_model_dir(args.model_dir)
+    if model_dir is None:
+        parser.error(
+            "no Pangolin weights directory resolved: pass --model-dir, set "
+            "$BT4_PANGOLIN_MODEL_DIR, or install the 'pangolin' package"
+        )
 
-    model_dir = args.model_dir or os.environ.get("BT4_PANGOLIN_MODEL_DIR")
-    if not model_dir:
-        parser.error("pass --model-dir or set $BT4_PANGOLIN_MODEL_DIR")
-
-    payload = capture_panel(Path(args.panel), Path(model_dir), limit=args.limit)
+    payload = capture_panel(Path(args.panel), model_dir, limit=args.limit)
     Path(args.out).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     peaks = [max(c["expected_site_scores"]) for c in payload["cases"] if c["expected_site_scores"]]

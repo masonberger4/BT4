@@ -260,3 +260,34 @@ def test_gate_tolerance_floor_matches_the_attestation_floor(gate_script: ModuleT
 
     parser_default = 1e-3
     assert parser_default <= MAX_ATTESTATION_TOLERANCE
+
+
+def test_capture_resolves_weights_without_importing_bt4(capture_script: ModuleType) -> None:
+    """The capture resolves its own weights dir, mirroring the adapter's order.
+
+    A maintainer whose ``pangolin`` install lets BT4 auto-resolve should not have
+    to discover an environment variable here -- but the resolution must reach that
+    conclusion by importing ``pangolin``, never ``bt4``.
+    """
+    assert capture_script.resolve_model_dir("/definitely/not/a/directory") is None
+    assert capture_script.resolve_model_dir(str(_SCRIPTS)) == Path(_SCRIPTS)
+
+
+def test_capture_prefers_explicit_dir_over_env(
+    capture_script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit --model-dir wins over the environment variable."""
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.setenv("BT4_PANGOLIN_MODEL_DIR", str(tmp_path))
+    assert capture_script.resolve_model_dir(str(other)) == other
+    assert capture_script.resolve_model_dir(None) == tmp_path
+
+
+def test_capture_resolution_order_matches_the_adapter(capture_script: ModuleType) -> None:
+    """Both resolvers read the same env var, so the two agree on where to look."""
+    source = (_SCRIPTS / "capture_pangolin_panel.py").read_text(encoding="utf-8")
+    assert "BT4_PANGOLIN_MODEL_DIR" in source
+    from bt4.biomodels.splice.pangolin import _WEIGHTS_ENV_VAR
+
+    assert _WEIGHTS_ENV_VAR == "BT4_PANGOLIN_MODEL_DIR"
