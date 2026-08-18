@@ -42,9 +42,13 @@ scores >99% on this task.
   (Pangolin AUPRC 0.85, SpliceAI 0.77) and because it is sensitive to the false
   positives that matter at this prevalence. But raw PR-AUC is **not comparable
   across panels**: its floor is the prevalence, which is a *construction choice*.
-  So the report carries ``pr_auc_skill`` (0 at no-skill, 1 at perfect, for any
-  prevalence) and records the panel's negative construction, without which a
-  threshold is passable by thinning negatives.
+  So the report carries ``pr_auc_skill`` (0 at no-skill, 1 at perfect, at any
+  prevalence) **and** records the panel's negative construction. The second is not
+  belt-and-braces: rescaling the floor does not make the number comparable across
+  panels, because average precision's prevalence dependence is not a constant
+  offset. Measured, at fixed model quality, skill falls 0.589 -> 0.152 as negatives
+  go from 1k to 30k while ROC-AUC holds at 0.91. The recorded construction is the
+  only thing that makes two panels' numbers mean the same thing.
 * **ROC-AUC** is reported because it is stable under negative-sampling where PR-AUC
   is not -- not as a skill claim, and never as a pass axis: at splice prevalence a
   model with hopeless precision still scores above 0.9.
@@ -108,8 +112,14 @@ class SpliceSiteCase:
         kind: ``"donor"`` or ``"acceptor"`` -- the stratum for this task. (Pangolin
             emits one combined track and cannot distinguish them; such a panel uses
             a single ``"splice"`` kind rather than pretending to a split.)
-        group: The leakage-control group, a **chromosome**. Cases sharing a group
-            are never split across folds.
+        group: The leakage-control group, a **chromosome**.
+
+            Honest scope: this gate does **no** splitting -- there are no folds here,
+            unlike the expression gate. The group is used to *refuse* a panel drawn
+            from fewer than two chromosomes and to report the count, because a
+            single-chromosome evaluation cannot support a general claim. Controlling
+            leakage is the panel builder's job (draw from the models' held-out
+            chromosomes); this records whether they had the material to do it.
     """
 
     predicted: float
@@ -154,7 +164,10 @@ class SpliceStratumReport:
             beside it so the number is never separated from the question it answers.
         pr_auc: Average precision within the stratum.
         pr_auc_skill: :attr:`pr_auc` rescaled to ``[no-skill = 0, perfect = 1]``, the
-            only PR figure comparable across panels of differing prevalence.
+            PR figure whose floor is 0 and ceiling 1 at every prevalence. It is
+            **not** comparable across panels -- rescaling the floor does not remove
+            average precision's prevalence dependence -- which is why
+            ``negative_construction`` is required rather than optional.
         roc_auc: Prevalence-stable discrimination; not a skill claim here.
         top_k_accuracy: Pooled top-k in the Zeng & Li construction.
         mcc: Matthews correlation at :attr:`SpliceGateReport.threshold`.

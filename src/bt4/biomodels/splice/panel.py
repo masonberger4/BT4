@@ -61,6 +61,7 @@ from bt4.domain.sequence import validate_dna
 __all__ = [
     "ACCEPTOR_MOTIF",
     "DONOR_MOTIF",
+    "HELD_OUT_CHROMOSOMES",
     "MIN_MOTIF_CONSISTENCY",
     "OFFSET_SEARCH",
     "PANEL_COLUMNS",
@@ -69,6 +70,7 @@ __all__ = [
     "SplicePanel",
     "SpliceWindow",
     "canonical_motif_at",
+    "normalize_chromosome",
     "panel_from_windows",
     "read_splice_panel",
 ]
@@ -91,11 +93,43 @@ common conventions -- the exonic-boundary convention sits at donor ``+1`` /
 acceptor ``-1`` -- without implying that any of them is fitted."""
 
 TRAINING_CHROMOSOMES: frozenset[str] = frozenset(
-    {"chr2", "chr4", "chr6", "chr8", *(f"chr{n}" for n in range(10, 23)), "chrX", "chrY"}
+    {"2", "4", "6", "8", *(str(n) for n in range(10, 23)), "X", "Y"}
 )
-"""Chromosomes both SpliceAI and Pangolin trained on. A panel drawn from these is not
-held out, so :meth:`SplicePanel.describe` reports the overlap rather than leaving a
-reader to remember the split."""
+"""Chromosomes both SpliceAI and Pangolin trained on, as **normalized** names.
+
+A panel drawn from these is not held out, so :meth:`SplicePanel.describe` reports the
+overlap rather than leaving a reader to remember the split. Stored without the ``chr``
+prefix and compared through :func:`normalize_chromosome`, because the naming genuinely
+varies: UCSC and GENCODE write ``chr2``, Ensembl writes ``2``. Matching only the
+``chr``-prefixed spelling meant an Ensembl-named panel drawn **entirely** from training
+chromosomes reported itself as held out."""
+
+HELD_OUT_CHROMOSOMES: frozenset[str] = frozenset({"1", "3", "5", "7", "9"})
+"""The human autosomes both models held out. Normalized, like
+:data:`TRAINING_CHROMOSOMES`."""
+
+_CHROMOSOMES: frozenset[str] = TRAINING_CHROMOSOMES | HELD_OUT_CHROMOSOMES | frozenset({"M", "MT"})
+
+
+def normalize_chromosome(group: str) -> str | None:
+    """Return ``group`` as a bare chromosome name, or ``None`` if it is not one.
+
+    Accepts ``chr2`` / ``CHR2`` / ``2`` / ``chrX`` / ``x`` and returns ``"2"`` / ``"X"``.
+    Returns ``None`` for anything it cannot classify -- a RefSeq accession, a scaffold,
+    a placeholder -- so a caller can treat "unrecognised" as its own state rather than
+    silently as "not a training chromosome", which is how a training panel came to
+    report itself held out.
+
+    Args:
+        group: A panel window's group label.
+
+    Returns:
+        The normalized name, or ``None``.
+    """
+    name = group.strip().upper()
+    if name.startswith("CHR"):
+        name = name[3:]
+    return name if name in _CHROMOSOMES else None
 
 _REQUIRED = ("window_id", "group", "sequence")
 _OPTIONAL = ("donors", "acceptors", "strand", "note")
@@ -149,8 +183,11 @@ class SpliceWindow:
 
     Attributes:
         window_id: Unique label, used in error messages and reports.
-        group: The leakage-control group, a **chromosome** (e.g. ``"chr1"``). Cases
-            sharing a group are never split across folds.
+        group: The leakage-control group, a **chromosome** -- ``"chr1"`` or ``"1"``,
+            both understood. It is what makes a panel's held-out status checkable:
+            drawing from chromosomes the models trained on (2, 4, 6, 8, 10-22, X, Y)
+            produces flattering nonsense, and a group name that is not recognisable as
+            a chromosome leaves that unknowable rather than clean.
         sequence: The window, ACGT only. Stored in the orientation the sites are
             annotated on -- a minus-strand gene is reverse-complemented *before* it
             reaches this format, so every position indexes this string directly and no
@@ -458,8 +495,26 @@ class SplicePanel:
         over it is optimistic. Reported rather than refused, because a deliberate
         train-set comparison is a legitimate thing to run -- as long as nobody can
         mistake it for a held-out result.
+
+        Matched through :func:`normalize_chromosome`, so ``chr2`` and ``2`` are the same
+        chromosome. They are not spelled the same way by the tools a panel comes from:
+        GENCODE writes ``chr2``, Ensembl writes ``2``.
         """
-        return tuple(sorted(g for g in self.groups if g.strip().lower() in TRAINING_CHROMOSOMES))
+        return tuple(
+            sorted(g for g in self.groups if normalize_chromosome(g) in TRAINING_CHROMOSOMES)
+        )
+
+    @property
+    def unclassified_groups(self) -> tuple[str, ...]:
+        """Groups that are not recognisable as human chromosomes, sorted.
+
+        Reported separately from :attr:`training_overlap` because the two mean different
+        things and only one of them is safe to ignore. A group this cannot classify is
+        **unknown**, not clean: whether it was in either model's training set cannot be
+        established, so a consumer must not read its absence from
+        :attr:`training_overlap` as evidence of anything.
+        """
+        return tuple(sorted(g for g in self.groups if normalize_chromosome(g) is None))
 
     def motif_consistency(self) -> MotifConsistency:
         """Check every declared position against its canonical dinucleotide."""
@@ -519,6 +574,7 @@ class SplicePanel:
                 for group in self.groups
             },
             "training_chromosome_overlap": list(self.training_overlap),
+            "unclassified_groups": list(self.unclassified_groups),
             "motif_consistency": consistency.fraction,
         }
 

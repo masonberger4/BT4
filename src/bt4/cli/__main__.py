@@ -928,7 +928,9 @@ def _parser() -> argparse.ArgumentParser:
     p_sgate.add_argument("--min-pr-auc", type=float, default=0.0, dest="min_pr_auc")
     p_sgate.add_argument(
         "--min-pr-auc-skill", type=float, default=0.0, dest="min_pr_auc_skill",
-        help="per-stratum prevalence-normalized floor -- the one comparable across panels",
+        help="per-stratum floor on average precision rescaled so no-skill is 0 at any "
+             "prevalence. NOT comparable across panels -- it still moves with how the "
+             "negatives were sampled, which is why --negative-construction is required",
     )
     p_sgate.add_argument("--max-ece", type=float, default=1.0, dest="max_ece")
     p_sgate.add_argument("--bins", type=int, default=10, help="reliability bins")

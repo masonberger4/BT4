@@ -632,3 +632,150 @@ def test_any_one_declared_threshold_counts_as_pre_registration(
     comparison = run_splice_panel_gate(panel, "pwm", results=_oracle(panel), settings=settings)
     assert comparison.thresholds_declared is True
     assert comparison.promotable is True
+
+
+# --------------------------------------------------------------------------
+# A second round of review findings: ways the verdict could be won without winning
+
+
+def test_dropping_the_pwm_control_cannot_produce_a_recommendation() -> None:
+    """The exact one-keyword defeat of this module's headline property.
+
+    ``SPLICE_BASELINES`` says the controls are "kept permanently: a control that
+    disappears once it is inconvenient was never a control" -- and nothing enforced it.
+    Running BT4's own PWM backend with the ``pwm`` control omitted reported
+    ``promotable=True``: the shipped default certifying itself by dropping the one
+    baseline it could not beat.
+
+    A subset run is still allowed (it is useful for a quick look); it just cannot
+    recommend anything.
+    """
+    panel = _hard_panel()
+    settings = SpliceGateSettings(min_pr_auc_skill=0.10)
+
+    full = run_splice_panel_gate(panel, "pwm", settings=settings)
+    assert full.beats_every_baseline is False  # it ties the pwm control
+    assert full.promotable is False
+
+    dropped = run_splice_panel_gate(
+        panel, "pwm", settings=settings, baselines=("permutation", "gt_ag", "constant")
+    )
+    assert dropped.promotable is False
+    assert any("were not run" in note for note in dropped.notes)
+
+
+def test_an_uncontested_stratum_is_never_counted_as_beaten() -> None:
+    """With no baselines the head was reported as beating controls that never ran.
+
+    ``top`` started at ``-inf`` and was only ever lowered by a baseline that actually
+    scored the stratum, so an empty baseline list left ``beats_every_baseline`` at its
+    initial ``True`` -- and reported ``-inf`` as though it were a control's skill.
+    """
+    panel = _hard_panel()
+    comparison = run_splice_panel_gate(
+        panel, "pwm", settings=SpliceGateSettings(min_pr_auc_skill=0.10), baselines=()
+    )
+    assert comparison.beats_every_baseline is False
+    assert comparison.promotable is False
+    assert all(name == "none (uncontested)" for _, name, _ in comparison.best_baseline)
+    assert all(skill != float("-inf") for _, _, skill in comparison.best_baseline)
+    assert any("uncontested" in note for note in comparison.notes)
+
+
+def test_a_gencode_named_training_panel_is_not_reported_as_held_out() -> None:
+    """Ensembl writes ``2``, GENCODE writes ``chr2``; only one used to match.
+
+    A panel drawn **entirely** from the models' training chromosomes reported
+    ``held_out=True`` and could be promotable, purely because its groups lacked the
+    ``chr`` prefix. That is the naming a builder following the runbook's own GENCODE
+    recipe is most likely to produce.
+    """
+    settings = SpliceGateSettings(min_pr_auc_skill=0.10)
+    for groups in (("chr2", "chr4"), ("2", "4"), ("CHR2", "chr4")):
+        panel = _hard_panel(groups=groups)
+        comparison = run_splice_panel_gate(
+            panel, "pwm", settings=settings, results=_oracle(panel)
+        )
+        assert panel.training_overlap == tuple(sorted(groups)), groups
+        assert comparison.held_out is False, groups
+        assert comparison.promotable is False, groups
+
+
+def test_an_unrecognisable_group_is_unknown_rather_than_clean() -> None:
+    """"I do not recognise this name" must never read as "held out"."""
+    panel = _hard_panel(groups=("NC_000001.11", "scaffold_7"))
+    comparison = run_splice_panel_gate(
+        panel,
+        "pwm",
+        settings=SpliceGateSettings(min_pr_auc_skill=0.10),
+        results=_oracle(panel),
+    )
+    assert panel.unclassified_groups == ("NC_000001.11", "scaffold_7")
+    assert panel.training_overlap == ()
+    assert comparison.held_out is False
+    assert comparison.promotable is False
+    assert any("not recognisable as human chromosomes" in note for note in comparison.notes)
+
+
+def test_held_out_chromosomes_are_accepted_in_either_spelling() -> None:
+    """The fix must not make a legitimately held-out panel unusable."""
+    for groups in (("chr1", "chr3"), ("1", "3"), ("chr5", "9")):
+        panel = _hard_panel(groups=groups)
+        comparison = run_splice_panel_gate(
+            panel,
+            "pwm",
+            settings=SpliceGateSettings(min_pr_auc_skill=0.10),
+            results=_oracle(panel),
+        )
+        assert comparison.held_out is True, groups
+        assert comparison.promotable is True, groups
+
+
+def test_float_dust_does_not_defeat_combined_track_detection() -> None:
+    """Exact ``== 0.0`` made the collapse depend on a backend's rounding.
+
+    A caller-supplied result whose acceptor channel carries softmax dust would be scored
+    with a donor/acceptor split -- producing the very artifact the collapse exists to
+    prevent, and silently, since the explanatory note only appears when it collapses.
+    """
+    panel = _hard_panel()
+    combined = _oracle(panel, combined=True)
+    dusty = [
+        SpliceResult(
+            donor=r.donor,
+            acceptor=tuple(1e-12 for _ in r.acceptor),
+            model_name=r.model_name,
+            calibrated=False,
+        )
+        for r in combined
+    ]
+    comparison = run_splice_panel_gate(panel, "pwm", results=dusty)
+    assert comparison.strata == ("splice",)
+    assert any("combined P(splice) track" in note for note in comparison.notes)
+
+
+def test_a_silent_backend_is_not_credited_with_perfect_alignment() -> None:
+    """The tie-break resolved a flat probe window to 0, reading as "anchors agree".
+
+    That is a positive alignment claim built from an absence of evidence, in the one
+    diagnostic whose stated job is to separate "misaligned" from "scoring near zero".
+    """
+    panel = _hard_panel()
+    silent = [
+        SpliceResult(
+            donor=tuple(0.0 for _ in r.donor),
+            acceptor=tuple(0.0 for _ in r.acceptor),
+            model_name="silent",
+            calibrated=False,
+        )
+        for r in _oracle(panel)
+    ]
+    diagnostic = run_splice_panel_gate(panel, "pwm", results=silent).alignment
+    assert diagnostic.n_flat == diagnostic.n_sites
+    assert "FLAT" in diagnostic.note()
+    assert "anchors agree" not in diagnostic.note()
+
+    # A backend that does produce peaks is unaffected.
+    working = run_splice_panel_gate(panel, "pwm", results=_oracle(panel)).alignment
+    assert working.n_flat == 0
+    assert "anchors agree" in working.note()

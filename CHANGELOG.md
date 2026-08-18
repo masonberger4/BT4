@@ -8,6 +8,46 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **A second round of adversarial review found five more ways the splice gate's verdict
+  could be won without winning.** All measured, all in the Part B gate.
+  - **Dropping the `pwm` control let BT4's own default certify itself.**
+    `SPLICE_BASELINES` says the controls are "kept permanently: a control that
+    disappears once it is inconvenient was never a control" — and nothing enforced it.
+    Running the PWM backend with `baselines=("permutation","gt_ag","constant")` reported
+    `promotable=True`, one keyword away from the module's headline property. Three
+    review lenses found this independently. A subset run is still allowed; it just
+    cannot recommend anything.
+  - **An uncontested stratum counted as a beaten one.** With `baselines=()` no comparison
+    ran, `beats_every_baseline` kept its initial `True`, and `best_baseline` reported
+    `-inf` as though it were a control's skill.
+  - **A GENCODE/Ensembl-named training panel reported itself held out.** The check
+    matched only `chr`-prefixed names, so a panel drawn *entirely* from the models'
+    training chromosomes but named `2`, `4`, `X` reported `held_out=True` — the naming a
+    builder following the runbook's own GENCODE recipe is most likely to produce. Names
+    now normalize across conventions, and an **unrecognisable** group (a RefSeq
+    accession, a scaffold) is reported as *unknown* rather than silently clean.
+  - **Float dust defeated combined-track detection.** `_is_combined` tested exact
+    `== 0.0`, so an acceptor channel carrying `1e-12` was scored with a donor/acceptor
+    split — the exact artifact the collapse prevents, and silently.
+  - **A silent backend was credited with perfect alignment.** The alignment probe's
+    tie-break resolved a flat window to offset 0, so a backend emitting no signal read as
+    "anchors agree" — a positive claim from an absence of evidence, in the one diagnostic
+    whose job is to separate "misaligned" from "scoring near zero".
+
+### Changed
+- **Corrected a false claim BT4 made about its own metric.** `pr_auc_skill` was
+  documented as "the only PR figure comparable across panels of differing prevalence".
+  It is not. Rescaling average precision's floor to 0 does not remove its prevalence
+  dependence: measured at **fixed model quality**, skill falls 0.589 → 0.152 as negatives
+  go from 1k to 30k while ROC-AUC holds at 0.91. The metric is unchanged and still worth
+  reporting — its floor and ceiling really are fixed — but the comparability claim was
+  wrong, and a declared `negative_construction` is the only thing that makes two panels'
+  numbers mean the same thing. A test now pins the prevalence-dependence so the claim
+  cannot drift back.
+- `SpliceSiteCase.group` no longer claims cases "are never split across folds"; this gate
+  has no folds. It now says what the group actually does.
+
+### Fixed
 - **One calibrated window certified a whole run.** On the caller-supplied-scores path
   `backend_calibrated` was an `any()` over per-window results, so a single
   `SpliceResult` carrying `calibrated=True` reported the entire run as calibrated. It is

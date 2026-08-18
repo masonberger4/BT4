@@ -316,27 +316,40 @@ def pr_auc(labels: Sequence[int], scores: Sequence[float]) -> float:
 
 
 def pr_auc_skill(labels: Sequence[int], scores: Sequence[float]) -> float:
-    """Return PR-AUC rescaled against its no-skill floor: ``(AP - p) / (1 - p)``.
+    """Return average precision rescaled so no-skill is ``0.0`` and perfect is ``1.0``.
 
-    Average precision has a floor at the panel's **prevalence** ``p`` and a ceiling
-    at 1, so a raw PR-AUC cannot be compared across panels with different positive
-    rates -- and prevalence here is a *construction choice* (how many negatives the
-    panel samples), not a constant of nature. Measured on this module's own
-    :func:`pr_auc` with model quality held fixed, thinning negatives moved AP from
-    0.88 to 0.98 while :func:`roc_auc` barely moved.
+    ``(AP - p) / (1 - p)``, where ``p`` is the prevalence. Average precision's floor is
+    the prevalence, so a bare AP of 0.30 means something completely different on a panel
+    with 1% positives than on one with 30%; this puts the floor at zero for every
+    prevalence.
 
-    A **ratio** (``AP / p``) does not fix this: its ceiling is ``1 / p``, so it drifts
-    with prevalence too and systematically rewards the sparser panel. The skill form
-    is 0.0 at no-skill and 1.0 at perfect for **every** prevalence, so it reads the
-    same way as :func:`brier_skill_score` and the expression gate's
-    ``width_over_iqr``.
+    **It does NOT make the number comparable across panels.** That is a tempting and
+    wrong reading, and this docstring used to make it. AP's dependence on prevalence is
+    not a constant offset, so rescaling the floor does not remove it. Measured, with
+    model quality held fixed and only the negative count varied:
+
+    ====================  =======  =======  =======
+    negatives             ROC-AUC  AP       skill
+    ====================  =======  =======  =======
+    1,000                 0.911    0.627    0.589
+    10,000                0.911    0.272    0.265
+    30,000                0.910    0.155    0.152
+    ====================  =======  =======  =======
+
+    So a threshold on this still moves with how the negatives were sampled -- which is
+    exactly why the splice gate requires a declared ``negative_construction`` rather
+    than relying on any rescaling to make panels commensurable. ROC-AUC is the
+    prevalence-stable figure, and it is reported alongside for that reason; it is not a
+    substitute, because at splice prevalence a model with hopeless precision still
+    scores above 0.9.
+
+    Args:
+        labels: Binary ground truth.
+        scores: Predicted scores, larger meaning more positive.
 
     Returns:
-        The skill score; negative means worse than predicting at random. Returns
-        ``0.0`` when prevalence is 0 or 1 (no skill is demonstrable).
-
-    Raises:
-        ValueError: If the series differ in length, are empty, or labels are not 0/1.
+        The skill score. ``0.0`` for a degenerate panel (all one class), following the
+        module's convention of an honest degenerate value rather than a raise.
     """
     _check_binary(labels, scores)
     prevalence = math.fsum(float(v) for v in labels) / len(labels)
