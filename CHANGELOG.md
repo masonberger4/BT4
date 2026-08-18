@@ -8,6 +8,17 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **One calibrated window certified a whole run.** On the caller-supplied-scores path
+  `backend_calibrated` was an `any()` over per-window results, so a single
+  `SpliceResult` carrying `calibrated=True` reported the entire run as calibrated. It is
+  now `all()`, guarded by `bool(scored)` because `all(())` is `True`. A calibration flag
+  is the last place to take the generous reading (§10.6).
+- **`promotable` was reachable without anyone setting a bar.** The gate ships permissive
+  defaults on purpose — a threshold this module blessed would be one a weak backend
+  could be pointed at — but that left `passed` trivially true for a bare call, making
+  "the pre-registered conditions held" vacuous. `promotable` now also requires
+  `thresholds_declared`, and a bare call says so in its notes. The defaults are
+  unchanged; what changed is that they can no longer be mistaken for a verdict.
 - **The `pwm` control went blind to every acceptor site when the strata collapsed.**
   `_tracks` collapses donor and acceptor into one `"splice"` stratum for a
   combined-track backend, which is right for the *head* — Pangolin's acceptor track is

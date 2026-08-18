@@ -36,7 +36,9 @@ rather than being a trap the reader has to remember.
   recorded in the report.
 
 **Nothing here flips a flag.** ``promotable`` means "the pre-registered conditions held
-on this panel". Promotion is a separate, deliberate, recorded step (CLAUDE.md
+on this panel" -- and it requires that conditions were *actually* pre-registered, since
+the gate's own defaults are permissive on purpose and a bar nobody set is not a bar that
+held. Promotion is a separate, deliberate, recorded step (CLAUDE.md
 sections 6/8/10.6), and for a splice backend it additionally requires an integration
 fidelity attestation -- a different gate answering a different question.
 """
@@ -184,6 +186,12 @@ class SpliceGateComparison:
             **in every stratum** -- the per-stratum rule applied to the comparison, so
             beating the motif on donors cannot excuse losing to it on acceptors.
         held_out: The panel contains no chromosome either model trained on.
+        thresholds_declared: Whether the caller actually set a bar. The gate ships
+            permissive defaults on purpose -- a threshold this module blessed would be
+            one a weak backend could be pointed at -- but that leaves ``passed``
+            trivially true for a bare call, which would make "the pre-registered
+            conditions held" vacuous. So :attr:`promotable` additionally requires that
+            conditions were pre-registered at all.
         alignment: Where the backend's peaks landed relative to the declared sites.
         promotable: All three conditions held **on this panel**. Not a promotion.
         notes: Human-readable notes carried into the report.
@@ -199,6 +207,7 @@ class SpliceGateComparison:
     best_baseline: tuple[tuple[str, str, float], ...]
     beats_every_baseline: bool
     held_out: bool
+    thresholds_declared: bool
     alignment: AlignmentDiagnostic
     promotable: bool
     notes: tuple[str, ...]
@@ -486,7 +495,10 @@ def run_splice_panel_gate(
             )
         scored = list(results)
         name = scored[0].model_name if scored else backend
-        calibrated = any(result.calibrated for result in scored)
+        # `all`, not `any`: one calibrated window must never certify a whole run, and a
+        # calibration flag is the last place to take the generous reading (section 10.6).
+        # The `bool(scored)` guard is load-bearing -- `all(())` is True.
+        calibrated = bool(scored) and all(result.calibrated for result in scored)
         notes.append("scores supplied by the caller")
 
     combined = _is_combined(scored) if combined_track is None else combined_track
@@ -531,6 +543,21 @@ def run_splice_panel_gate(
         if head_skill[stratum] <= top:
             beats = False
 
+    # A bar the caller never set is not a bar that held. The defaults are permissive by
+    # design (this module must not bless a threshold), so the honest consequence is that
+    # a bare call reports numbers and cannot recommend anything.
+    thresholds_declared = (
+        settings.min_pr_auc > 0.0
+        or settings.min_pr_auc_skill > 0.0
+        or settings.max_ece < 1.0
+    )
+    if not thresholds_declared:
+        notes.append(
+            "no threshold was declared (min_pr_auc / min_pr_auc_skill / max_ece are all "
+            "at their permissive defaults), so 'gate passed' is vacuous here and this "
+            "run cannot be promotable. Set the bar deliberately, before the run"
+        )
+
     overlap = panel.training_overlap
     held_out = not overlap
     if overlap:
@@ -550,7 +577,8 @@ def run_splice_panel_gate(
         best_baseline=tuple(best),
         beats_every_baseline=beats,
         held_out=held_out,
+        thresholds_declared=thresholds_declared,
         alignment=alignment,
-        promotable=bool(head.passed and beats and held_out),
+        promotable=bool(head.passed and beats and held_out and thresholds_declared),
         notes=tuple(notes),
     )
