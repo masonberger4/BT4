@@ -69,6 +69,7 @@ from bt4.biomodels.splice.audit import (
     audit_splice,
 )
 from bt4.biomodels.splice.base import (
+    DEFAULT_SITE_PROBABILITY,
     DEFAULT_TOP_K,
     SplicePredictor,
     SpliceResult,
@@ -101,6 +102,7 @@ bundled_splice_attestation = bundled_attestation
 __all__ = [
     "ASSP_ENDPOINT",
     "DEFAULT_MATCH_WINDOW",
+    "DEFAULT_SITE_PROBABILITY",
     "DEFAULT_SITE_THRESHOLD",
     "DEFAULT_TISSUES",
     "DEFAULT_TOP_K",
