@@ -70,11 +70,28 @@ def rerank_by_expression(
         annotated.append(dataclasses.replace(r, audit=audit))
 
     chosen = result.frontier.chosen
+    manifest = result.manifest
     if backend.calibrated and scores:
         # A calibrated head may steer delivery to the highest predicted expression.
         chosen = max(range(len(scores)), key=lambda i: scores[i])
+        # Because it chose WHICH sequence ships, its identity has to enter the
+        # provenance stamp (invariant #9: a stamp must not map to two different
+        # delivered sequences). Without this, reranking the same frontier with two
+        # different calibrated heads yields different DNA under byte-identical
+        # manifests -- and identical to the un-reranked run as well. `_refine`
+        # already stamps the folding backend this way, and
+        # `assemble_and_rank_candidates` stamps `predictor` / `predictor_calibrated`;
+        # this is the one steering site that did not.
+        manifest = dataclasses.replace(
+            result.manifest,
+            extra={
+                **dict(result.manifest.extra),
+                "expression_model": backend.name,
+                "expression_calibrated": "True",
+            },
+        )
 
     frontier = Frontier(points=result.frontier.points, chosen=chosen)
     return FrontierResult(
-        frontier=frontier, results=tuple(annotated), manifest=result.manifest
+        frontier=frontier, results=tuple(annotated), manifest=manifest
     )

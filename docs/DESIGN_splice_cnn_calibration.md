@@ -438,24 +438,32 @@ the `all_calibrated is False` assertions stay green.
    `pipeline/splice_crosscheck.py::resolve_splice_backend`,
    `scripts/compare_splice_backends.py::available_backends`.
 
-4. **Fix the `_FlankedPredictor` honesty bug (finding 5).** Its `calibrated`
-   property must return `False` whenever flanks are actually applied:
-   ```python
-   @property
-   def calibrated(self) -> bool:
-       # An attestation is regime-scoped: captured N-padded, so a real-flank
-       # score is outside what it attests.
-       if self.upstream or self.downstream:
-           return False
-       return self.inner.calibrated
-   ```
-   Add a test asserting exactly this.
+4. **[DONE] The flank-regime leak is fixed at both seams.** An audit of the
+   flag's propagation found this was two places, not one, and that the root had a
+   second caller the plan had missed:
+   - `score_in_context` (`biomodels/splice/base.py`) now returns
+     `calibrated=False` whenever flanks are applied. This is the root — and it also
+     feeds `pipeline/tracks.py`, which set `TracksResult.splice_calibrated` and the
+     track's unit label from it, so a flanked track would have been labelled
+     calibrated site probabilities.
+   - `_FlankedPredictor.calibrated` (`pipeline/splice_audit.py`) needs its own
+     guard regardless, because `audit_splice` reads `predictor.calibrated`
+     directly — for each `SpliceFlag`, each `BackendCandidateAudit`, and the
+     report-level `all_calibrated` that drives Studio's banner — never the
+     `SpliceResult`'s flag.
 
-5. **Close the unbound-configuration gap.** `verified_predictor` binds only weight
-   hashes — not `tissues`, not `top_k`. A 4-tissue attestation would happily promote
-   `PangolinSplicePredictor(tissues=("brain",))`. Have `promote_if_attested` refuse
-   a Pangolin predictor whose `tissues != DEFAULT_TISSUES`, and document that the
-   attestation was captured at the default configuration.
+5. **[DONE] The unbound-configuration gap is closed, at the promotion seam.**
+   `verified_predictor` now refuses a Pangolin predictor whose `tissues` are not
+   the full default set. The reasoning is sharper than "bind the config": an
+   honored attestation is *required* to claim the adapter's full 12-file pinned map
+   (a subset fails the equality check), yet a gate run at one tissue loads only 3
+   of those files and reads 1 of 4 output channels. Enforcing at
+   `verified_predictor` rather than in `promote_if_attested` means it holds for
+   every caller, including a user promoting by hand.
+
+   *Not an issue:* `top_k` only affects pooling of already-computed per-position
+   scores, and SpliceAI always loads all five ensemble members, so neither needs
+   binding.
 
 6. **Stamp it into provenance.** Pass the attestation's `content_hash()` through
    `build_manifest(extra=...)` wherever a calibrated splice backend influenced a
