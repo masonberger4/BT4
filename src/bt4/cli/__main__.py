@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 
@@ -36,6 +37,17 @@ _SPLICE_BACKENDS: tuple[str, ...] = ("assp", "pwm", "pangolin", "spliceai")
 ``pwm`` is the offline PWM baseline; ``pangolin`` / ``spliceai`` are the wrapped
 CNNs (used only when the user's own install and weights are present).
 """
+
+
+def _enable_attested_splice(args: argparse.Namespace) -> None:
+    """Opt this process into honoring bundled splice attestations, if asked.
+
+    The flag sets the same environment variable the library consults, so one
+    switch governs every path (CLI, api, Studio) rather than each threading its
+    own parameter through.
+    """
+    if getattr(args, "use_attested_splice", False):
+        os.environ[api.USE_ATTESTED_SPLICE_ENV_VAR] = "1"
 
 
 def _print_splice_crosscheck(dna: str, backend: str) -> None:
@@ -676,6 +688,13 @@ def _parser() -> argparse.ArgumentParser:
                        help="min total UpA (TA) count over the CDS (exact budget DP)")
     p_opt.add_argument("--upa-max", type=int, default=None, dest="upa_max",
                        help="max total UpA (TA) count over the CDS")
+    p_opt.add_argument("--use-attested-splice", action="store_true",
+                       dest="use_attested_splice",
+                       help="Honor the bundled splice fidelity attestation, promoting a "
+                            "wrapped CNN to calibrated=True. Off by default: an attestation "
+                            "records that BT4's wrapper is faithful to the published model, "
+                            "not that its scores are calibrated probabilities for coding "
+                            "sequence (see docs/DESIGN_splice_cnn_calibration.md).")
     p_opt.add_argument("--check-splice", choices=_SPLICE_BACKENDS, default=None,
                        dest="check_splice",
                        help="opt-in, out-of-loop splice cross-check of the delivered "
@@ -702,6 +721,10 @@ def _parser() -> argparse.ArgumentParser:
 
     p_val = sub.add_parser("validate", help="audit a coding sequence")
     p_val.add_argument("dna", help="ACGT coding sequence")
+    p_val.add_argument("--use-attested-splice", action="store_true",
+                       dest="use_attested_splice",
+                       help="Honor the bundled splice fidelity attestation (see "
+                            "'optimize --use-attested-splice').")
     p_val.add_argument("--splice-backend", choices=_SPLICE_BACKENDS, default=None,
                        dest="splice_backend",
                        help="opt-in, out-of-loop splice cross-check of the sequence "

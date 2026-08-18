@@ -1,0 +1,23 @@
+{
+  "backend": "pangolin",
+  "bt4_version": "0.4.0",
+  "max_abs_deviation": 0.0,
+  "n_cases": 18,
+  "passed": true,
+  "schema_version": 1,
+  "tolerance": 0.001,
+  "weight_sha256": {
+    "final.1.0.3.v2": "f0478fab173b75f7f7e9fe96688bad6c50fa4a46d70557f423b110caaf565501",
+    "final.1.2.3.v2": "559c05de3e1ce65c2515ca3e92ef85edb0ec2e47686ca58060e25891ce06eb3a",
+    "final.1.4.3.v2": "c50b12e0c0af776d5674ca5e346493f8265783494d4df383364de9c1136657f6",
+    "final.1.6.3.v2": "2aae563fa18a8a9b6699c6c96e0d32b8ec7543f8f805fb3bc9de77302cc9f66e",
+    "final.2.0.3.v2": "c4c6bb4880fa6fb28b14182ae3ea0600edb07056158f55325b5e6e6e48fc9f26",
+    "final.2.2.3.v2": "48758ba8b95eee9aa9feea52672ef06ca1b34111299c27f8a710f734d8b9aae5",
+    "final.2.4.3.v2": "e03303bed4fd6f135ec0f6c1b192cce954ea42d0646f44d17b4a6fbb2b1f610e",
+    "final.2.6.3.v2": "7d3c0b1b2a60067b940dec315567874fbc8bcd322f1b7c76bf969f51f0f53f7f",
+    "final.3.0.3.v2": "ec685a6e7105a4486c1f89a005458a13deb3fe7171f13d434f4877e386d10676",
+    "final.3.2.3.v2": "7cb576c2b24db4fdd6970c4ca4fb7c20ae1b1d8ae80645ebbe689848b5743129",
+    "final.3.4.3.v2": "9476d2e25520d7ff15bece0cd5d3b657e3b1dd3cc5fcab1d9c3b62bea7a0c5b6",
+    "final.3.6.3.v2": "756e7721a382cace24e9bfea5b543af5623f2487d9a3efe7385e9c76367005fd"
+  }
+}

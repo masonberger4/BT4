@@ -8,6 +8,35 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **Pangolin passed its integration-fidelity gate — the first wrapped model in BT4
+  to pass one.** On a maintainer machine holding the GPL weights: 18 cases,
+  tolerance `1e-3`, **max absolute deviation exactly 0.0**. BT4's adapter
+  reproduces upstream Pangolin's per-position scores bit-for-bit across 6,549
+  positions. The `FidelityAttestation` is committed at
+  `src/bt4/biomodels/splice/data/pangolin.attestation.json` — eight license-clean
+  scalars plus the public weight SHA-256s, never a raw model score.
+  - **The pass is not vacuous.** All three donor probes peaked at position 302 with
+    the consensus planted at 300–309, across three different random flank sets, so
+    the model was tracking sequence rather than the `N`-padding boundary. Designed
+    CDSs averaged 0.085 peak P(splice); consensus probes 0.61–0.71.
+  - **Promotion is opt-in** (`BT4_SPLICE_USE_ATTESTED=1`, or
+    `--use-attested-splice` on `optimize` / `validate`). `default()` still returns
+    the honest PWM baseline, and a real-flank score still reports uncalibrated: the
+    gate was captured on the `N`-padded path, and that scoping survives promotion.
+  - **It certifies the wrapper, not the biology.** These models score median prAUC
+    **0.419 on exonic** variants vs 0.773 intronic (Smith & Kitzman 2023), and BT4
+    designs coding sequence. A statistical-calibration gate remains unmet.
+  - SpliceAI is unchanged at `calibrated=False`; its gate has not been run.
+- **A reproducible three-script workflow for the gate**, whose separation is the
+  point: `make_splice_panel.py` (may use `bt4`) → `capture_pangolin_panel.py`
+  (**never** imports `bt4`, enforced by a runtime guard and a static AST test) →
+  `run_splice_fidelity_gate.py`. The runner reports panel *strength* and warns when
+  a pass rests on a panel too flat to discriminate.
+- `scripts/check_splice_weights.py` — verify installed weights against BT4's pins
+  before investing in a capture, plus a public `weights_dir()` on both adapters.
+
+
+### Added
 - **`docs/DESIGN_ribonn_calibration.md`** — the step-by-step runbook for `NEXT_SESSION.md`
   item 11, mirroring the splice side's `DESIGN_splice_cnn_calibration.md`. It carries the
   operational half that the research doc deliberately left out: the Windows (`cmd.exe`) /

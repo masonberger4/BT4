@@ -57,6 +57,7 @@ from bt4.biomodels.splice import (
     SpliceAiSplicePredictor,
     SplicePredictor,
     backend_agreement,
+    promote_if_attested,
 )
 from bt4.io import read_fasta
 
@@ -85,7 +86,7 @@ def available_backends() -> tuple[list[SplicePredictor], list[str]]:
     backends: list[SplicePredictor] = [ConsensusPwmSplicePredictor()]
     notes: list[str] = []
 
-    pangolin = PangolinSplicePredictor()
+    pangolin = promote_if_attested(PangolinSplicePredictor())
     if pangolin.available():
         backends.append(pangolin)
         if not pangolin.calibrated:
@@ -100,7 +101,7 @@ def available_backends() -> tuple[list[SplicePredictor], list[str]]:
             "package from https://github.com/tkzeng/Pangolin)."
         )
 
-    spliceai = SpliceAiSplicePredictor()
+    spliceai = promote_if_attested(SpliceAiSplicePredictor())
     if spliceai.available():
         backends.append(spliceai)
         if not spliceai.calibrated:

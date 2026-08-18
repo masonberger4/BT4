@@ -31,6 +31,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from bt4.biomodels.splice.assp import AsspError, AsspSplicePredictor
+from bt4.biomodels.splice.attestations import promote_if_attested
 from bt4.biomodels.splice.base import (
     DEFAULT_TOP_K,
     SplicePredictor,
@@ -169,9 +170,10 @@ def resolve_splice_backend(name: str) -> SplicePredictor:
         return AsspSplicePredictor()
     if key == "pwm":
         return ConsensusPwmSplicePredictor()
+    # Honors a committed attestation only under the opt-in; a no-op otherwise.
     if key == "pangolin":
-        return PangolinSplicePredictor()
-    return SpliceAiSplicePredictor()
+        return promote_if_attested(PangolinSplicePredictor())
+    return promote_if_attested(SpliceAiSplicePredictor())
 
 
 def _localize_track(scores: Sequence[float], kind: str, threshold: float) -> list[CrossCheckSite]:

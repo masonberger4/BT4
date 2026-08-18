@@ -62,9 +62,9 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | SA refinement + block moves + parallel tempering | DONE | n/a | `optimize/anneal_refine.py` |
 | Folding (ViennaRNA + labeled baseline) | GROUNDWORK | ViennaRNA=yes, baseline=no | `biomodels/folding/` |
 | Splice PWM baseline | GROUNDWORK | no (baseline) | `biomodels/splice/` |
-| Splice CNNs: Pangolin (GPL) / SpliceAI (CC BY-NC) | GROUNDWORK | **no** (fidelity gate pending) | `biomodels/splice/{pangolin,spliceai}.py` |
+| Splice CNNs: Pangolin (GPL) / SpliceAI (CC BY-NC) | **Pangolin: fidelity gate PASSED** (exact, 18 cases) · SpliceAI: GROUNDWORK | Pangolin **yes, opt-in** (`BT4_SPLICE_USE_ATTESTED=1`); SpliceAI **no** | `biomodels/splice/{pangolin,spliceai}.py`, `biomodels/splice/attestations.py` |
 | Splice audit (localize-and-flag) + backend agreement | DONE | advisory (`all_calibrated=False`) | `biomodels/splice/audit.py` |
-| Splice fidelity-attestation layer | DONE (unused until a gate runs) | n/a | `biomodels/splice/attestation.py` |
+| Splice fidelity-attestation layer | **DONE and in use** — a committed Pangolin attestation ships | n/a | `biomodels/splice/{attestation,attestations}.py`, `biomodels/splice/data/` |
 | **ASSP cross-check (opt-in, out-of-loop network validator)** | DONE | `network_derived`, not calibrated | `biomodels/splice/assp.py`, `pipeline/splice_crosscheck.py` |
 | Expression: `ExpressionPredictor` + `NullExpressionModel` + rerank hook | GROUNDWORK | placeholder=no | `biomodels/expression/`, `pipeline/rerank.py` |
 | Expression: wrapped RiboNN (Sanofi non-commercial) | GROUNDWORK | **no** (acceptance gate pending) | `biomodels/expression/ribonn.py` |
@@ -306,31 +306,38 @@ items 1–3 are in
 9. **[self-contained → then human] Packaged installers** — PyInstaller/Briefcase
    for macOS/Windows/Linux. Advance up to the point where signing / tag-pushing /
    release-cutting is needed; those steps are human-only (HTTP 403 in the sandbox).
-10. **[IN PROGRESS · human-gated] Promote the splice CNNs to `calibrated=True`** —
-    capture reference panels and run `verify_pangolin_fidelity` /
-    `verify_spliceai_fidelity`, then commit a `FidelityAttestation`. Needs the
-    licensed weights on a maintainer machine. Never assign `calibrated=True` by hand
-    — it is earned on data (§10.5/§10.6). **Note the ordering hazard:** an
-    attestation captured on the N-padded path does not transfer to the flanked path
-    of item 3.
-    **The step-by-step runbook is
-    [`DESIGN_splice_cnn_calibration.md`](DESIGN_splice_cnn_calibration.md)**, backed
-    by [`RESEARCH_splice_cnn_calibration.md`](RESEARCH_splice_cnn_calibration.md)
-    (upstream install, verified weight hashes, published benchmarks, panel sources).
-    Four things that research changed:
-    - **All 17 pinned weight hashes are verified correct** against the upstream
-      bytes, so the hash gate should pass first try.
-    - **The attestation layer is wired to nothing** — outside its own test, nothing
-      in `src/` calls `verified_predictor`. Running the gate changes nothing for
-      users until that wiring lands.
-    - **`Illumina/SpliceAI` was archived 2026-04-20** (read-only; the Keras-3
-      breakage will never be fixed upstream), and Pangolin's `custom_usage.py` loads
-      *different weights* (`.3`, 5 folds) than its CLI (`.3.v2`, 3 folds) — which is
-      the set BT4 pins.
-    - **These models are weakest in BT4's own regime:** median prAUC 0.419 exonic vs
-      0.773 intronic (Smith & Kitzman 2023). That belongs wherever BT4 reports
-      splice risk on a CDS, and it is why the plan pairs the fidelity gate with a
-      statistical-calibration gate rather than stopping at the flag flip.
+10. **[Pangolin DONE 2026-08 · SpliceAI still human-gated] Splice CNN calibration.**
+    **Pangolin passed its integration-fidelity gate**, on a maintainer machine
+    holding the GPL weights: 18 cases, tolerance 1e-3, **max abs deviation exactly
+    0.0** — BT4's adapter reproduces upstream's per-position scores bit-for-bit.
+    The attestation is committed at
+    `src/bt4/biomodels/splice/data/pangolin.attestation.json`
+    (content hash `5176032c…`, eight license-clean scalars plus the public weight
+    SHA-256s — never a raw score).
+
+    **The pass is not vacuous.** All three donor probes peaked at position 302 with
+    the consensus planted at 300–309, across three different random flank sets, so
+    the model tracked sequence rather than the `N`-padding boundary. Designed CDSs
+    averaged 0.085; consensus probes 0.61–0.71.
+
+    **Promotion is opt-in** (`BT4_SPLICE_USE_ATTESTED=1`, or
+    `--use-attested-splice`). `default()` still returns the PWM baseline, and a
+    real-flank score still reports uncalibrated — the gate was captured N-padded,
+    and regime scoping survives promotion.
+
+    **What it does NOT establish:** that Pangolin's scores are calibrated
+    *probabilities* for designed coding sequence. That is Part B of
+    [`DESIGN_splice_cnn_calibration.md`](DESIGN_splice_cnn_calibration.md), still
+    unmet, and the regime where these models are measured weakest (median prAUC
+    **0.419 exonic** vs 0.773 intronic, Smith & Kitzman 2023) — which is BT4's
+    entire regime. State that wherever BT4 reports splice risk on a CDS.
+
+    **Still ahead here:** the same for **SpliceAI** (needs the CC BY-NC weights and
+    a TF 2.15 environment — see the runbook's A1 for the Keras-3 pin), and a Studio
+    checkbox for the opt-in. The reproducible workflow is three scripts:
+    `make_splice_panel.py` → `capture_pangolin_panel.py` (never imports `bt4`) →
+    `run_splice_fidelity_gate.py`.
+
 11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — **the machinery
     is now built; only the data step is left.** Landed: `within_group` (the strict bar)
     and `recalibrate` on the gate, the cluster-bootstrap CI, the `width_over_iqr`

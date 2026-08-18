@@ -345,7 +345,11 @@ package/weights yourself:
 
 Each wrapped model **verifies its weights against a pinned SHA-256 before
 loading** and ships `calibrated=False` until its fidelity/acceptance gate is
-recorded — so BT4 uses them as honest cross-checks/rerankers, never as validated
+recorded. **Pangolin has now passed that gate** (its adapter reproduces upstream
+bit-for-bit; the attestation is committed), but promotion stays **opt-in** via
+`BT4_SPLICE_USE_ATTESTED=1` or `--use-attested-splice` — and it certifies the
+*wrapper*, not that the scores are calibrated probabilities for designed coding
+sequence — so BT4 uses them as honest cross-checks/rerankers, never as validated
 results. SpliceAI's and RiboNN's weights are noncommercial-licensed.
 
 New to the codebase? Read [`CLAUDE.md`](./CLAUDE.md) first (the design

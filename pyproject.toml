@@ -84,6 +84,7 @@ artifacts = [
   "src/bt4/biomodels/codon/data/*.tsv",
   "src/bt4/biomodels/codon/data/*.provenance.json",
   "src/bt4/biomodels/expression/data/*.json",
+  "src/bt4/biomodels/splice/data/*.json",
   "src/bt4/constraints/data/*.tsv",
   "src/bt4/constraints/data/*.provenance.json",
 ]
