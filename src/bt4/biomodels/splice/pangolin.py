@@ -426,6 +426,26 @@ class PangolinSplicePredictor:
         """
         return self.fidelity_verified
 
+    def weights_dir(self) -> Path | None:
+        """Return the weights directory this predictor would load from, or ``None``.
+
+        Resolution order: this predictor's ``model_dir``, then the
+        ``BT4_PANGOLIN_MODEL_DIR`` environment variable, then the ``models``
+        directory inside the installed ``pangolin`` package. Never raises and
+        imports no heavy dependency -- it answers *where* the weights would come
+        from, not whether they can be loaded.
+
+        Public because "which files is BT4 actually about to hash?" is a question
+        users and maintenance scripts legitimately need answered -- notably
+        ``scripts/check_splice_weights.py`` (step A3 of
+        ``docs/DESIGN_splice_cnn_calibration.md``), which must not reach across a
+        layer for a private resolver (CLAUDE.md section 10.9).
+
+        Returns:
+            The resolved directory, or ``None`` when nothing resolves.
+        """
+        return _resolve_model_dir(self.model_dir)
+
     def available(self) -> bool:
         """Return whether this backend can run (never raises).
 
