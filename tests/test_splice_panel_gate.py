@@ -153,11 +153,18 @@ def test_the_pwm_backend_cannot_beat_the_pwm_baseline() -> None:
 
 
 def test_a_perfect_backend_beats_every_baseline() -> None:
-    """The comparison is winnable -- by a model that is genuinely better."""
+    """The comparison is winnable -- by a model that is genuinely better.
+
+    A bar has to be declared for ``promotable``: the gate ships permissive defaults on
+    purpose, and a bar nobody set is not a bar that held.
+    """
     panel = _hard_panel()
-    comparison = run_splice_panel_gate(panel, "pwm", results=_oracle(panel))
+    comparison = run_splice_panel_gate(
+        panel, "pwm", results=_oracle(panel), settings=SpliceGateSettings(min_pr_auc=0.60)
+    )
     assert comparison.beats_every_baseline is True
     assert comparison.held_out is True
+    assert comparison.thresholds_declared is True
     assert comparison.promotable is True
     for _, baseline, skill in comparison.best_baseline:
         assert baseline in SPLICE_BASELINES
@@ -266,9 +273,12 @@ def test_gt_ag_scores_the_combined_stratum_with_either_motif() -> None:
 def test_a_training_chromosome_panel_can_never_be_promotable() -> None:
     """Both models trained on chr2; a metric computed there is optimistic."""
     panel = _hard_panel(groups=("chr2", "chr4"))
-    comparison = run_splice_panel_gate(panel, "pwm", results=_oracle(panel))
+    comparison = run_splice_panel_gate(
+        panel, "pwm", results=_oracle(panel), settings=SpliceGateSettings(min_pr_auc=0.60)
+    )
     assert comparison.beats_every_baseline is True
     assert comparison.head.passed is True
+    assert comparison.thresholds_declared is True  # so held_out is the only blocker
     assert comparison.held_out is False
     assert comparison.promotable is False
     assert any("NOT HELD OUT" in note for note in comparison.notes)
@@ -560,3 +570,65 @@ def test_the_agreeing_note_states_the_offset_it_agreed_at() -> None:
     ).alignment
     assert "anchor_offset=+2" in diagnostic.note()
     assert "anchors agree" in diagnostic.note()
+
+
+def test_one_calibrated_window_cannot_certify_a_whole_run() -> None:
+    """A calibration flag is the last place to take the generous reading.
+
+    On the caller-supplied path the flag was an ``any()`` over per-window results, so a
+    single window carrying ``calibrated=True`` reported the entire run as calibrated.
+    ``all()`` is the honest reduction -- with a ``bool(scored)`` guard, because
+    ``all(())`` is ``True``.
+    """
+    panel = _hard_panel()
+    results = _oracle(panel)
+    mixed = [
+        SpliceResult(
+            donor=r.donor, acceptor=r.acceptor, model_name=r.model_name, calibrated=(i == 0)
+        )
+        for i, r in enumerate(results)
+    ]
+    assert run_splice_panel_gate(panel, "pwm", results=mixed).backend_calibrated is False
+
+    every = [
+        SpliceResult(donor=r.donor, acceptor=r.acceptor, model_name=r.model_name, calibrated=True)
+        for r in results
+    ]
+    assert run_splice_panel_gate(panel, "pwm", results=every).backend_calibrated is True
+
+
+def test_a_bare_call_can_never_be_promotable() -> None:
+    """A bar nobody set is not a bar that held.
+
+    The gate ships permissive defaults deliberately -- a threshold this module blessed
+    would be one a weak backend could be pointed at. The honest consequence is that
+    ``passed`` is trivially true for a bare call, which would make "the pre-registered
+    conditions held" vacuous. So ``promotable`` additionally requires that conditions
+    were pre-registered at all.
+    """
+    panel = _hard_panel()
+    bare = run_splice_panel_gate(panel, "pwm", results=_oracle(panel))
+    assert bare.head.passed is True  # nothing to fail
+    assert bare.beats_every_baseline is True
+    assert bare.held_out is True
+    assert bare.thresholds_declared is False
+    assert bare.promotable is False
+    assert any("no threshold was declared" in note for note in bare.notes)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        SpliceGateSettings(min_pr_auc=0.10),
+        SpliceGateSettings(min_pr_auc_skill=0.10),
+        SpliceGateSettings(max_ece=0.90),
+    ],
+)
+def test_any_one_declared_threshold_counts_as_pre_registration(
+    settings: SpliceGateSettings,
+) -> None:
+    """Setting any of the three bars is a deliberate act; one is enough."""
+    panel = _hard_panel()
+    comparison = run_splice_panel_gate(panel, "pwm", results=_oracle(panel), settings=settings)
+    assert comparison.thresholds_declared is True
+    assert comparison.promotable is True

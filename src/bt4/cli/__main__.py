@@ -718,6 +718,7 @@ def _cmd_splice_gate(args: argparse.Namespace) -> int:
         print(f"  - {reason}")
     print(f"beats every baseline     : {comparison.beats_every_baseline}")
     print(f"panel is held out        : {comparison.held_out}")
+    print(f"a bar was declared       : {comparison.thresholds_declared}")
     print(f"PROMOTABLE on this panel : {comparison.promotable}")
     print()
     print(
