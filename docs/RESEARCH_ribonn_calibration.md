@@ -12,9 +12,10 @@ verification pass over every dataset and statistical claim. Claims an adversaria
 **overturned** are marked **CORRECTED** — several of which corrected statements BT4's
 own documentation had been carrying.
 
-The operational runbook that goes with it (environment setup, the free sanity checks,
-the panel hunt, pre-registration, and the decision tree) lives with the maintainer; this
-document is the *why*.
+The operational runbook that goes with it — environment setup, the free sanity checks,
+the panel hunt, pre-registration, the gate command, and the decision tree — is
+[`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md). This document is the
+*why*; that one is the *how*.
 
 ## 1. What RiboNN actually is
 
