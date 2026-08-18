@@ -268,10 +268,15 @@ Every sequence **pure ACGT, no `N`** (`validate_dna` rejects `N`).
 
 ```python
 # capture_pangolin.py  — run in the pangolin env. Does NOT import bt4.
-import json
+# Weights are located from $BT4_PANGOLIN_MODEL_DIR, NOT pkg_resources: upstream's
+# own scripts use `resource_filename`, which setuptools >= 81 removed along with
+# pkg_resources. torch pulls in a modern setuptools, so that import fails on a
+# fresh install.
+import json, os
 import numpy as np, torch
-from pkg_resources import resource_filename
 from pangolin.model import Pangolin, L, W, AR
+
+MODEL_DIR = os.environ["BT4_PANGOLIN_MODEL_DIR"]
 
 IN_MAP = np.asarray([[0,0,0,0],[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
 CHANNEL = {0: 1, 2: 4, 4: 7, 6: 10}        # the CLI's [1,4,7,10] P(splice) heads
@@ -286,7 +291,7 @@ for i in (0, 2, 4, 6):                     # heart, liver, brain, testis
     fold_models = []
     for j in (1, 2, 3):                    # the CLI's three production folds
         m = Pangolin(L, W, AR)
-        w = torch.load(resource_filename("pangolin", f"models/final.{j}.{i}.3.v2"),
+        w = torch.load(os.path.join(MODEL_DIR, f"final.{j}.{i}.3.v2"),
                        map_location=torch.device("cpu"))
         m.load_state_dict(w); m.eval()
         fold_models.append(m)
@@ -314,14 +319,16 @@ the combined track in `SpliceResult.donor` and leaves `acceptor` all-zero.
 
 ```python
 # capture_spliceai.py  — run in the spliceai env. Does NOT import bt4.
-import json
+# Weights are located from $BT4_SPLICEAI_MODEL_DIR, NOT pkg_resources (removed in
+# setuptools >= 81) -- see the Pangolin note above.
+import json, os
 import numpy as np
 from keras.models import load_model
-from pkg_resources import resource_filename
 from spliceai.utils import one_hot_encode
 
 context = 10000
-models = [load_model(resource_filename('spliceai', f'models/spliceai{x}.h5'))
+MODEL_DIR = os.environ["BT4_SPLICEAI_MODEL_DIR"]
+models = [load_model(os.path.join(MODEL_DIR, f"spliceai{x}.h5"))
           for x in range(1, 6)]
 
 def acceptor_donor(seq):
