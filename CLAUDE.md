@@ -1046,6 +1046,29 @@ control.
   CDS-variant panel), **packaged installers** (PyInstaller/Briefcase) for
   macOS/Windows/Linux, and the external-validation report vs real gene
   distributions and published tools.
+  **The apparatus for that calibration has now landed, and only the data step
+  remains.** The gate can finally judge the regime BT4 deploys in rather than the
+  one RiboNN was trained on: `within_group` scores *inside* each protein (pooled
+  scoring credits between-protein skill, which is exactly what a natural-gene-trained
+  head has and exactly what BT4 cannot use — a regression test pins that a
+  gene-identity-only head passes pooled and fails within-group); `recalibrate` fits
+  the affine link on the calibration fold **only**, because a head reporting a CLR
+  compositional residual cannot be compared to an assay's units by subtraction; the
+  rank metric stays on **raw** predictions, so a head that ranks backwards cannot be
+  rescued by a negative fitted slope while a deployed BT4 hands the user the worst
+  candidate; `width_over_iqr` exposes a vacuous interval, since split conformal is
+  valid for *any* score function and a **constant predictor passes coverage**; and a
+  cluster bootstrap resamples whole proteins, because one protein's variants are a
+  dependent cluster. Around it: a strict panel format that **refuses** a row RiboNN
+  would silently drop (`api.read_panel`), five permanent baselines a head must beat —
+  CAI above all, since BT4 already optimizes it in-loop (`api.expression_gate`,
+  `bt4 expression-gate`), and `ExpressionAttestation`, the single scope-carrying seam
+  that can flip `calibrated=True`, replacing a bare `dataclasses.replace`. The
+  zero-data checks that decide whether a panel is worth acquiring at all live in
+  `scripts/ribonn_sensitivity.py`. Evidence, corrections and protocol:
+  [`docs/RESEARCH_ribonn_calibration.md`](docs/RESEARCH_ribonn_calibration.md).
+  RiboNN remains **`calibrated=False`** — none of this is a claim, it is only the
+  apparatus that could earn one.
 - **Phase 5 — Scale & ecosystem.** 🔶 **Opened.** **Library / degenerate-design
   mode has landed** (`optimize/sample.py` + `pipeline/library.py`, exposed as
   `api.library` and `bt4 library PROTEIN --n N`): instead of a single MFC

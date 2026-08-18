@@ -312,10 +312,18 @@ items 1–3 are in
     machine. Never assign `calibrated=True` by hand — it is earned on data
     (§10.5/§10.6). **Note the ordering hazard:** an attestation captured on the
     N-padded path does not transfer to the flanked path of item 3.
-11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — assemble a
-    license-clean, regime-matched **CDS-variant** TE panel and run
-    `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
-    split). Reproducing RiboNN faithfully is **not** calibration for BT4's
+11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — **the machinery
+    is now built; only the data step is left.** Landed: `within_group` (the strict bar)
+    and `recalibrate` on the gate, the cluster-bootstrap CI, the `width_over_iqr`
+    vacuity check, the panel format + strict reader (`api.read_panel`), the baseline
+    comparison (`api.expression_gate`, `bt4 expression-gate`,
+    `scripts/run_expression_gate.py`), the `ExpressionAttestation` promotion seam, and
+    the zero-data checks (`scripts/ribonn_sensitivity.py`). Evidence and protocol:
+    [`RESEARCH_ribonn_calibration.md`](RESEARCH_ribonn_calibration.md). **Remaining
+    (human):** run the free sanity checks against the licensed weights, obtain a
+    licence-clean regime-matched **CDS-variant** panel — no public dataset fully
+    qualifies today, so read §4 of the research doc before spending anything — then
+    pre-register thresholds and run the gate **once**. Reproducing RiboNN faithfully is **not** calibration for BT4's
     CDS-variant regime — RiboNN **has never been shown to discriminate synonymous
     CDS variants of the same protein under a fixed UTR**, which is exactly the
     regime BT4 operates in. (Do *not* justify this with "only ~31% of signal is in

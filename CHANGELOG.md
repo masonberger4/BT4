@@ -8,6 +8,41 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **`docs/RESEARCH_ribonn_calibration.md`** — the evidence behind `NEXT_SESSION.md` item
+  11, assembled from primary sources (the paper's full text, the upstream repository, the
+  dataset records) with an adversarial verification pass over every dataset and
+  statistical claim. It records what is now verified rather than assumed:
+  - **The paper never tests synonymous CDS variants of one protein under a fixed UTR.**
+    "synonymous" appears only in its introduction and reference titles; its codon
+    analysis is *insertional* and changes the protein. The one CDS-attributable number is
+    **r² = 0.11**, and zero-shot on designed reporters it scores **0.17–0.19** against
+    **0.62** on natural genes. That is the regime gap, stated from the source.
+  - **CORRECTED — the homology-leakage argument does not survive.** The paper reports a
+    homology control ("removing highly homologous test mRNAs led to highly similar r²").
+    It is qualitative and weak, but the charge as previously framed is refuted; the
+    argument that stands is simply that the synonymous-variant regime was never
+    evaluated.
+  - **CORRECTED — conformal coverage stays *valid* under arbitrary unit mismatch.** The
+    guarantee holds for any score function; unit mismatch destroys *sharpness*, not
+    validity. So "different units, therefore coverage is meaningless" would have been
+    wrong — the honest statement is that unrecalibrated intervals are valid and useless,
+    which is why `width_over_iqr` exists.
+  - **CORRECTED — there is no community-standard Spearman cutoff.** Any bare 0.4 or 0.5
+    would be invented, so `min_spearman` is documented everywhere as a pre-commitment.
+  - **CORRECTED — reporting a calibration slope of 1 after fitting the link is
+    circular**, which is why `link_slope_spread` is reported instead.
+  - **No public dataset fully qualifies.** A ranked table records each candidate with its
+    licence, size, readout and verdict, so the panel hunt starts from evidence rather
+    than optimism — including that the two Ranaghan panels already in this repo carry
+    **no measurements** (that paper measured one sequence, in *E. coli*), making them a
+    sensitivity resource and never a validation panel.
+
+### Changed
+- `docs/NEXT_SESSION.md` item 11 now records that the calibration **machinery** has
+  landed and only the data step remains; `CLAUDE.md`'s Phase 4 paragraph says the same,
+  and both restate that RiboNN is still `calibrated=False` — the apparatus is not a claim.
+- `THIRD_PARTY_DATA.md` records the attestation shape: derived scalars and public content
+  hashes only, with RiboNN's non-commercial per-sequence outputs structurally excluded.
 - **`ExpressionAttestation` -- the single seam that can flip an expression head to
   `calibrated=True`, replacing a bare `dataclasses.replace`.** Mirrors
   `bt4.biomodels.splice.attestation`, with the differences a *usefulness* claim needs
