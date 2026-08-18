@@ -31,6 +31,7 @@ from bt4.api import InfeasibleError
 __all__ = ["main"]
 
 _SPLICE_BACKENDS: tuple[str, ...] = ("assp", "pwm", "pangolin", "spliceai")
+_OFFLINE_SPLICE_BACKENDS: tuple[str, ...] = ("pwm", "pangolin", "spliceai")
 """Backends selectable by ``--check-splice`` / ``--splice-backend``.
 
 ``assp`` is the opt-in **online** cross-check (needs the ``bt4[assp]`` extra);
@@ -665,6 +666,70 @@ def _cmd_expression_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_splice_gate(args: argparse.Namespace) -> int:
+    """Run the splice acceptance gate over an annotated panel and print the verdict."""
+    panel = api.read_splice_panel(
+        args.panel,
+        negative_construction=args.negative_construction,
+        annotation=args.annotation,
+        min_motif_consistency=args.min_motif_consistency,
+    )
+    comparison = api.splice_panel_gate(
+        panel,
+        args.backend,
+        settings=api.SpliceGateSettings(
+            threshold=args.threshold,
+            min_pr_auc=args.min_pr_auc,
+            min_pr_auc_skill=args.min_pr_auc_skill,
+            max_ece=args.max_ece,
+            n_bins=args.bins,
+            seed=args.seed,
+        ),
+        anchor_offset=args.anchor_offset,
+    )
+
+    summary = panel.describe()
+    flag = "fidelity-attested" if comparison.backend_calibrated else "UNCALIBRATED"
+    print(f"panel:    {summary['n_windows']} windows / {summary['n_positions']} positions")
+    print(f"          {panel.n_sites} annotated sites, groups {list(panel.groups)}")
+    print(f"          motif consistency {summary['motif_consistency']:.1%}")
+    print(f"          sha256 {comparison.panel_hash[:16]}...")
+    print(f"backend:  {comparison.backend}  [{flag}]")
+    for note in comparison.notes:
+        print(f"note:     {note}")
+    print()
+
+    header = f"{'':<14}{'stratum':<10}{'AP':>8}{'skill':>8}{'ROC':>8}{'top-k':>8}{'ECE':>8}"
+    print(header)
+    rows = [("HEAD", comparison.head), *((f"  {n}", r) for n, r in comparison.baselines)]
+    for label, report in rows:
+        for stratum in report.strata:
+            print(
+                f"{label:<14}{stratum.name:<10}{stratum.pr_auc:>8.3f}"
+                f"{stratum.pr_auc_skill:>8.3f}{stratum.roc_auc:>8.3f}"
+                f"{stratum.top_k_accuracy:>8.3f}{stratum.ece:>8.3f}"
+            )
+    print()
+    for name, baseline, skill in comparison.best_baseline:
+        print(f"best baseline ({name}): {baseline} at skill {skill:.3f}")
+    print()
+    print(f"gate passed (thresholds) : {comparison.head.passed}")
+    for reason in comparison.head.reasons:
+        print(f"  - {reason}")
+    print(f"beats every baseline     : {comparison.beats_every_baseline}")
+    print(f"panel is held out        : {comparison.held_out}")
+    print(f"PROMOTABLE on this panel : {comparison.promotable}")
+    print()
+    print(
+        "This command flips nothing, and it answers a DIFFERENT question from the "
+        "fidelity attestation: that one proves BT4's wrapper reproduces the published "
+        "model, this one asks whether the numbers mean what they claim. A backend needs "
+        "both, and the thresholds here are pre-commitments set at gate time.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bt4", description="BT4 back-translation optimizer")
     parser.add_argument("--version", action="version", version=f"bt4 {__version__}")
@@ -816,6 +881,58 @@ def _parser() -> argparse.ArgumentParser:
     )
     p_gate.add_argument("--seed", type=int, default=0)
     p_gate.set_defaults(func=_cmd_expression_gate)
+
+    p_sgate = sub.add_parser(
+        "splice-gate",
+        help="run the splice acceptance gate on an annotated splice-site panel",
+    )
+    p_sgate.add_argument(
+        "panel", help="panel TSV (window_id/group/sequence/donors/acceptors)"
+    )
+    p_sgate.add_argument(
+        "--negative-construction", required=True, dest="negative_construction",
+        help="how the negative class was built, verbatim (e.g. 'all other positions in "
+             "the same gene bodies'). REQUIRED: average precision's floor is the "
+             "prevalence, which is a construction choice, so a threshold without a "
+             "pinned denominator is passable by sampling fewer negatives",
+    )
+    p_sgate.add_argument(
+        "--annotation", default="",
+        help="the gene model the sites came from, e.g. 'GENCODE v44 / GRCh38'. "
+             "Annotation choice alone moved SpliceAI's predictions for >10%% of "
+             "variants in some genes (Smith & Kitzman 2023)",
+    )
+    p_sgate.add_argument(
+        "--backend", default="pwm", choices=_OFFLINE_SPLICE_BACKENDS,
+        help="ASSP is deliberately absent: it is network-derived and excluded from the "
+             "reproducible-from-manifest guarantee, so it cannot support a gate result",
+    )
+    p_sgate.add_argument(
+        "--anchor-offset", type=int, default=0, dest="anchor_offset",
+        help="where the backend anchors its per-position score relative to the panel's "
+             "convention (donor = the G of GT, acceptor = the G of AG). Declared, never "
+             "fitted -- the report says whether the declaration looks right",
+    )
+    p_sgate.add_argument(
+        "--min-motif-consistency", type=float, default=api.MIN_SPLICE_MOTIF_CONSISTENCY,
+        dest="min_motif_consistency",
+        help="fraction of sites that must carry their canonical dinucleotide. Lower it "
+             "only for a deliberately non-canonical (U12 AT-AC) panel, never to quiet "
+             "the off-by-one this check exists to catch",
+    )
+    p_sgate.add_argument(
+        "--threshold", type=float, default=api.DEFAULT_SITE_PROBABILITY,
+        help="the operating point the MCC is computed at (BT4's own, by default)",
+    )
+    p_sgate.add_argument("--min-pr-auc", type=float, default=0.0, dest="min_pr_auc")
+    p_sgate.add_argument(
+        "--min-pr-auc-skill", type=float, default=0.0, dest="min_pr_auc_skill",
+        help="per-stratum prevalence-normalized floor -- the one comparable across panels",
+    )
+    p_sgate.add_argument("--max-ece", type=float, default=1.0, dest="max_ece")
+    p_sgate.add_argument("--bins", type=int, default=10, help="reliability bins")
+    p_sgate.add_argument("--seed", type=int, default=0)
+    p_sgate.set_defaults(func=_cmd_splice_gate)
 
     p_bt = sub.add_parser("build-table", help="build a codon table from a CDS FASTA")
     p_bt.add_argument("cds", help="path to a FASTA of coding sequences")

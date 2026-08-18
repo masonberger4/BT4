@@ -332,9 +332,32 @@ items 1–3 are in
     **0.419 exonic** vs 0.773 intronic, Smith & Kitzman 2023) — which is BT4's
     entire regime. State that wherever BT4 reports splice risk on a CDS.
 
-    **Still ahead here:** the same for **SpliceAI** (needs the CC BY-NC weights and
-    a TF 2.15 environment — see the runbook's A1 for the Keras-3 pin), and a Studio
-    checkbox for the opt-in. The reproducible workflow is three scripts:
+    **Part B's machinery is now built; the data step is what is left.** Landed: the
+    classification estimators (`pr_auc` as tie-grouped average precision, `roc_auc`,
+    `mcc`, Brier + Brier skill, ECE, reliability bins, `top_k_accuracy`,
+    `pr_auc_skill`), the acceptance gate itself
+    (`biomodels/splice/gate.py` — two case types never mixed, no Spearman, a
+    **per-stratum** verdict, and a mandatory `negative_construction`), the **panel
+    format + strict reader** (`api.read_splice_panel`), and the baseline comparison
+    (`api.splice_panel_gate`, `bt4 splice-gate`) over four permanent controls —
+    `permutation` / `gt_ag` / `pwm` / `constant`. Run BT4's own PWM backend as the head
+    and it ties the `pwm` baseline exactly, so `beats_every_baseline` is `False`: the
+    shipped default can never be evidence for itself.
+
+    The reader **refuses a mis-anchored panel** rather than scoring it — BT4 anchors a
+    donor on the `G` of `GT` and an acceptor on the `G` of `AG`, and a panel built to
+    the exonic-boundary convention (what the GENCODE recipe produces) is rejected with
+    the exact shift that would have worked. The runner reports the matching backend-side
+    trap: where each score actually peaked around a declared site, so a one-base anchor
+    disagreement cannot masquerade as a hopeless model.
+
+    **Still ahead here:** acquiring the two panels (annotated donor/acceptor positions
+    from a pinned GENCODE release for site prediction; `kitzmanlab/splicebench2023`,
+    MIT, 3,616 pre-scored variants for variant effect), running the gate and deriving
+    BT4's own operating point, writing `docs/REVIEW_splice_calibration.md`, the
+    integration-fidelity gate for **SpliceAI** (needs the CC BY-NC weights and a
+    TF 2.15 environment — see the runbook's A1 for the Keras-3 pin), and a Studio
+    checkbox for the opt-in. The reproducible fidelity workflow is three scripts:
     `make_splice_panel.py` → `capture_pangolin_panel.py` (never imports `bt4`) →
     `run_splice_fidelity_gate.py`.
 

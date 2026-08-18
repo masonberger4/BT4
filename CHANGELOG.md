@@ -8,6 +8,51 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **An annotated splice-panel format, and the baselines a splice backend must beat.**
+  The runnable half of Part B of `docs/DESIGN_splice_cnn_calibration.md`: everything
+  needed to gate a wrapped CNN on real data except the data.
+  - **`bt4.api.read_splice_panel`** (`biomodels/splice/panel.py`) — a tab-separated
+    window format (`window_id`/`group`/`sequence`/`donors`/`acceptors`), a strict
+    reader, and an order-independent content hash so a gate result is bound to exact
+    bytes (invariant #7). `group` is the chromosome, and overlap with the models'
+    training set (chr 2, 4, 6, 8, 10–22, X, Y) is reported.
+  - **The position convention is verified, not trusted.** A splice panel has one
+    catastrophic failure mode and it is silent: annotate one base off and every score
+    is misaligned, the model looks incompetent, and nothing says why. BT4 pins the
+    anchor its own PWM baseline already uses — a donor is the `G` of the
+    intron-opening `GT`, an acceptor the `G` of the intron-closing `AG` — and, since
+    ~99% of human introns are canonical, **refuses** a panel below 90% consistency
+    while naming the shift that would have worked. A panel built to the
+    exonic-boundary convention (what the GENCODE recipe produces) is rejected with
+    *"move each donor +1 and each acceptor -1"* rather than silently scored.
+  - **`bt4.api.splice_panel_gate` / `bt4 splice-gate`** (`pipeline/splice_gate.py`) —
+    runs the acceptance gate on a backend and **the same gate on four permanent
+    baselines**: `permutation` (the null), `gt_ag` (the canonical dinucleotide rule
+    ~99% of introns follow), `pwm` (BT4's shipped `ConsensusPwmSplicePredictor`, the
+    free incumbent) and `constant` (the per-stratum base rate — perfectly calibrated,
+    completely useless, so its excellent ECE is visible rather than a trap). The
+    comparison is **per stratum**, so beating the motif on donors cannot excuse losing
+    to it on acceptors.
+  - **BT4's own default cannot be evidence for itself.** Run the PWM backend as the
+    head and it ties the `pwm` baseline exactly, so `beats_every_baseline` is `False`
+    — the structural counterpart of the expression gate's "the null model provably
+    cannot pass".
+  - **Both alignment traps are reported, never assumed.** `anchor_offset` is an
+    explicit input and an `AlignmentDiagnostic` shows where the backend's score
+    actually peaked around each declared site: a perfect oracle shifted two bases reads
+    as PR-AUC 0.006, and the diagnostic says the anchors disagree instead of leaving it
+    to look like a bad model. And a **combined-track** backend (Pangolin emits one
+    `P(splice)` and leaves `acceptor` all-zero) collapses to a single `"splice"`
+    stratum rather than being scored as hopeless at acceptors — an artifact of the
+    wrapper, not a finding about the model.
+  - Promotion needs three conditions at once, reported separately: the gate's
+    thresholds, beating every baseline in every stratum, and the panel being **held
+    out**. A panel drawn from training chromosomes can never be `promotable`.
+  - **Nothing here flips a flag**, and it answers a different question from the
+    fidelity attestation: that one proves BT4's wrapper reproduces the published
+    model, this one asks whether the numbers mean what they claim. ASSP is deliberately
+    not an option — it is network-derived and outside the reproducible-from-manifest
+    guarantee, so it cannot support a gate result.
 - **Pangolin passed its integration-fidelity gate — the first wrapped model in BT4
   to pass one.** On a maintainer machine holding the GPL weights: 18 cases,
   tolerance `1e-3`, **max absolute deviation exactly 0.0**. BT4's adapter
