@@ -278,5 +278,12 @@ def score_in_context(
         donor=scored.donor[lo:hi],
         acceptor=scored.acceptor[lo:hi],
         model_name=scored.model_name,
-        calibrated=scored.calibrated,
+        # An attestation is REGIME-SCOPED, and this is a different regime. The
+        # integration-fidelity gate is captured on the bare-CDS path, where the
+        # adapter pads its ~10 kb window with literal `N`; a real-flank score is
+        # outside what that attestation covers. Forwarding the inner flag here
+        # would let better *input* silently masquerade as calibration -- exactly
+        # what this function's own docstring forbids -- so a flanked result is
+        # always reported uncalibrated, whatever the backend claims.
+        calibrated=False,
     )

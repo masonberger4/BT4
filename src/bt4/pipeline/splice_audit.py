@@ -75,7 +75,20 @@ class _FlankedPredictor:
 
     @property
     def calibrated(self) -> bool:
-        """The wrapped backend's calibration flag -- better input is not calibration."""
+        """Always ``False`` when flanks are applied -- an attestation is regime-scoped.
+
+        :func:`audit_splice` reads ``predictor.calibrated`` directly (for each
+        ``SpliceFlag``, each ``BackendCandidateAudit``, and the report-level
+        ``all_calibrated``), so clearing the flag on the ``SpliceResult`` alone
+        would not reach it -- this property is the seam that does.
+
+        The fidelity gate is captured on the bare-CDS, ``N``-padded path; a
+        real-flank score is a different input regime the attestation never
+        exercised. Better input is not calibration, and it does not carry
+        calibration across regimes either.
+        """
+        if self.upstream or self.downstream:
+            return False
         return self.inner.calibrated
 
     def score_sequence(self, dna: str) -> SpliceResult:

@@ -284,6 +284,42 @@ def _backend_name(predictor: Any) -> str:
     )
 
 
+def _check_full_weight_coverage(predictor: Any, backend: str) -> None:
+    """Refuse to promote a configuration that does not load every pinned weight.
+
+    An honored attestation is *required* to claim the adapter's full pinned map --
+    a subset fails the equality check above and is refused. But Pangolin's tissue
+    set selects both which weight files load and which output channel is read
+    (``TISSUE_OUTPUTS`` maps each tissue to a ``weight_index`` / ``output_channel``),
+    so a gate run at ``tissues=("heart",)`` touches 3 of the 12 pinned files and
+    one of the four channels, while still recording the full 12-file map. Promoting
+    the default four-tissue predictor against that attestation would claim
+    calibration for nine weight files and three channels the gate never executed.
+
+    ``verify_pangolin_fidelity``'s docstring already states the requirement ("its
+    tissue set must match how the panel was captured"); this makes it enforced
+    rather than advisory, and it lives at the promotion seam so it holds for every
+    caller. SpliceAI has no equivalent axis -- its adapter always loads all five
+    ensemble members -- so only Pangolin is checked.
+
+    Raises:
+        AttestationError: If the predictor's configuration would load only part of
+            the pinned weight set.
+    """
+    if backend != "pangolin":
+        return
+    from bt4.biomodels.splice.pangolin import DEFAULT_TISSUES
+
+    tissues = tuple(getattr(predictor, "tissues", DEFAULT_TISSUES))
+    if set(tissues) != set(DEFAULT_TISSUES):
+        raise AttestationError(
+            f"attestation covers all {len(DEFAULT_TISSUES)} Pangolin tissue heads "
+            f"({', '.join(DEFAULT_TISSUES)}), but this predictor is configured for "
+            f"{', '.join(tissues)}; a partial configuration loads only part of the "
+            "attested weight set, so the attestation does not cover it"
+        )
+
+
 def verified_predictor(predictor: Any, attestation: FidelityAttestation) -> Any:
     """Return ``predictor`` promoted to ``calibrated=True`` iff ``attestation`` matches.
 
@@ -334,6 +370,7 @@ def verified_predictor(predictor: Any, attestation: FidelityAttestation) -> Any:
             "attestation weight SHA-256 set does not match the adapter's pinned "
             "weights; the attestation is for different weights"
         )
+    _check_full_weight_coverage(predictor, backend)
     return dataclasses.replace(predictor, fidelity_verified=True)
 
 
