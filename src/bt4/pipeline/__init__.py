@@ -51,12 +51,22 @@ from bt4.pipeline.splice_crosscheck import (
     resolve_splice_backend,
     run_splice_crosscheck,
 )
+from bt4.pipeline.splice_gate import (
+    SPLICE_BASELINES,
+    AlignmentDiagnostic,
+    SpliceGateComparison,
+    SpliceGateSettings,
+    run_splice_panel_gate,
+    score_splice_panel,
+)
 from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 
 __all__ = [
     "APPLICATION_PRESETS",
     "BASELINES",
     "PACKAGING_LIMITS",
+    "SPLICE_BASELINES",
+    "AlignmentDiagnostic",
     "ApplicationPreset",
     "Candidate",
     "CandidateSet",
@@ -71,6 +81,8 @@ __all__ = [
     "OptimizeConfig",
     "PackagingReport",
     "SpliceCrossCheck",
+    "SpliceGateComparison",
+    "SpliceGateSettings",
     "Track",
     "TracksResult",
     "ValidationReport",
@@ -89,8 +101,10 @@ __all__ = [
     "run_optimize",
     "run_panel_gate",
     "run_splice_crosscheck",
+    "run_splice_panel_gate",
     "run_tracks",
     "run_validate",
     "score_panel",
+    "score_splice_panel",
     "summarize",
 ]

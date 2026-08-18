@@ -1,0 +1,521 @@
+"""Run the splice acceptance gate over an annotated panel, against fixed baselines.
+
+:func:`bt4.biomodels.splice.verify_splice_gate` answers "does this backend clear these
+thresholds?". That is necessary and nowhere near sufficient, because a threshold is
+only meaningful next to what a *dumb* predictor scores on the same panel -- and on this
+task the dumb predictors are unusually strong. This module is the orchestration that
+makes the answer usable: it scores a
+:class:`~bt4.biomodels.splice.panel.SplicePanel` with a chosen backend, runs the gate,
+runs **the same gate on every baseline**, and reports a verdict built from all three
+conditions that have to hold at once.
+
+**Why the baselines are not optional here in particular.** Roughly 99% of human introns
+open ``GT`` and close ``AG``, so "is the canonical dinucleotide here?" is already a
+usable splice-site detector -- and BT4 ships
+:class:`~bt4.biomodels.splice.baseline.ConsensusPwmSplicePredictor`, which reads that
+motif plus its consensus context, for free and with no licence. A wrapped CNN that
+cannot beat those two has not earned a PyTorch dependency, a hash-pinned weight set, or
+a non-commercial licence term, however impressive its absolute PR-AUC looks. The
+``constant`` baseline is permanent for the mirror-image reason: it is perfectly
+calibrated and completely useless, so its excellent ECE is visible in the same table
+rather than being a trap the reader has to remember.
+
+**Two alignment traps, both reported rather than assumed.**
+
+* *Anchor offset.* A backend anchors its per-position score somewhere -- BT4's PWM
+  baseline on the intronic dinucleotide, another model perhaps on the exonic boundary.
+  One base of disagreement turns a good model into a hopeless one, silently. So
+  ``anchor_offset`` is an explicit input and the report carries an
+  :class:`AlignmentDiagnostic` showing where the backend's score actually peaked around
+  each true site. A modal offset that is not zero is a wiring bug, and the note says so.
+* *Combined tracks.* Pangolin emits **one** ``P(splice)`` track and leaves ``acceptor``
+  all-zero, because its head is a binary softmax that never separated the two. Scoring
+  that panel with a donor/acceptor split would report it as perfectly hopeless at
+  acceptors -- an artifact of the wrapper, not a finding about the model. So a combined
+  track collapses to a single ``"splice"`` stratum, detected from the track itself and
+  recorded in the report.
+
+**Nothing here flips a flag.** ``promotable`` means "the pre-registered conditions held
+on this panel". Promotion is a separate, deliberate, recorded step (CLAUDE.md
+sections 6/8/10.6), and for a splice backend it additionally requires an integration
+fidelity attestation -- a different gate answering a different question.
+"""
+
+from __future__ import annotations
+
+import random
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from bt4.biomodels.splice.base import DEFAULT_SITE_PROBABILITY, SpliceResult
+from bt4.biomodels.splice.gate import (
+    SpliceGateReport,
+    SpliceSiteCase,
+    verify_splice_gate,
+)
+from bt4.biomodels.splice.panel import SplicePanel, SpliceWindow, canonical_motif_at
+from bt4.pipeline.splice_crosscheck import resolve_splice_backend
+
+__all__ = [
+    "PEAK_SEARCH",
+    "SPLICE_BASELINES",
+    "AlignmentDiagnostic",
+    "SpliceGateComparison",
+    "SpliceGateSettings",
+    "baseline_predictions",
+    "run_splice_panel_gate",
+    "score_splice_panel",
+]
+
+SPLICE_BASELINES: tuple[str, ...] = ("permutation", "gt_ag", "pwm", "constant")
+"""Baselines a splice backend must beat. Kept permanently: a control that disappears
+once it is inconvenient was never a control."""
+
+PEAK_SEARCH: tuple[int, ...] = (-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5)
+"""Offsets probed by the alignment diagnostic. Reported, never fitted -- the anchor is
+the caller's declared input, and this only says whether the declaration looks right."""
+
+
+@dataclass(frozen=True, slots=True)
+class SpliceGateSettings:
+    """The gate's thresholds and modes, gathered so they can be pre-registered as one.
+
+    Attributes:
+        threshold: The operating point the MCC is computed at. Defaults to BT4's own
+            shared operating point, so the gate measures the cutoff BT4 actually uses
+            rather than an ad-hoc one.
+        min_pr_auc: Per-stratum average-precision floor. A **pre-commitment** recorded
+            at gate time, never a bar this module blesses.
+        min_pr_auc_skill: Per-stratum prevalence-normalized floor, the one that stays
+            comparable across panels.
+        max_ece: Per-stratum expected-calibration-error ceiling.
+        n_bins: Reliability bins.
+        seed: Seed for the permutation baseline (invariant #7).
+    """
+
+    threshold: float = DEFAULT_SITE_PROBABILITY
+    min_pr_auc: float = 0.0
+    min_pr_auc_skill: float = 0.0
+    max_ece: float = 1.0
+    n_bins: int = 10
+    seed: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentDiagnostic:
+    """Where a backend's score actually peaked, relative to each declared site.
+
+    The runner's counterpart to the panel's motif check: the panel proves its positions
+    mean what the format says, and this proves the *backend* agrees about where a site
+    is anchored. Both failures look identical in the metrics -- a competent model
+    scoring near zero -- and neither is visible without being measured.
+
+    Attributes:
+        counts: ``(offset, number of sites peaking there)`` over :data:`PEAK_SEARCH`.
+        n_sites: Sites the probe ran over.
+    """
+
+    counts: tuple[tuple[int, int], ...]
+    n_sites: int
+
+    @property
+    def modal_offset(self) -> int:
+        """The most common peak offset, preferring ``0`` on a tie."""
+        return max(self.counts, key=lambda item: (item[1], item[0] == 0), default=(0, 0))[0]
+
+    @property
+    def fraction_at_zero(self) -> float:
+        """Fraction of sites whose peak landed exactly on the declared position."""
+        if not self.n_sites:
+            return 0.0
+        return dict(self.counts).get(0, 0) / self.n_sites
+
+    def note(self) -> str:
+        """Return a one-line verdict on whether the anchors agree."""
+        if not self.n_sites:
+            return "alignment: no sites to probe"
+        if self.modal_offset:
+            return (
+                f"alignment: the backend's score peaks {self.modal_offset:+d} from the "
+                f"declared position for most sites (only {self.fraction_at_zero:.1%} "
+                f"peak exactly on it) -- the anchors DISAGREE. Pass "
+                f"anchor_offset={self.modal_offset:+d} after confirming the backend's "
+                "convention, rather than reading these metrics as model quality"
+            )
+        return (
+            f"alignment: peaks land on the declared position for "
+            f"{self.fraction_at_zero:.1%} of sites (modal offset 0) -- anchors agree"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SpliceGateComparison:
+    """A backend's gate report, every baseline's, and the verdict built from them.
+
+    Attributes:
+        panel_hash: The panel's content hash, so a result is bound to exact bytes.
+        backend: The backend's ``name``.
+        backend_calibrated: Its honesty flag at the time of the run. For a splice
+            backend this reflects *integration fidelity*; this gate is about the
+            separate statistical question, so the two are reported side by side and
+            never conflated.
+        settings: The thresholds and modes used.
+        strata: The stratum names scored, in report order.
+        head: The backend's gate report.
+        baselines: ``(name, report)`` for each baseline, in :data:`SPLICE_BASELINES`
+            order.
+        best_baseline: Per stratum, ``(stratum, baseline name, its skill)`` for the
+            strongest baseline there.
+        beats_every_baseline: The backend's ``pr_auc_skill`` exceeds every baseline's
+            **in every stratum** -- the per-stratum rule applied to the comparison, so
+            beating the motif on donors cannot excuse losing to it on acceptors.
+        held_out: The panel contains no chromosome either model trained on.
+        alignment: Where the backend's peaks landed relative to the declared sites.
+        promotable: All three conditions held **on this panel**. Not a promotion.
+        notes: Human-readable notes carried into the report.
+    """
+
+    panel_hash: str
+    backend: str
+    backend_calibrated: bool
+    settings: SpliceGateSettings
+    strata: tuple[str, ...]
+    head: SpliceGateReport
+    baselines: tuple[tuple[str, SpliceGateReport], ...]
+    best_baseline: tuple[tuple[str, str, float], ...]
+    beats_every_baseline: bool
+    held_out: bool
+    alignment: AlignmentDiagnostic
+    promotable: bool
+    notes: tuple[str, ...]
+
+
+def _tracks(result: SpliceResult, combined: bool) -> dict[str, tuple[float, ...]]:
+    """Split a :class:`SpliceResult` into the per-stratum tracks to be scored.
+
+    A combined-track backend collapses to one ``"splice"`` stratum rather than being
+    credited with an all-zero acceptor track it never claimed to produce.
+    """
+    if combined:
+        return {"splice": result.donor}
+    return {"donor": result.donor, "acceptor": result.acceptor}
+
+
+def _is_combined(results: Sequence[SpliceResult]) -> bool:
+    """Return whether the backend emits one combined track rather than two.
+
+    Detected from the output: an identically-zero acceptor track over the whole panel
+    is either Pangolin's binary head (which never separated the two) or a backend whose
+    acceptor scores are unusable anyway. Either way it must not be scored as an
+    acceptor prediction. Callers can override the detection when they know better.
+    """
+    return all(value == 0.0 for result in results for value in result.acceptor)
+
+
+def score_splice_panel(panel: SplicePanel, backend: str) -> list[SpliceResult]:
+    """Score every window with ``backend``, in panel order.
+
+    Args:
+        panel: The annotated panel.
+        backend: A splice backend name (``"pwm"``, ``"pangolin"``, ``"spliceai"``).
+            Resolved through :func:`~bt4.pipeline.splice_crosscheck.resolve_splice_backend`,
+            so a committed attestation is honored only under the standing opt-in.
+
+    Returns:
+        One :class:`~bt4.biomodels.splice.base.SpliceResult` per window.
+
+    Raises:
+        ValueError: On an unknown backend name.
+    """
+    predictor = resolve_splice_backend(backend)
+    return [predictor.score_sequence(window.sequence) for window in panel.windows]
+
+
+def _labels(window: SpliceWindow, kind: str) -> tuple[int, ...]:
+    """Return per-position labels for ``kind``, merging both kinds for ``"splice"``."""
+    if kind != "splice":
+        return window.labels(kind)
+    sites = set(window.donors) | set(window.acceptors)
+    return tuple(1 if i in sites else 0 for i in range(len(window.sequence)))
+
+
+def _aligned(track: Sequence[float], position: int, anchor_offset: int) -> float:
+    """Return the backend's score for ``position`` under the declared anchor offset.
+
+    A position whose aligned index falls outside the track scores ``0.0`` -- the same
+    convention the backends themselves use for positions without full flanking context.
+    """
+    index = position + anchor_offset
+    return track[index] if 0 <= index < len(track) else 0.0
+
+
+def _build_cases(
+    panel: SplicePanel,
+    results: Sequence[SpliceResult],
+    combined: bool,
+    anchor_offset: int,
+) -> tuple[list[SpliceSiteCase], list[tuple[int, int]]]:
+    """Build one case per (position, stratum), plus a back-reference to the sequence.
+
+    Returns:
+        ``(cases, refs)`` where ``refs[j]`` is the ``(window index, position)`` case
+        ``j`` came from -- what the sequence-derived baselines need in order to score
+        the same positions without re-deriving the alignment.
+    """
+    cases: list[SpliceSiteCase] = []
+    refs: list[tuple[int, int]] = []
+    for index, (window, result) in enumerate(zip(panel.windows, results, strict=True)):
+        for kind, track in _tracks(result, combined).items():
+            labels = _labels(window, kind)
+            for position, label in enumerate(labels):
+                cases.append(
+                    SpliceSiteCase(
+                        predicted=_aligned(track, position, anchor_offset),
+                        label=label,
+                        kind=kind,
+                        group=window.group,
+                    )
+                )
+                refs.append((index, position))
+    return cases, refs
+
+
+def _alignment(
+    panel: SplicePanel,
+    results: Sequence[SpliceResult],
+    combined: bool,
+    anchor_offset: int,
+) -> AlignmentDiagnostic:
+    """Probe where the backend's score peaks around each declared site.
+
+    Computed on the **aligned** track, so a modal offset of zero means the declared
+    ``anchor_offset`` is right and any other value is the residual correction needed.
+    """
+    counts = dict.fromkeys(PEAK_SEARCH, 0)
+    n_sites = 0
+    for window, result in zip(panel.windows, results, strict=True):
+        tracks = _tracks(result, combined)
+        for position, kind in window.sites():
+            track = tracks.get("splice" if combined else kind)
+            if track is None:
+                continue
+            n_sites += 1
+            # Ties resolve to the offset nearest zero, then the lower one, so the probe
+            # is deterministic (invariant #7) and never invents a shift from flat scores.
+            best = max(
+                PEAK_SEARCH,
+                key=lambda d: (_aligned(track, position + d, anchor_offset), -abs(d), -d),
+            )
+            counts[best] += 1
+    return AlignmentDiagnostic(counts=tuple(sorted(counts.items())), n_sites=n_sites)
+
+
+def baseline_predictions(
+    name: str,
+    panel: SplicePanel,
+    cases: Sequence[SpliceSiteCase],
+    refs: Sequence[tuple[int, int]],
+    head_predictions: Sequence[float],
+    seed: int,
+) -> list[float]:
+    """Return one baseline's predictions over the same cases, in case order.
+
+    ``permutation`` is the null: the backend's own predictions shuffled **within each
+    stratum**, so it preserves that stratum's score distribution exactly and measures
+    what this panel yields from no relationship at all. The rest are things BT4 already
+    has for free -- ``gt_ag``, the canonical dinucleotide rule that ~99% of human
+    introns follow, and ``pwm``, the consensus baseline
+    :func:`~bt4.biomodels.splice.default` already returns -- plus ``constant``, the
+    per-stratum base rate, which is perfectly calibrated and carries no information.
+
+    Raises:
+        ValueError: If ``name`` is not in :data:`SPLICE_BASELINES`.
+    """
+    if name == "permutation":
+        rng = random.Random(seed)
+        by_kind: dict[str, list[int]] = {}
+        for index, case in enumerate(cases):
+            by_kind.setdefault(case.kind, []).append(index)
+        shuffled = list(head_predictions)
+        for kind in sorted(by_kind):
+            indices = by_kind[kind]
+            values = [head_predictions[i] for i in indices]
+            rng.shuffle(values)
+            for index, value in zip(indices, values, strict=True):
+                shuffled[index] = value
+        return shuffled
+    if name == "gt_ag":
+        return [
+            1.0
+            if canonical_motif_at(panel.windows[window].sequence, position, case.kind)
+            else 0.0
+            for case, (window, position) in zip(cases, refs, strict=True)
+        ]
+    if name == "pwm":
+        # The PWM baseline anchors on the same intronic dinucleotide the panel format
+        # pins, so it is scored at offset 0 by construction rather than by assumption.
+        results = score_splice_panel(panel, "pwm")
+        combined = any(case.kind == "splice" for case in cases)
+        tracks = [_tracks(result, combined) for result in results]
+        return [
+            _aligned(tracks[window][case.kind], position, 0)
+            for case, (window, position) in zip(cases, refs, strict=True)
+        ]
+    if name == "constant":
+        totals: dict[str, list[int]] = {}
+        for case in cases:
+            bucket = totals.setdefault(case.kind, [0, 0])
+            bucket[0] += case.label
+            bucket[1] += 1
+        rates = {kind: hits / total for kind, (hits, total) in totals.items()}
+        return [rates[case.kind] for case in cases]
+    raise ValueError(f"unknown baseline {name!r}; choose from {list(SPLICE_BASELINES)}")
+
+
+def _gate(
+    cases: Sequence[SpliceSiteCase],
+    predictions: Sequence[float],
+    panel: SplicePanel,
+    settings: SpliceGateSettings,
+) -> SpliceGateReport:
+    """Run the gate over ``predictions``, re-labelling the shared cases."""
+    relabelled = [
+        SpliceSiteCase(
+            predicted=value, label=case.label, kind=case.kind, group=case.group
+        )
+        for case, value in zip(cases, predictions, strict=True)
+    ]
+    return verify_splice_gate(
+        relabelled,
+        negative_construction=panel.negative_construction,
+        panel_note=panel.annotation,
+        threshold=settings.threshold,
+        min_pr_auc=settings.min_pr_auc,
+        min_pr_auc_skill=settings.min_pr_auc_skill,
+        max_ece=settings.max_ece,
+        n_bins=settings.n_bins,
+    )
+
+
+def run_splice_panel_gate(
+    panel: SplicePanel,
+    backend: str = "pwm",
+    *,
+    settings: SpliceGateSettings | None = None,
+    baselines: Sequence[str] = SPLICE_BASELINES,
+    anchor_offset: int = 0,
+    combined_track: bool | None = None,
+    results: Sequence[SpliceResult] | None = None,
+) -> SpliceGateComparison:
+    """Score ``panel`` with ``backend``, gate it, gate every baseline, and compare.
+
+    Args:
+        panel: The annotated splice panel.
+        backend: A splice backend name (``"pwm"``, ``"pangolin"``, ``"spliceai"``).
+        settings: Thresholds and modes. The defaults set no bar, so a bare call
+            produces a report and can never certify anything.
+        baselines: Which baselines to run. Defaults to all of
+            :data:`SPLICE_BASELINES`; dropping one is a deliberate, visible choice.
+        anchor_offset: Where the backend anchors its score relative to the panel's
+            convention (see the module docstring). Declared by the caller, never
+            fitted -- :attr:`SpliceGateComparison.alignment` reports whether the
+            declaration looks right.
+        combined_track: Force single-``"splice"``-stratum scoring on (``True``) or off
+            (``False``). ``None`` detects it from the backend's own output.
+        results: Pre-computed per-window scores, to gate a panel without re-running a
+            heavy model (or to evaluate a backend this registry cannot construct).
+
+    Returns:
+        A :class:`SpliceGateComparison`. **This function flips nothing.**
+
+    Raises:
+        ValueError: On an unknown backend or baseline, a ``results`` length mismatch,
+            or any refusal from the gate itself.
+    """
+    settings = settings or SpliceGateSettings()
+    unknown = [name for name in baselines if name not in SPLICE_BASELINES]
+    if unknown:
+        raise ValueError(
+            f"unknown baseline(s) {unknown}; choose from {list(SPLICE_BASELINES)}"
+        )
+
+    notes: list[str] = []
+    if results is None:
+        scored = score_splice_panel(panel, backend)
+        probe = resolve_splice_backend(backend)
+        name, calibrated = probe.name, probe.calibrated
+    else:
+        if len(results) != len(panel.windows):
+            raise ValueError(
+                f"results has {len(results)} entries for {len(panel.windows)} windows"
+            )
+        scored = list(results)
+        name = scored[0].model_name if scored else backend
+        calibrated = any(result.calibrated for result in scored)
+        notes.append("scores supplied by the caller")
+
+    combined = _is_combined(scored) if combined_track is None else combined_track
+    if combined:
+        notes.append(
+            "the backend emits one combined P(splice) track, so donor and acceptor are "
+            "scored as a single 'splice' stratum rather than crediting it with an "
+            "acceptor prediction it does not make"
+        )
+
+    cases, refs = _build_cases(panel, scored, combined, anchor_offset)
+    head_predictions = [case.predicted for case in cases]
+    alignment = _alignment(panel, scored, combined, anchor_offset)
+    notes.append(f"{alignment.note()} (with anchor_offset={anchor_offset:+d})")
+
+    head = _gate(cases, head_predictions, panel, settings)
+    reports = tuple(
+        (
+            baseline,
+            _gate(
+                cases,
+                baseline_predictions(
+                    baseline, panel, cases, refs, head_predictions, settings.seed
+                ),
+                panel,
+                settings,
+            ),
+        )
+        for baseline in baselines
+    )
+
+    head_skill = {stratum.name: stratum.pr_auc_skill for stratum in head.strata}
+    best: list[tuple[str, str, float]] = []
+    beats = bool(head_skill)
+    for stratum in sorted(head_skill):
+        winner, top = "none", float("-inf")
+        for baseline, report in reports:
+            for scored_stratum in report.strata:
+                if scored_stratum.name == stratum and scored_stratum.pr_auc_skill > top:
+                    winner, top = baseline, scored_stratum.pr_auc_skill
+        best.append((stratum, winner, top))
+        if head_skill[stratum] <= top:
+            beats = False
+
+    overlap = panel.training_overlap
+    held_out = not overlap
+    if overlap:
+        notes.append(
+            f"NOT HELD OUT: {list(overlap)} are chromosomes both models trained on, so "
+            "these metrics are optimistic and cannot support promotion"
+        )
+
+    return SpliceGateComparison(
+        panel_hash=panel.content_hash(),
+        backend=name,
+        backend_calibrated=calibrated,
+        settings=settings,
+        strata=tuple(sorted(head_skill)),
+        head=head,
+        baselines=reports,
+        best_baseline=tuple(best),
+        beats_every_baseline=beats,
+        held_out=held_out,
+        alignment=alignment,
+        promotable=bool(head.passed and beats and held_out),
+        notes=tuple(notes),
+    )

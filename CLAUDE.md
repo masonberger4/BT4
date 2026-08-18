@@ -875,9 +875,26 @@ control.
   `MAX_ATTESTATION_TOLERANCE` floor, and its weight SHAs exactly match the
   adapter's `PINNED_WEIGHT_SHA256` — a refusal, never a silent downgrade), and the
   baseline **fallback**. Because BT4 is open-source and **non-commercial**, both
-  Pangolin (GPL) and SpliceAI (CC BY-NC) are eligible to certify. Still ahead:
-  running an actual gate to emit a committed attestation (human-only — needs the
-  licensed weights + a captured panel). The opt-in **ASSP** cross-check (§6) with
+  Pangolin (GPL) and SpliceAI (CC BY-NC) are eligible to certify. **Pangolin has now
+  passed**, and a committed attestation ships; promotion is opt-in
+  (`BT4_SPLICE_USE_ATTESTED`), so `default()` still returns the PWM baseline.
+  **A fidelity attestation is not a calibration claim, and the separate gate for that
+  now exists too** (`biomodels/splice/gate.py` + `pipeline/splice_gate.py`,
+  `api.splice_panel_gate` / `bt4 splice-gate`): a **per-stratum** verdict over
+  PR-AUC / prevalence-normalized skill / ROC-AUC / top-k / MCC / Brier + Brier-skill /
+  ECE — deliberately **not** Spearman, which on a binary label adds nothing over
+  ROC-AUC and whose expression-gate threshold a *perfect* classifier fails at splice
+  prevalence. It demands a declared `negative_construction` (average precision's floor
+  is the prevalence, so a threshold without a pinned denominator is passable by
+  thinning negatives), reads a strict panel format whose position convention is
+  **verified against the sequence** rather than trusted (`api.read_splice_panel`
+  refuses a mis-anchored panel and names the shift that would have worked), and runs
+  four permanent baselines a backend must beat *in every stratum* — `permutation`,
+  `gt_ag` (the canonical dinucleotide ~99% of introns follow), `pwm` (BT4's own shipped
+  baseline, the free incumbent) and `constant`. Running the PWM backend as the head
+  ties the `pwm` baseline exactly, so **BT4's default can never be evidence for
+  itself**. Still ahead: the same fidelity gate for **SpliceAI**, and the regime-matched
+  panels Part B needs (human-only, data-gated). The opt-in **ASSP** cross-check (§6) with
   offline fixtures has now **landed** — `AsspSplicePredictor` +
   `run_splice_crosscheck` + `bt4 validate --splice-backend assp` / `bt4 optimize
   --check-splice assp`, opt-in / out-of-loop / cached / rate-limited-with-backoff /

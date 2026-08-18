@@ -39,9 +39,15 @@ from bt4.biomodels.splice import (
     USE_ATTESTED_SPLICE_ENV_VAR,
     SpliceAuditReport,
     SpliceFlag,
+    SplicePanel,
     SplicePredictor,
+    SpliceWindow,
     attested_splice_promotion_enabled,
     bundled_splice_attestation,
+    read_splice_panel,
+)
+from bt4.biomodels.splice import (
+    MIN_MOTIF_CONSISTENCY as MIN_SPLICE_MOTIF_CONSISTENCY,
 )
 from bt4.constraints import (
     ForbiddenPreset,
@@ -76,6 +82,8 @@ from bt4.io import (
 from bt4.pipeline import (
     APPLICATION_PRESETS,
     PACKAGING_LIMITS,
+    SPLICE_BASELINES,
+    AlignmentDiagnostic,
     ApplicationPreset,
     Candidate,
     CandidateSet,
@@ -90,6 +98,8 @@ from bt4.pipeline import (
     OptimizeConfig,
     PackagingReport,
     SpliceCrossCheck,
+    SpliceGateComparison,
+    SpliceGateSettings,
     Track,
     TracksResult,
     ValidationReport,
@@ -114,15 +124,22 @@ from bt4.pipeline import (
 from bt4.pipeline import (
     run_panel_gate as expression_gate,
 )
+from bt4.pipeline import (
+    run_splice_panel_gate as splice_panel_gate,
+)
 
 __all__ = [
     "AMINO_ACIDS",
     "APPLICATION_PRESETS",
+    "DEFAULT_SITE_PROBABILITY",
     "GENOME_WIDE",
     "HIGHLY_EXPRESSED",
+    "MIN_SPLICE_MOTIF_CONSISTENCY",
     "PACKAGING_LIMITS",
     "REFERENCE_SETS",
+    "SPLICE_BASELINES",
     "USE_ATTESTED_SPLICE_ENV_VAR",
+    "AlignmentDiagnostic",
     "ApplicationPreset",
     "Candidate",
     "CandidateSet",
@@ -149,6 +166,10 @@ __all__ = [
     "SpliceAuditReport",
     "SpliceCrossCheck",
     "SpliceFlag",
+    "SpliceGateComparison",
+    "SpliceGateSettings",
+    "SplicePanel",
+    "SpliceWindow",
     "TableProvenance",
     "Track",
     "TracksResult",
@@ -187,6 +208,7 @@ __all__ = [
     "read_fasta",
     "read_genbank",
     "read_panel",
+    "read_splice_panel",
     "rerank_by_expression",
     "resolve_enzyme",
     "resolve_expression_backend",
@@ -196,6 +218,7 @@ __all__ = [
     "result_to_json",
     "splice_audit",
     "splice_crosscheck",
+    "splice_panel_gate",
     "summarize",
     "to_fasta",
     "tracks",

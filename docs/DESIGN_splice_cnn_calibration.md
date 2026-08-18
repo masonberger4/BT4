@@ -552,12 +552,68 @@ same gene bodies — exactly the top-k denominator both papers use. SpliceAI's o
 bundled `spliceai/annotations/grch38.txt` is already a flat `EXON_START`/`EXON_END`
 table if you want to skip GTF parsing.
 
-### B2 — Add the missing classification metrics
+#### The file format to build (and the off-by-one it refuses)
 
-`biomodels/_stats.py` today has only regression estimators (`pearson`, `spearman`,
+**Landed:** `bt4.api.read_splice_panel` reads a small tab-separated format, so B1 has
+a defined target rather than an ad-hoc script. Three required columns —
+`window_id`, `group`, `sequence` — and four optional: `donors`, `acceptors`
+(comma-separated 0-based positions), `strand`, `note`.
+
+```
+window_id	group	sequence	donors	acceptors
+BRCA1_ex11	chr1	ACGT…	1204,3391	880,2755
+deep_intron_1	chr3	ACGT…
+```
+
+* **One row is a window**, not a site: one window yields `len(sequence)` scored
+  positions, of which only the annotated ones are positive. A window with no sites at
+  all is a legitimate pure-negative control.
+* **`group` is the chromosome** — the leakage-control unit. Overlap with the training
+  set (chr 2, 4, 6, 8, 10–22, X, Y) is reported, and a panel that overlaps can never be
+  `promotable`.
+* **Minus-strand windows are reverse-complemented *before* they reach the file.** The
+  sequence is stored in the orientation the sites are annotated on, so every position
+  indexes the string directly; `strand` is provenance only.
+* **No `N` anywhere.** An `N` inside a scored window is an unscoreable position
+  masquerading as a real negative. (The models' own N-padding is applied by BT4's
+  adapter at the window's outer edges, which is a different thing.)
+
+**The position convention is the whole ballgame, so it is verified, not trusted.**
+A splice panel has exactly one catastrophic failure mode and it is silent: annotate
+one base off and every score is misaligned, the model looks incompetent, and nothing
+in the numbers says why. BT4 pins the anchor its own PWM baseline already uses — the
+one convention verifiable from this repository rather than assumed about someone
+else's:
+
+| Site | Position is | Check |
+|---|---|---|
+| **donor** | the `G` of the intron-opening `GT` (first **intronic** base) | `sequence[i:i+2] == "GT"` |
+| **acceptor** | the `G` of the intron-closing `AG` (last **intronic** base) | `sequence[i-1:i+1] == "AG"` |
+
+Note this is **not** the exonic-boundary convention the GENCODE recipe above produces.
+Since ~99% of human introns are canonical `GT-AG`, a correct panel matches almost
+everywhere and a mis-anchored one matches almost nowhere — so the reader **refuses**
+below 90% and names the fix:
+
+```
+only 0.0% of annotated sites carry their canonical dinucleotide at the declared
+position, under the 90% floor. […] shifting donors by +1 would reach 100.0% and
+acceptors by -1 would reach 100.0%; that pattern is the exonic-boundary convention:
+your donors look like the LAST EXONIC base and your acceptors like the FIRST EXONIC
+base. BT4 anchors on the intronic dinucleotide -- move each donor +1 and each
+acceptor -1
+```
+
+Lower `--min-motif-consistency` **only** for a deliberately non-canonical panel (a U12
+`AT-AC` set), and say so in `--annotation`. Never to quiet a failure — that is the
+off-by-one this check exists to catch.
+
+### B2 — The classification metrics *(landed)*
+
+`biomodels/_stats.py` had only regression estimators (`pearson`, `spearman`,
 `r2_score`, `conformal_quantile`, `empirical_coverage`). CLAUDE.md §6 names the
 metrics a splice model must report — **PR-AUC / MCC / ECE / Brier, never bare
-accuracy** — and none exist. Add, keeping the module's constraints (**pure standard
+accuracy** — and none existed. Now shipped, keeping the module's constraints (**pure standard
 library, no numpy** — BT4's core has zero dependencies):
 
 ```python
@@ -575,52 +631,88 @@ positions where *k* is the number of true sites, report the fraction correct —
 is directly comparable to published numbers. Follow the module's existing
 convention: return an honest `0.0` on degenerate input rather than raising.
 
-### B3 — Add the splice acceptance gate
+### B3 — The splice acceptance gate *(landed)*
 
-New file `src/bt4/biomodels/splice/gate.py`, deliberately mirroring
-`biomodels/expression/gate.py` so the two read the same way:
+`src/bt4/biomodels/splice/gate.py` and `src/bt4/pipeline/splice_gate.py` ship, and
+building them against the evidence changed the sketch this section originally carried.
+Four differences, each because the obvious choice would have certified the wrong thing:
 
-```python
-@dataclass(frozen=True, slots=True)
-class SpliceEvalCase:
-    predicted: float      # the backend's score at this position
-    label: int            # 1 = annotated site, 0 = not
-    kind: str             # "donor" | "acceptor"
-    region: str           # "exonic" | "intronic"  -- see B5
-    group: str            # chromosome: the leakage-control group
+**Two case types, never mixed.** `SpliceSiteCase(predicted, label, kind, group)` for
+site prediction and `SpliceVariantCase(predicted, label, region, group)` for variant
+effect. The exonic/intronic split that matters most for BT4 is a *variant-effect*
+result; applying it to site prediction is near-degenerate, because annotated sites sit
+at exon/intron boundaries by construction. So `region` lives only on the variant case,
+and pooling the two types raises.
 
-@dataclass(frozen=True, slots=True)
-class SpliceGateReport:
-    passed: bool
-    n_cases: int; n_positive: int; n_groups: int
-    pr_auc: float; roc_auc: float; top_k_accuracy: float
-    pr_auc_exonic: float; pr_auc_intronic: float      # reported SEPARATELY
-    mcc_at_threshold: float; threshold: float
-    brier: float; ece: float
-    reliability: tuple[tuple[float, float, int], ...]
-    min_pr_auc: float; max_ece: float
+**Spearman is excluded.** On a binary label it is an exact affine function of ROC-AUC,
+so it adds nothing — and at splice prevalence it is unusable as a bar: a *perfect*
+classifier scores **0.055 at 0.1% prevalence**, far under the expression gate's
+`min_spearman=0.30`. Transplanting that threshold would have failed a flawless model.
 
-def verify_splice_gate(cases, *, threshold=0.5, min_pr_auc=..., max_ece=..., n_bins=10) -> SpliceGateReport
-def run_splice_gate(predictor, samples, **kwargs) -> SpliceGateReport
-```
+**The verdict is per stratum, and `overall` has no pass authority.** A blended figure
+lets a backend certify on intronic strength while failing exactly where BT4 operates.
 
-Four properties, each load-bearing:
+**`negative_construction` is a required argument.** Average precision's floor is the
+prevalence, which is a construction choice, so a threshold without a pinned denominator
+is passable by sampling fewer negatives. The report also carries
+`pr_auc_skill = (AP − p) / (1 − p)`, which is 0 at no-skill and 1 at perfect for every
+prevalence — deliberately not the lift ratio `AP / p`, whose ceiling drifts with
+prevalence too.
 
-- **`pr_auc_exonic` and `pr_auc_intronic` are separate fields, never pooled.** A
-  single blended number hides the 0.42/0.77 gap that is the whole story for BT4
-  (finding 5). Pooling them would be the §10.6 trap in numeric form.
-- **Thresholds are inputs set at gate time** — no default generous enough to let a
-  weak model self-certify.
-- **The split is grouped by chromosome**, never random.
-- **The gate flips nothing** — it returns an honest report; promotion stays a human
-  decision, exactly as `verify_expression_gate` works today.
+Also reported: ROC-AUC (for prevalence-stability, never as a pass axis), top-k accuracy
+(for comparability with the anchors in B4), MCC at BT4's own operating point, and
+Brier + ECE + reliability bins — plus **Brier skill**, because ECE alone cannot
+separate an informative model from a vacuous one.
 
-Add a test proving the **PWM baseline cannot pass** — the structural counterpart of
-`expression/gate.py`'s "the null model provably cannot pass."
+#### The baselines a backend must beat
+
+`pipeline/splice_gate.py` runs the same gate on four permanent controls
+(`SPLICE_BASELINES`) and reports them in one table. On this task the dumb predictors
+are unusually strong, so the comparison is the point:
+
+| Baseline | What it is | Why it is permanent |
+|---|---|---|
+| `permutation` | the backend's own scores, shuffled within each stratum | the null: what this panel yields from no relationship at all |
+| `gt_ag` | 1.0 where the canonical dinucleotide sits | ~99% of human introns follow it; a CNN must beat "look for GT" |
+| `pwm` | BT4's shipped `ConsensusPwmSplicePredictor` | the free incumbent — the direct analogue of `cai` in the expression gate. A backend that cannot beat what `default()` already returns has not earned a PyTorch dependency, a hash-pinned weight set, or a non-commercial licence term |
+| `constant` | the per-stratum base rate | perfectly calibrated, completely useless — its excellent ECE is visible in the same table instead of being a trap the reader must remember |
+
+The comparison is **per stratum**, so beating the motif on donors cannot excuse losing
+to it on acceptors. And the structural counterpart of the expression gate's "the null
+model provably cannot pass": **run the PWM backend as the head and it ties the `pwm`
+baseline exactly**, so `beats_every_baseline` is `False` and BT4's own default can
+never be evidence for itself.
+
+#### Two alignment traps the runner reports rather than assumes
+
+* **Anchor offset.** A backend anchors its per-position score somewhere; one base of
+  disagreement turns a good model into a hopeless one, silently. `anchor_offset` is an
+  explicit input, and the report's `AlignmentDiagnostic` shows where the backend's
+  score actually *peaked* around each true site. Measured: a perfect oracle shifted two
+  bases reads as PR-AUC 0.006, and the diagnostic says
+  `the backend's score peaks +2 from the declared position […] the anchors DISAGREE`.
+* **Combined tracks.** Pangolin emits **one** `P(splice)` track and leaves `acceptor`
+  all-zero. Scoring that with a donor/acceptor split would report it as perfectly
+  hopeless at acceptors — an artifact of the wrapper, not a finding about the model. A
+  combined track collapses to a single `"splice"` stratum, detected from the output and
+  recorded in the report.
+
+Promotion needs three conditions at once, reported separately so a failure says which:
+the gate's own thresholds, beating every baseline in every stratum, and the panel being
+**held out** — a panel overlapping chr 2/4/6/8/10–22/X/Y can never be `promotable`.
 
 ### B4 — Run it and compare against published anchors
 
-Add `scripts/run_splice_gate.py` beside `compare_splice_backends.py`.
+```
+bt4 splice-gate panel.tsv ^
+  --negative-construction "all other positions in the same gene bodies" ^
+  --annotation "GENCODE v44 / GRCh38" ^
+  --backend pangolin
+```
+
+(`^` continues a line in Windows Command Prompt.) It prints the panel's provenance and
+motif consistency, the alignment note, then the head and every baseline side by side,
+then the three promotion conditions. Compare the head's row against:
 
 | Benchmark | Pangolin | SpliceAI |
 |---|---|---|
