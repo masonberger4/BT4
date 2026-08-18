@@ -197,7 +197,16 @@ def capture_panel(panel_path: Path, model_dir: Path, *, limit: int | None = None
         print(f"  [{i}/{len(sequences)}] {entry['id']:22} {len(seq):>5} nt ...", end="", flush=True)
         scores = site_scores(seq, models)
         peak = max(scores) if scores else 0.0
-        print(f" peak P(splice)={peak:.4f}", flush=True)
+        # Report WHERE the peak is, not just how high. A peak pinned to position 0
+        # or the last base across every sequence is the documented N-padding
+        # boundary artifact (OpenSpliceAI, eLife 2025) rather than sequence-driven
+        # signal -- the adapter fills a ~10 kb window, so a short CDS is mostly
+        # padding. That does not invalidate a fidelity gate (both sides reproduce
+        # the artifact identically), but it does mean the panel is exercising the
+        # boundary rather than the biology, which is worth seeing.
+        at = scores.index(peak) if scores else 0
+        edge = "" if 3 < at < len(scores) - 4 else "  <-- at sequence edge"
+        print(f" peak P(splice)={peak:.4f} at {at}/{len(scores)}{edge}", flush=True)
         captured.append({"id": entry["id"], "sequence": seq, "expected_site_scores": scores})
 
     return {
