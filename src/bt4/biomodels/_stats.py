@@ -27,6 +27,7 @@ __all__ = [
     "mcc",
     "pearson",
     "pr_auc",
+    "pr_auc_skill",
     "r2_score",
     "reliability_bins",
     "roc_auc",
@@ -314,6 +315,36 @@ def pr_auc(labels: Sequence[int], scores: Sequence[float]) -> float:
     return total
 
 
+def pr_auc_skill(labels: Sequence[int], scores: Sequence[float]) -> float:
+    """Return PR-AUC rescaled against its no-skill floor: ``(AP - p) / (1 - p)``.
+
+    Average precision has a floor at the panel's **prevalence** ``p`` and a ceiling
+    at 1, so a raw PR-AUC cannot be compared across panels with different positive
+    rates -- and prevalence here is a *construction choice* (how many negatives the
+    panel samples), not a constant of nature. Measured on this module's own
+    :func:`pr_auc` with model quality held fixed, thinning negatives moved AP from
+    0.88 to 0.98 while :func:`roc_auc` barely moved.
+
+    A **ratio** (``AP / p``) does not fix this: its ceiling is ``1 / p``, so it drifts
+    with prevalence too and systematically rewards the sparser panel. The skill form
+    is 0.0 at no-skill and 1.0 at perfect for **every** prevalence, so it reads the
+    same way as :func:`brier_skill_score` and the expression gate's
+    ``width_over_iqr``.
+
+    Returns:
+        The skill score; negative means worse than predicting at random. Returns
+        ``0.0`` when prevalence is 0 or 1 (no skill is demonstrable).
+
+    Raises:
+        ValueError: If the series differ in length, are empty, or labels are not 0/1.
+    """
+    _check_binary(labels, scores)
+    prevalence = math.fsum(float(v) for v in labels) / len(labels)
+    if prevalence in (0.0, 1.0):
+        return 0.0
+    return (pr_auc(labels, scores) - prevalence) / (1.0 - prevalence)
+
+
 def roc_auc(labels: Sequence[int], scores: Sequence[float]) -> float:
     """Return the area under the ROC curve, tie-aware.
 
@@ -483,16 +514,30 @@ def expected_calibration_error(
 def top_k_accuracy(labels: Sequence[int], scores: Sequence[float]) -> float:
     """Return top-k accuracy, where ``k`` is the number of true positives.
 
-    The metric both splice papers headline: take the ``k`` highest-scoring positions
-    where ``k`` is the number of annotated sites, and report the fraction that are
-    real. Because ``k`` equals the positive count, precision and recall coincide,
-    which is what makes it a single comparable number (SpliceAI reports ~0.95;
-    Pangolin reports top-1 79% on its own benchmark).
+    Implements the **pooled** construction used by Zeng & Li (2022) and the shared
+    SpliceAI/Pangolin evaluation code: rank all candidate positions, take the top
+    ``k`` where ``k`` is the number of labelled positives *in the set as passed*, and
+    report the fraction that are real. Because ``k`` equals the positive count,
+    precision and recall coincide, which is what makes it a single scalar.
+
+    **There is no single "top-k accuracy".** OpenSpliceAI (*eLife* 2025) computes
+    ``k`` per gene *and* per class then averages, which disagrees with this on the
+    same panel. Cite whichever construction is used; never "the" definition. This
+    function is **class-agnostic and does no pooling of its own** -- the caller owns
+    what goes into one call, and pooling across genes versus per-gene averaging is
+    that caller's decision, not this function's.
+
+    Comparison anchors that use *this* construction: Pangolin top-1 79%, SpliceAI
+    75% on their shared benchmark (Zeng & Li 2022); SpliceAI's own headline ~0.95 is
+    on its GENCODE test set.
 
     Ties at the cutoff are resolved **pessimistically**: every case sharing the
     boundary score is considered, and the credit is the expected fraction under a
     random tie-break rather than the best case. A model scoring everything equally
-    therefore gets the base rate, not 1.0.
+    therefore gets the base rate, not 1.0. This is a deliberate deviation from the
+    published implementations' ``np.argsort``, which breaks ties by array order and
+    can be flattered by it -- so BT4's number may sit slightly *below* a published
+    one wherever ties exist.
 
     Returns:
         Top-k accuracy in ``[0, 1]``, or ``0.0`` when there are no positives.

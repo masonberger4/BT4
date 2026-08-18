@@ -79,6 +79,15 @@ from bt4.biomodels.splice.base import (
     score_in_context,
 )
 from bt4.biomodels.splice.baseline import ConsensusPwmSplicePredictor
+from bt4.biomodels.splice.gate import (
+    SITE_PREDICTION,
+    VARIANT_EFFECT,
+    SpliceGateReport,
+    SpliceSiteCase,
+    SpliceStratumReport,
+    SpliceVariantCase,
+    verify_splice_gate,
+)
 from bt4.biomodels.splice.pangolin import (
     DEFAULT_TISSUES,
     FidelityCase,
@@ -108,8 +117,10 @@ __all__ = [
     "DEFAULT_TOP_K",
     "FIXTURE_DIR_ENV_VAR",
     "MAX_ATTESTATION_TOLERANCE",
+    "SITE_PREDICTION",
     "USE_ATTESTED_ENV_VAR",
     "USE_ATTESTED_SPLICE_ENV_VAR",
+    "VARIANT_EFFECT",
     "AgreementReport",
     "AsspError",
     "AsspReportError",
@@ -133,8 +144,12 @@ __all__ = [
     "SpliceAiSplicePredictor",
     "SpliceAuditReport",
     "SpliceFlag",
+    "SpliceGateReport",
     "SplicePredictor",
     "SpliceResult",
+    "SpliceSiteCase",
+    "SpliceStratumReport",
+    "SpliceVariantCase",
     "attest_backend",
     "attested_promotion_enabled",
     "attested_splice_promotion_enabled",
@@ -155,6 +170,7 @@ __all__ = [
     "spearman",
     "verified_predictor",
     "verify_pangolin_fidelity",
+    "verify_splice_gate",
     "verify_spliceai_fidelity",
 ]
 
