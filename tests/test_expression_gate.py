@@ -9,6 +9,7 @@ tiny fake predictor.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import pytest
@@ -139,3 +140,286 @@ def test_null_model_does_not_pass_the_gate() -> None:
     report = run_expression_gate(NullExpressionModel(), samples, min_spearman=0.3)
     assert report.spearman == pytest.approx(0.0)
     assert report.passed is False
+
+
+# --- Defect A: pooled scoring credits between-group skill ----------------------
+#
+# THE load-bearing test of this whole exercise. A head that knows only "which protein
+# is this" -- which is what training across natural genes teaches, and what BT4 cannot
+# use -- must pass the pooled gate and FAIL the within-group one. If the second
+# assertion ever stops holding, the strict bar is not being enforced and the gate can
+# hand out a false pass.
+
+
+def _gene_identity_panel() -> list[ExpressionEvalCase]:
+    """Four proteins x four variants. Prediction = the protein's baseline, exactly.
+
+    Within any one protein the prediction is constant, so there is no ordering
+    information at all; across proteins it is perfect.
+    """
+    baselines = {"g1": 1.0, "g2": 5.0, "g3": 9.0, "g4": 13.0}
+    cases: list[ExpressionEvalCase] = []
+    for group, baseline in baselines.items():
+        for offset in (-0.3, -0.1, 0.1, 0.3):
+            cases.append(
+                ExpressionEvalCase(
+                    predicted=baseline,  # knows the gene, nothing about the variant
+                    measured=baseline + offset,
+                    group=group,
+                )
+            )
+    return cases
+
+
+def test_gene_identity_head_passes_pooled_but_fails_within_group() -> None:
+    cases = _gene_identity_panel()
+
+    pooled = verify_expression_gate(cases, min_spearman=0.3, bootstrap_resamples=0)
+    strict = verify_expression_gate(
+        cases, min_spearman=0.3, within_group=True, bootstrap_resamples=0
+    )
+
+    # Pooled: high rank agreement, purely from between-protein differences. (Not 1.0
+    # only because the head ties every variant within a protein, and tie-averaged
+    # ranks cost a little.)
+    assert pooled.spearman > 0.8
+    # Within-group: no ordering information survives centring, so it scores ~0 and the
+    # Spearman half of the gate fails.
+    assert strict.spearman == pytest.approx(0.0)
+    assert strict.passed is False
+    assert strict.within_group is True
+
+
+def test_within_group_credits_a_head_that_orders_variants() -> None:
+    # The converse: a head with NO between-protein skill but perfect within-protein
+    # ordering is invisible to the pooled metric and correctly credited by the strict
+    # one. This is exactly BT4's regime.
+    cases: list[ExpressionEvalCase] = []
+    for group, baseline in (("g1", 1.0), ("g2", 5.0), ("g3", 9.0), ("g4", 13.0)):
+        for offset in (-0.3, -0.1, 0.1, 0.3):
+            cases.append(
+                ExpressionEvalCase(
+                    predicted=offset,  # knows the variant, nothing about the gene
+                    measured=baseline + offset,
+                    group=group,
+                )
+            )
+
+    strict = verify_expression_gate(
+        cases, min_spearman=0.3, within_group=True, bootstrap_resamples=0
+    )
+    assert strict.spearman == pytest.approx(1.0)
+    assert strict.n_groups_ranked == 2  # the two test-fold groups
+    assert dict(strict.per_group_spearman) == {"g3": pytest.approx(1.0), "g4": pytest.approx(1.0)}
+
+
+def test_within_group_skips_singleton_groups_rather_than_scoring_them_zero() -> None:
+    # A singleton has no ordering to get right; counting it as 0.0 would silently drag
+    # the aggregate down and make a good head look mediocre.
+    cases = [
+        ExpressionEvalCase(predicted=1.0, measured=1.0, group="a1"),
+        ExpressionEvalCase(predicted=2.0, measured=2.0, group="a1"),
+        ExpressionEvalCase(predicted=3.0, measured=3.0, group="a2"),
+        ExpressionEvalCase(predicted=1.0, measured=1.0, group="b1"),
+        ExpressionEvalCase(predicted=2.0, measured=2.0, group="b1"),
+        ExpressionEvalCase(predicted=9.0, measured=9.0, group="b2"),
+    ]
+    report = verify_expression_gate(
+        cases, min_spearman=0.3, within_group=True, bootstrap_resamples=0
+    )
+    assert report.n_groups_test == 2  # b1 and b2
+    assert report.n_groups_ranked == 1  # only b1 has >= 2 members
+    assert report.spearman == pytest.approx(1.0)  # not dragged toward 0 by b2
+
+
+def test_within_group_raises_when_every_test_group_is_a_singleton() -> None:
+    cases = [
+        ExpressionEvalCase(predicted=float(i), measured=float(i), group=f"g{i}")
+        for i in range(6)
+    ]
+    with pytest.raises(ValueError, match="no ordering to score"):
+        verify_expression_gate(cases, within_group=True, bootstrap_resamples=0)
+
+
+# --- Defect B: raw residuals across different units are vacuous ----------------
+
+
+def _scaled_panel(slope: float, intercept: float) -> list[ExpressionEvalCase]:
+    """A perfectly rank-correct head reporting on a completely different scale."""
+    cases: list[ExpressionEvalCase] = []
+    for group in range(8):
+        for step in range(4):
+            predicted = float(group * 4 + step) / 10.0
+            cases.append(
+                ExpressionEvalCase(
+                    predicted=predicted,
+                    measured=slope * predicted + intercept,
+                    group=f"g{group:02d}",
+                )
+            )
+    return cases
+
+
+def test_recalibration_rescues_a_rank_perfect_head_on_the_wrong_scale() -> None:
+    cases = _scaled_panel(slope=7.0, intercept=100.0)
+
+    raw = verify_expression_gate(cases, min_spearman=0.3, bootstrap_resamples=0)
+    linked = verify_expression_gate(
+        cases, min_spearman=0.3, recalibrate=True, bootstrap_resamples=0
+    )
+
+    # Ranking is scale-free, so both see a perfect Spearman ...
+    assert raw.spearman == pytest.approx(1.0)
+    assert linked.spearman == pytest.approx(1.0)
+    # ... but only the linked run produces an interval worth anything. Unrecalibrated,
+    # the residuals are dominated by the ruler mismatch.
+    assert raw.width_over_iqr > 1.0
+    assert linked.width_over_iqr < 1e-6
+    assert linked.slope == pytest.approx(7.0)
+    assert linked.intercept == pytest.approx(100.0)
+
+
+def test_a_negative_link_slope_is_reported_not_hidden() -> None:
+    # A head that ranks BACKWARDS on this panel. The fitted link makes it usable, but
+    # the sign must be visible in the report -- the sign convention of a CLR residual
+    # against an assay readout is not guaranteed and must never be assumed.
+    cases = _scaled_panel(slope=-3.0, intercept=2.0)
+    report = verify_expression_gate(
+        cases, min_spearman=0.3, recalibrate=True, bootstrap_resamples=0
+    )
+    assert report.slope < 0.0
+    assert report.spearman == pytest.approx(-1.0)  # raw ranking really is inverted
+    assert report.passed is False  # and the gate does not credit it
+
+
+def test_link_slope_spread_flags_a_link_that_does_not_transfer() -> None:
+    # Same head, but each protein needs a different slope. Coverage on this panel may
+    # look fine; the spread is what says the link does not generalise.
+    cases: list[ExpressionEvalCase] = []
+    for group in range(8):
+        group_slope = 1.0 + group  # a different ruler per protein
+        for step in range(4):
+            predicted = float(step)
+            cases.append(
+                ExpressionEvalCase(
+                    predicted=predicted,
+                    measured=group_slope * predicted,
+                    group=f"g{group:02d}",
+                )
+            )
+    report = verify_expression_gate(
+        cases, min_spearman=0.3, recalibrate=True, bootstrap_resamples=0
+    )
+    assert report.link_slope_spread > 0.5
+
+
+# --- vacuity: a constant predictor must not be able to game the report ---------
+
+
+def test_a_constant_predictor_gets_valid_coverage_and_is_caught_anyway() -> None:
+    # Split conformal is valid for ANY score function, so a constant predictor achieves
+    # correct coverage with a uselessly wide interval. Coverage alone therefore cannot
+    # be the gate; the report must catch this on both the rank and the width axes.
+    cases: list[ExpressionEvalCase] = []
+    for group in range(10):
+        for step in range(4):
+            cases.append(
+                ExpressionEvalCase(
+                    predicted=42.0,  # says the same thing about everything
+                    measured=float(group) + step * 0.5,
+                    group=f"g{group:02d}",
+                )
+            )
+    report = verify_expression_gate(cases, min_spearman=0.3, bootstrap_resamples=0)
+
+    assert report.spearman == pytest.approx(0.0)  # zero-variance predictions
+    assert report.passed is False  # caught on the rank axis
+    assert report.width_over_iqr > 1.0  # and visibly vacuous on the width axis
+
+
+# --- cluster bootstrap ---------------------------------------------------------
+
+
+def test_bootstrap_ci_is_deterministic_and_brackets_the_estimate() -> None:
+    cases = _scaled_panel(slope=1.0, intercept=0.0)
+    first = verify_expression_gate(cases, bootstrap_resamples=200, bootstrap_seed=7)
+    again = verify_expression_gate(cases, bootstrap_resamples=200, bootstrap_seed=7)
+
+    assert (first.spearman_ci_low, first.spearman_ci_high) == (
+        again.spearman_ci_low,
+        again.spearman_ci_high,
+    )  # invariant #7
+    assert first.bootstrap_resamples == 200
+    assert first.spearman_ci_low <= first.spearman <= first.spearman_ci_high
+
+
+def test_bootstrap_resamples_whole_groups_so_the_ci_is_not_falsely_narrow() -> None:
+    # A noisy head: the CI must be wide enough to admit real uncertainty. Resampling
+    # individual cases would treat one protein's variants as independent observations
+    # and shrink this interval dramatically.
+    measured = [0.0, 3.0, 1.0, 4.0, 2.0, 5.0, 7.0, 6.0, 9.0, 8.0, 11.0, 10.0]
+    cases = [
+        ExpressionEvalCase(
+            predicted=float(i), measured=measured[i], group=f"g{i // 2:02d}"
+        )
+        for i in range(12)
+    ]
+    report = verify_expression_gate(cases, bootstrap_resamples=500, bootstrap_seed=1)
+    assert report.bootstrap_resamples > 0
+    assert report.spearman_ci_high - report.spearman_ci_low > 0.0
+
+
+def test_bootstrap_is_disabled_honestly_rather_than_faked() -> None:
+    cases = _scaled_panel(slope=1.0, intercept=0.0)
+    report = verify_expression_gate(cases, bootstrap_resamples=0)
+    assert report.bootstrap_resamples == 0
+    assert math.isnan(report.spearman_ci_low)
+    assert math.isnan(report.spearman_ci_high)
+
+
+# --- the within-group scope caveat --------------------------------------------
+
+
+def test_within_group_marks_its_coverage_as_anchor_conditional() -> None:
+    # In within-group mode the target is an offset from the protein's own baseline, so
+    # the interval is only achievable at design time if a member of that protein has
+    # been measured. That is a narrower claim and must be stamped as one.
+    pooled = verify_expression_gate(_scaled_panel(1.0, 0.0), bootstrap_resamples=0)
+    strict = verify_expression_gate(
+        _scaled_panel(1.0, 0.0), within_group=True, bootstrap_resamples=0
+    )
+    assert pooled.coverage_conditional_on_group_anchor is False
+    assert strict.coverage_conditional_on_group_anchor is True
+
+
+# --- batching -----------------------------------------------------------------
+
+
+def test_run_expression_gate_uses_the_batch_surface_when_available() -> None:
+    # Scoring a panel row-by-row through RiboNN would multiply the wall clock by the
+    # row count and re-hash 90 weight files each time.
+    calls: list[int] = []
+
+    class _BatchHead:
+        name = "batch"
+        calibrated = False
+
+        def score_sequence(self, dna: str) -> ExpressionResult:
+            raise AssertionError("score_sequence must not be used when batching")
+
+        def score_many(self, dnas: list[str]) -> list[ExpressionResult]:
+            calls.append(len(dnas))
+            return [
+                ExpressionResult(
+                    score=float(len(dna)), model_name="batch", calibrated=False, units="u"
+                )
+                for dna in dnas
+            ]
+
+    samples = [
+        ("ATG" * (i + 1) + "TAA", float(i), f"g{i // 2:02d}") for i in range(8)
+    ]
+    report = run_expression_gate(_BatchHead(), samples, bootstrap_resamples=0)
+
+    assert calls == [8]  # exactly one invocation for the whole panel
+    assert report.n_calibration + report.n_test == 8

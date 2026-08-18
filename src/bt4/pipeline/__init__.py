@@ -15,6 +15,13 @@ from bt4.pipeline.candidates import (
     assemble_and_rank_candidates,
 )
 from bt4.pipeline.construct import ConstructAudit, EnzymeOccurrence, audit_construct
+from bt4.pipeline.expression_gate import (
+    BASELINES,
+    GateComparison,
+    GateSettings,
+    run_panel_gate,
+    score_panel,
+)
 from bt4.pipeline.library import LibraryResult, run_library
 from bt4.pipeline.optimize import (
     FrontierResult,
@@ -48,6 +55,7 @@ from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 
 __all__ = [
     "APPLICATION_PRESETS",
+    "BASELINES",
     "PACKAGING_LIMITS",
     "ApplicationPreset",
     "Candidate",
@@ -56,6 +64,8 @@ __all__ = [
     "CrossCheckSite",
     "EnzymeOccurrence",
     "FrontierResult",
+    "GateComparison",
+    "GateSettings",
     "InfeasibleError",
     "LibraryResult",
     "OptimizeConfig",
@@ -77,8 +87,10 @@ __all__ = [
     "run_frontier",
     "run_library",
     "run_optimize",
+    "run_panel_gate",
     "run_splice_crosscheck",
     "run_tracks",
     "run_validate",
+    "score_panel",
     "summarize",
 ]

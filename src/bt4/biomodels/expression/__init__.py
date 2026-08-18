@@ -19,6 +19,16 @@ This package depends only on the standard library.
 
 from __future__ import annotations
 
+from bt4.biomodels.expression.attestation import (
+    MAX_ATTESTATION_COVERAGE_TOLERANCE,
+    MAX_ATTESTATION_WIDTH_OVER_IQR,
+    MIN_ATTESTATION_SPEARMAN,
+    ExpressionAttestation,
+    ExpressionAttestationError,
+    attest_expression,
+    load_expression_attestation,
+    verified_predictor,
+)
 from bt4.biomodels.expression.base import (
     BatchExpressionPredictor,
     ExpressionPredictor,
@@ -31,26 +41,52 @@ from bt4.biomodels.expression.gate import (
     run_expression_gate,
     verify_expression_gate,
 )
+from bt4.biomodels.expression.panel import (
+    MAX_CDS_UTR3_LEN,
+    MAX_UTR5_LEN,
+    PANEL_COLUMNS,
+    ExpressionPanel,
+    PanelRow,
+    panel_from_rows,
+    read_panel,
+)
 from bt4.biomodels.expression.ribonn import (
     PINNED_WEIGHT_SHA256,
     RiboNNExpressionModel,
+    RiboNNFoldPrediction,
     load_pinned_sha256,
 )
 
 __all__ = [
+    "MAX_ATTESTATION_COVERAGE_TOLERANCE",
+    "MAX_ATTESTATION_WIDTH_OVER_IQR",
+    "MAX_CDS_UTR3_LEN",
+    "MAX_UTR5_LEN",
+    "MIN_ATTESTATION_SPEARMAN",
+    "PANEL_COLUMNS",
     "PINNED_WEIGHT_SHA256",
     "BatchExpressionPredictor",
+    "ExpressionAttestation",
+    "ExpressionAttestationError",
     "ExpressionEvalCase",
     "ExpressionGateReport",
+    "ExpressionPanel",
     "ExpressionPredictor",
     "ExpressionResult",
     "NullExpressionModel",
+    "PanelRow",
     "RiboNNExpressionModel",
+    "RiboNNFoldPrediction",
+    "attest_expression",
     "available_backends",
     "default",
+    "load_expression_attestation",
     "load_pinned_sha256",
+    "panel_from_rows",
+    "read_panel",
     "resolve_backend",
     "run_expression_gate",
+    "verified_predictor",
     "verify_expression_gate",
 ]
 
@@ -112,6 +148,9 @@ def resolve_backend(
     utr5: str = "",
     utr3: str = "",
     top_k: int = 5,
+    batch_size: int = 64,
+    num_workers: int = 0,
+    cell_types: tuple[str, ...] = (),
 ) -> ExpressionPredictor:
     """Construct an expression backend by name (the mirror of the splice resolver).
 
@@ -125,6 +164,17 @@ def resolve_backend(
             column as NaN, and the UTRs carry most of its signal).
         utr3: Fixed 3' UTR context, as ``utr5``.
         top_k: Number of RiboNN cross-validation runs to ensemble.
+        batch_size: RiboNN inference batch size (memory/speed only -- it cannot
+            change a score, since RiboNN pads to a fixed width and does not shuffle
+            when predicting). Defaults below RiboNN's own 1024, which OOMs a CPU box.
+        cell_types: Which RiboNN per-cell-type outputs to average. Empty (default)
+            averages all of them; naming one (e.g. ``("HEK293T",)``) is required to
+            compare honestly against a single-cell-line measurement. An unmatched name
+            raises when scoring.
+        num_workers: RiboNN dataloader worker count. Defaults to ``0``, which is
+            required wherever the multiprocessing start method is *spawn* (Windows,
+            macOS) because the adapter scores from a mutated ``sys.path`` and a
+            temporary working directory that a spawned worker does not inherit.
 
     Returns:
         An :class:`ExpressionPredictor`. Constructing a RiboNN backend does not
@@ -142,6 +192,12 @@ def resolve_backend(
         )
     if key == "ribonn":
         return RiboNNExpressionModel(
-            species=species, top_k=top_k, utr5=utr5, utr3=utr3
+            species=species,
+            top_k=top_k,
+            utr5=utr5,
+            utr3=utr3,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            cell_types=cell_types,
         )
     return NullExpressionModel()

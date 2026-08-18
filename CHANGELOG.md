@@ -7,7 +7,287 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **`docs/DESIGN_ribonn_calibration.md`** — the step-by-step runbook for `NEXT_SESSION.md`
+  item 11, mirroring the splice side's `DESIGN_splice_cnn_calibration.md`. It carries the
+  operational half that the research doc deliberately left out: the Windows (`cmd.exe`) /
+  WSL install, the `max_shift` determinism check, the free Stage-1 sensitivity checks (run
+  these *before* buying any data — several can end the project decisively), the ranked
+  panel hunt with the panel-TSV format, the pre-registration template, the exact
+  `run_expression_gate` / `bt4 expression-gate` commands, and the Stage-5 decision tree
+  with the `attest_expression` → `verified_predictor` promotion snippet. Every command and
+  API reference is checked against the code that shipped in the previous change; the
+  "wiring caveat" (nothing in `src/` calls `verified_predictor` yet) and the scoped nature
+  of any pass are stated plainly. `NEXT_SESSION.md` item 11 and the research doc now
+  cross-link it.
+- **`docs/RESEARCH_ribonn_calibration.md`** — the evidence behind `NEXT_SESSION.md` item
+  11, assembled from primary sources (the paper's full text, the upstream repository, the
+  dataset records) with an adversarial verification pass over every dataset and
+  statistical claim. It records what is now verified rather than assumed:
+  - **The paper never tests synonymous CDS variants of one protein under a fixed UTR.**
+    "synonymous" appears only in its introduction and reference titles; its codon
+    analysis is *insertional* and changes the protein. The one CDS-attributable number is
+    **r² = 0.11**, and zero-shot on designed reporters it scores **0.17–0.19** against
+    **0.62** on natural genes. That is the regime gap, stated from the source.
+  - **CORRECTED — the homology-leakage argument does not survive.** The paper reports a
+    homology control ("removing highly homologous test mRNAs led to highly similar r²").
+    It is qualitative and weak, but the charge as previously framed is refuted; the
+    argument that stands is simply that the synonymous-variant regime was never
+    evaluated.
+  - **CORRECTED — conformal coverage stays *valid* under arbitrary unit mismatch.** The
+    guarantee holds for any score function; unit mismatch destroys *sharpness*, not
+    validity. So "different units, therefore coverage is meaningless" would have been
+    wrong — the honest statement is that unrecalibrated intervals are valid and useless,
+    which is why `width_over_iqr` exists.
+  - **CORRECTED — there is no community-standard Spearman cutoff.** Any bare 0.4 or 0.5
+    would be invented, so `min_spearman` is documented everywhere as a pre-commitment.
+  - **CORRECTED — reporting a calibration slope of 1 after fitting the link is
+    circular**, which is why `link_slope_spread` is reported instead.
+  - **No public dataset fully qualifies.** A ranked table records each candidate with its
+    licence, size, readout and verdict, so the panel hunt starts from evidence rather
+    than optimism — including that the two Ranaghan panels already in this repo carry
+    **no measurements** (that paper measured one sequence, in *E. coli*), making them a
+    sensitivity resource and never a validation panel.
+
 ### Changed
+- `docs/NEXT_SESSION.md` item 11 now records that the calibration **machinery** has
+  landed and only the data step remains; `CLAUDE.md`'s Phase 4 paragraph says the same,
+  and both restate that RiboNN is still `calibrated=False` — the apparatus is not a claim.
+- `THIRD_PARTY_DATA.md` records the attestation shape: derived scalars and public content
+  hashes only, with RiboNN's non-commercial per-sequence outputs structurally excluded.
+- **`ExpressionAttestation` -- the single seam that can flip an expression head to
+  `calibrated=True`, replacing a bare `dataclasses.replace`.** Mirrors
+  `bt4.biomodels.splice.attestation`, with the differences a *usefulness* claim needs
+  that a *fidelity* claim does not.
+  - **Licence-clean by construction.** RiboNN's weights are Sanofi non-commercial, so its
+    raw per-sequence outputs must never enter MIT-licensed BT4. An attestation carries
+    only derived scalars plus public content hashes (the 90 pinned weight SHA-256s for
+    its species, and the panel's hash). `_ALLOWED_FIELDS` pins the shape, a module-level
+    assert fails the *import* if the dataclass drifts from it, `from_dict` refuses any
+    unexpected key, and a test asserts no field name could hold an array of scores.
+  - **Four floors, so a run configured to pass cannot self-certify**: the run must have
+    been **within-group** (a pooled run credits between-protein skill and cannot certify
+    BT4's regime, however good it looks), it must have **beaten every baseline**, its
+    interval must be informative (`width_over_iqr` < 1.0), and its `min_spearman` /
+    coverage tolerance must clear `MIN_ATTESTATION_SPEARMAN` / 
+    `MAX_ATTESTATION_COVERAGE_TOLERANCE`. All four are re-checked at promotion, so
+    hand-editing the JSON afterwards buys nothing.
+  - **Scope is part of the claim.** The record carries species, cell-type selection and
+    readout, and `verified_predictor` refuses a predictor whose species or cell types
+    differ — an attestation earned on HEK293T does not certify a head averaging all 78
+    tissues, because those are different quantities. It also refuses unless the weight
+    hashes match the adapter's own pins, binding the claim to the same bytes the adapter
+    hash-verifies before loading.
+  - `content_hash()` is timestamp-free (invariant #7) and scope-sensitive, so it is a
+    stable provenance stamp and two different scopes cannot share one.
+  - The default head is unchanged: `default()` still returns the uncalibrated
+    placeholder, and a bare `RiboNNExpressionModel()` is still `calibrated=False`.
+- **The gate is now a supported surface, not a snippet: `bt4.pipeline.expression_gate`,
+  `api.expression_gate`, `bt4 expression-gate PANEL.tsv`, and
+  `scripts/run_expression_gate.py`.** The orchestration lives in `pipeline/` (per §3, so
+  the CLI reaches it through `api` without crossing a layer) and the script and the CLI
+  both render the same `GateComparison` -- they cannot drift about what a result means.
+  - **Every run is scored against five permanent baselines**: `permutation` (the null --
+    the head's own predictions against a deterministic shuffle), `cai`, `gc3`, `length`,
+    and `constant`. The reason they are not optional: a within-protein Spearman of 0.3
+    is worthless if plain CAI scores 0.35, because BT4 already computes CAI *inside* the
+    optimizer loop and for free. `constant` is there because split conformal is valid for
+    any score function, so a predictor with no information achieves exactly valid
+    coverage -- its "pass" belongs in the same table rather than being a trap the reader
+    has to remember.
+  - **`promotable` requires three things at once** and reports each separately, so a
+    failure says which one failed: the gate's own thresholds, the head's bootstrap CI
+    lower bound above *every* baseline's estimate, and an interval narrower than the
+    label IQR.
+  - **One backend invocation per UTR context, not per row.** A predictor carries its
+    fixed UTRs on the model, so a panel spanning transcripts genuinely needs one
+    predictor each -- and no more; each bucket is scored in a single batched call, and
+    panel order is restored afterwards so a measurement can never be paired with another
+    sequence's score.
+  - Pooled mode still works (it is a useful contrast) but **warns on stderr** that it
+    credits between-protein skill and is not the regime BT4 deploys in.
+  - The report carries the panel's `content_hash`, the settings, and an explicit honesty
+    note: nothing here flips a flag, `promotable` means "the pre-registered conditions
+    held on this panel", and `min_spearman` is a pre-commitment rather than a community
+    standard -- no such standard exists.
+- **A measured CDS-variant panel format and a strict reader**
+  (`bt4.biomodels.expression.panel`). The gate consumes in-memory triples, which is
+  right for the gate and no help to a maintainer turning a published supplementary table
+  into something runnable and provable months later. Tab-separated, `group` /
+  `variant_id` / `cds` / `measured` / `utr5` / `utr3` required, with optional `readout` /
+  `cell_type` / `species` carried through so a number is never separated from the
+  question it answers.
+  - **It refuses rather than copes, and that is the point.** RiboNN *silently drops* any
+    row whose 5′UTR exceeds 1381 nt or whose CDS+3′UTR exceeds 11937 nt -- the caps are
+    applied inside its data module, which filters the frame. A quietly-shortened panel is
+    the worst possible gate input: the gate would report an honest `n_test` while
+    answering a question about a dataset nobody chose. Such a row is now a hard error
+    naming the row, as are a non-3N or stop-less CDS, a non-ACGT or empty UTR, a
+    non-finite `measured`, a duplicate `variant_id`, an unknown species, and — so a
+    mislabelled column cannot sit unused while the gate runs on nothing — an
+    **unrecognised column**.
+  - **`content_hash()`** is order-independent and timestamp-free (invariant #7), so a
+    panel's identity can be pre-registered *before* a gate run and compared afterwards.
+    Re-ordering or re-quoting a file does not change it; changing any value does.
+  - **`describe()`** surfaces the sizing facts the gate's own arithmetic makes
+    load-bearing: rows, groups, and **groups with 2+ members**, since a 90% conformal
+    interval needs ≥ 9 calibration rows for a finite half-width, within-group scoring
+    needs groups with 2+ members, and a grouped split needs 2+ groups. An unfit panel is
+    visible before a single model runs.
+  - **`contexts()`** buckets rows by their `(utr5, utr3)` pair. A predictor carries its
+    UTR context on the model, so a panel spanning transcripts with different UTRs cannot
+    be scored in one invocation; this makes that split explicit rather than accidental.
+- **The expression gate can now judge a CDS-variant panel honestly: `within_group`,
+  `recalibrate`, a cluster-bootstrap CI, and a vacuity check.** As written the gate
+  could hand out a **false pass**, and each addition closes one way that happens.
+  Defaults are unchanged, so every previous call behaves exactly as before.
+  - **`within_group=True` -- the strict bar.** Pooled scoring computes one Spearman over
+    the whole test fold; when the groups are proteins that fold mixes proteins with
+    wildly different baselines, so a head that knows nothing about codons but recognises
+    "this is a highly-expressed gene" scores well. That is precisely what training
+    across natural genes teaches and precisely what BT4 cannot use. Within-group mode
+    centres predictions and measurements inside each group and aggregates a per-group
+    Spearman **unweighted across groups** (ProteinGym's aggregation), so a protein with
+    30 variants cannot outvote one with 4. A regression test pins the defect: a
+    gene-identity-only head **passes pooled and fails within-group**.
+  - **`recalibrate=True` -- the fitted link.** A head whose output is in arbitrary units
+    (RiboNN reports a CLR compositional residual) cannot be compared to an assay's units
+    by subtraction. The affine link `measured ≈ slope × predicted + intercept` is fitted
+    on the **calibration fold only** -- fitting it on the fold that is then conformalized
+    would break the independence split conformal requires. `link_slope_spread` (the link
+    refitted inside each calibration group) is reported *instead of* a calibration slope,
+    which is 1.0 by construction once fitted and would be a circular pass.
+  - **The rank metric stays on the head's *raw* predictions, deliberately.** Rank
+    correlation needs no link, and it must describe what BT4 would really do: BT4 ranks
+    candidates by the raw score and never applies a fitted link at design time. Scoring
+    linked predictions would let a head that ranks **backwards** be rescued by a negative
+    fitted slope and reported as passing, while a deployed BT4 handed the user the worst
+    candidate. Pearson, R², the conformal residuals and the interval width *do* use the
+    link, because they live on the measurement scale.
+  - **`width_over_iqr` -- the vacuity check.** Split conformal is valid for *any* score
+    function, so a **constant predictor achieves exactly valid coverage** with a useless
+    interval. Median interval width over the label IQR is the number that exposes it, and
+    a test pins that such a predictor is caught on both the rank and the width axis.
+  - **A cluster-bootstrap CI on the primary metric**, resampling **whole groups** --
+    variants of one protein are a dependent cluster, and resampling individual cases
+    would treat 30 variants as 30 independent observations and produce a CI far too
+    narrow. Seeded and deterministic (invariant #7); reports `nan` with
+    `bootstrap_resamples=0` rather than a CI computed from too little.
+  - **`coverage_conditional_on_group_anchor`.** In within-group mode the target is a
+    variant's offset from its protein's own baseline, so the interval is only achievable
+    at design time when a member of that protein has already been measured to anchor it
+    -- BT4's `delta_logte` framing, but a **narrower claim** than an unconditional
+    interval, so it is stamped as one rather than quietly conflated.
+  - Also reported: `per_group_spearman`, `n_groups_test`, and `n_groups_ranked` -- the
+    last being the effective sample size for a cross-group claim, which is the number of
+    *proteins*, never the number of rows.
+  - **`run_expression_gate` now uses `score_many`** where the backend offers it. Scoring
+    a panel row-by-row through RiboNN would multiply the wall clock by the row count and
+    re-hash 90 weight files each time.
+  - New shared estimators in `bt4.biomodels._stats`: `linear_fit` (least squares, with
+    the honest intercept-only answer when the predictor has no variance) and `iqr`.
+- **`scripts/ribonn_sensitivity.py` -- the zero-data checks that decide whether a
+  RiboNN calibration panel is worth acquiring at all.** Four checks, no measured data
+  required, driven entirely from a RiboNN checkout plus sequences already in this
+  repository. Every report is stamped `calibrated: False` and can promote nothing.
+  - **`utr-control`** scores one CDS under two different UTR pairs. It is the positive
+    control that makes a *null* result elsewhere trustworthy: if swapping both UTRs
+    leaves the score untouched, the sequences are not reaching the model and no other
+    number means anything. It refuses a backend with no UTR context rather than
+    crashing on `dataclasses.replace`.
+  - **`cds-spread`** is the decisive check and covers the GC-confound check in the
+    same invocation. Holding UTRs fixed, it reports the spread of scores *within* each
+    protein's synonymous variants against the spread *between* proteins, plus the rank
+    correlation of the within-protein response against CAI, tAI, GC, GC3 and length --
+    every feature recomputed here by BT4's own functions. `within_over_between` near
+    zero means the backend reads gene identity rather than codon choice, which is what
+    RiboNN was trained to do and precisely what BT4 cannot use. It runs on the in-tree
+    `ranaghan2021_tab4.fasta` (93 records, three human proteins x 31 real
+    codon-optimizer outputs, CC BY 4.0) -- which carries **no measurements**, so it is
+    a sensitivity resource and never a validation panel.
+  - **`direction`** builds a max-CAI and a min-CAI design per protein and runs an
+    exact two-sided binomial sign test (`math.comb`, no scipy). **Ties are counted and
+    excluded**, as the sign test requires: scoring them as failures would report a
+    blind backend as "0/N prefer the optimized design", which reads as a strong
+    preference for the deoptimized one.
+  - **`ladder`** walks a real BT4 Pareto frontier for one protein and reports the
+    Spearman of score against CAI along it -- a coherence check, since a jagged
+    response is unusable for ranking even when it is nonzero.
+  - House style throughout: build a dict, render it as a table or `--json`; UTRs are
+    **required** rather than defaulted (a bundled UTR would be a hidden modelling
+    choice) and are identified in the report by content hash rather than printed; the
+    reference set travels with every CAI number; batched backends are driven through
+    `score_many`. Tests pin the verdicts that matter -- a blind backend is reported as
+    blind, a gene-identity backend is *not* credited with synonymous skill, and a
+    GC3-only backend is exposed by the confound correlation -- and an end-to-end CLI
+    rehearsal runs on the `null` placeholder, which needs no weights and is the
+    reference for what "blind" looks like.
+- **RiboNN gains cell-type selection and a fold-resolved read, closing two scope
+  errors that would have corrupted a calibration gate before it ever ran.** Both are
+  diagnostics and neither touches `calibrated`, which stays `False`.
+  - **`cell_types`** picks which of RiboNN's per-cell-type outputs to average (78
+    human / 68 mouse). Empty stays the default and averages all of them, which is the
+    right summary for a generic design -- but comparing the mean of 78 tissues against
+    a measurement from *one* cell line is a scope error, not a rounding error, so a
+    HEK293T panel is now scored with `cell_types=("HEK293T",)`. An unmatched name
+    **raises** and lists what is available rather than quietly averaging the wrong
+    set. The units label names the selection, so "mean over all human cell types" and
+    "mean over HEK293T" can never share a label in a report or manifest.
+  - **`predict_folds()`** returns `RiboNNFoldPrediction(index, fold, te)` per
+    (input, fold) instead of the fold mean. RiboNN emits one row per input per outer
+    fold, each already that fold's `top_k`-model mean; averaging all ten is correct
+    for the novel designed sequences BT4 produces -- no fold saw them -- and **wrong**
+    for a natural transcript, where nine folds trained on its own label, making the
+    averaged number optimistic and incomparable to RiboNN's published held-out
+    accuracy. Keeping the fold identity is what makes the zero-cost
+    adapter-validation check possible: score RiboNN's own published labels, keep the
+    holdout fold, and confirm the held-out r² lands near the published value while
+    the other nine sit visibly higher. If they are indistinguishable, the fold
+    semantics are wrong and every downstream number is uninterpretable.
+  - `_run_predict` now returns the raw table, and the fold-averaged and fold-resolved
+    views are two consumers of that **one** invocation and code path, so they cannot
+    drift; a test pins that the averaged view is exactly the mean of the resolved one.
+
+### Changed
+- **The RiboNN adapter now forwards `batch_size` and `num_workers`, and a claim that
+  it could not has been corrected in three places.** `ribonn.py`'s own comment,
+  `CLAUDE.md` and `docs/DESIGN_expression_splice_flow.md` all stated that
+  `predict_using_nested_cross_validation_models` "exposes no worker-count parameter"
+  and that a `num_workers=0` path was therefore deliberately left out. Verified
+  against upstream `src/predict.py`, that is **wrong**: the signature is
+  `(input_path, species, run_df, top_k_models_to_use=5, batch_size=1024,
+  num_workers=4)`. `RiboNNExpressionModel` gains both as validated fields
+  (`batch_size=64`, `num_workers=0`), threaded through `resolve_backend` and into both
+  `predict` call sites.
+  - **Neither knob can change a score,** which is why lowering the defaults is safe
+    rather than a silent behaviour change: RiboNN pads every transcript to a *fixed*
+    width (`max_utr5_len + max_cds_utr3_len` = 13318, set in `predict.py`), not to a
+    batch's longest member, and `RiboNNDataModule.make_dataloader` sets
+    `shuffle=False` for every non-training stage (`reorder = stage == "train"`), so
+    batch composition affects neither the one-hot encoding nor row order. They are
+    memory and throughput only.
+  - **`num_workers=0` is a correctness requirement, not tuning.** The adapter scores
+    from a mutated `sys.path` and a temporary working directory
+    (`_run_predict_with_models_layout`), neither of which a *spawned* worker inherits
+    -- so `num_workers>0` hangs or fails wherever the multiprocessing start method is
+    spawn (Windows, macOS). RiboNN also rebuilds the predict dataloader once per
+    ensemble member (`top_k` x folds, up to 50 times), paying the spawn cost each
+    time.
+  - **`batch_size=1024` OOMs an ordinary CPU box** -- 1024 fixed-width
+    `(channels, 13318)` float32 tensors at once, before worker prefetch.
+  - `calibrated` is untouched and remains `False` for every configuration; a knob is
+    not a gate (CLAUDE.md §10.6). New tests pin the passthrough, the validation, the
+    defaults, and that the helper restores the working directory even when the
+    upstream call raises.
+- **`docs/NEXT_SESSION.md`'s RiboNN environment notes gain three upstream findings**:
+  the licence is an *affiliation* grant ("any person from academic research or
+  non-profit organizations"), not merely a non-commercial one; `max_shift` in the
+  shipped `runs.csv` MLflow params is a determinism hazard because
+  `_stochastic_shift` is not gated on `self.training` and uses an unseeded
+  `torch.randint`; and native Windows is viable but unsupported upstream (no `make`
+  needed, weights folder must be named `models`, `torch.load` is called with no
+  `map_location`). `setuptools<81` corrected to `<82`, and the weights-extraction
+  target clarified (`-C models`, since the zip root holds `human/` and `mouse/`).
 - **Two load-bearing claims in the docs did not survive a fact-checking sweep, and
   are corrected everywhere they appeared.** A six-lens literature review (joint
   codon+structure design, 5'UTR-aware expression models, vector/AAV/LVV sequence

@@ -331,10 +331,24 @@ items 1–3 are in
       0.773 intronic (Smith & Kitzman 2023). That belongs wherever BT4 reports
       splice risk on a CDS, and it is why the plan pairs the fidelity gate with a
       statistical-calibration gate rather than stopping at the flag flip.
-11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — assemble a
-    license-clean, regime-matched **CDS-variant** TE panel and run
-    `verify_expression_gate` (Spearman + split-conformal coverage on a group-disjoint
-    split). Reproducing RiboNN faithfully is **not** calibration for BT4's
+11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — **the machinery
+    is now built; only the data step is left.** Landed: `within_group` (the strict bar)
+    and `recalibrate` on the gate, the cluster-bootstrap CI, the `width_over_iqr`
+    vacuity check, the panel format + strict reader (`api.read_panel`), the baseline
+    comparison (`api.expression_gate`, `bt4 expression-gate`,
+    `scripts/run_expression_gate.py`), the `ExpressionAttestation` promotion seam, and
+    the zero-data checks (`scripts/ribonn_sensitivity.py`). **The step-by-step runbook
+    is [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md)** (Windows/WSL
+    install, the free Stage-1 checks, the panel hunt, pre-registration, the gate
+    command, and the decision tree), backed by the evidence and corrections in
+    [`RESEARCH_ribonn_calibration.md`](RESEARCH_ribonn_calibration.md). **Remaining
+    (human):** run the free sanity checks against the licensed weights, obtain a
+    licence-clean regime-matched **CDS-variant** panel — no public dataset fully
+    qualifies today, so read §4 of the research doc before spending anything — then
+    pre-register thresholds and run the gate **once**. **Same wiring caveat as item
+    10:** `verified_predictor` is the seam, but nothing in `src/` calls it yet, so a
+    passing gate changes nothing for users until an attestation is committed and
+    loaded. Reproducing RiboNN faithfully is **not** calibration for BT4's
     CDS-variant regime — RiboNN **has never been shown to discriminate synonymous
     CDS variants of the same protein under a fixed UTR**, which is exactly the
     regime BT4 operates in. (Do *not* justify this with "only ~31% of signal is in
@@ -422,12 +436,35 @@ QT_QPA_PLATFORM=offscreen python -m pytest tests/ -p no:cacheprovider
 ## RiboNN environment gotchas (learned on real hardware)
 
 Point `$BT4_RIBONN_DIR` at the user's own RiboNN checkout. Its stack needs
-`numpy<2` (torch 1.13.1 ABI) and `setuptools<81` (its older `pytorch_lightning`
-calls `pkg_resources`), and the Zenodo `weights.zip` extracted to a directory
-literally named `models/` under `$BT4_RIBONN_DIR` (so the hard-coded
-`models/<species>/<run_id>/state_dict.pth` path resolves without a symlink).
+`numpy<2` (torch 1.13.1 ABI) and `setuptools<82` (its older `pytorch_lightning`
+calls `pkg_resources`; upstream issue #10 / PR #11), and the Zenodo `weights.zip`
+(record 17258709) extracted **into** a directory literally named `models/` under
+`$BT4_RIBONN_DIR` — the zip's root holds `human/` and `mouse/`, so `-C models` is
+the correct target — so the hard-coded
+`models/<species>/<run_id>/state_dict.pth` path resolves without a symlink.
 Scoring requires **non-empty** `utr5`/`utr3` (empty → refused; the UTRs carry most
 of RiboNN's signal). Weights are non-commercial — never bundled or CI-run.
+
+Three more, learned from reading upstream rather than from a crash:
+
+- **The licence is an *affiliation* grant, not just a non-commercial one.** Both
+  `LICENSE` and `MODEL WEIGHTS LICENSE.txt` grant use "to any person from academic
+  research or non-profit organizations". Non-commercial *intent* may not qualify an
+  unaffiliated maintainer. Resolve in writing (`patent.gos@sanofi.com`) before
+  downloading weights.
+- **`max_shift` is a determinism hazard.** RiboNN's `_stochastic_shift` is not gated
+  on `self.training` and uses an unseeded `torch.randint`, so a nonzero `max_shift`
+  in the shipped `models/<species>/runs.csv` MLflow params makes *inference*
+  non-deterministic and breaks invariant #7. Check it before trusting any number.
+  (Predict-time config comes from `runs.csv`, **not** `config/conf.yml`.)
+- **Windows works but is not upstream-supported.** You never need `make` — its
+  `install` target is only `mamba env create -f environment.yml -y`, and BT4 imports
+  `src.predict` directly. But the weights folder *must* be named `models` (the
+  symlink fallback needs Developer Mode), and `num_workers` must be `0` (now the
+  adapter default). RiboNN's one tested environment is Ubuntu 20.04 + one NVIDIA GPU.
+  Note `src/predict.py` calls `torch.load` with **no `map_location`**, so if the
+  released state dicts carry CUDA tensors they will refuse to load on a CPU-only
+  box — that is an upstream property, not a BT4 bug.
 
 ---
 
