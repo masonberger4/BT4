@@ -16,6 +16,7 @@ visible without opening each sidecar. Every bundled dataset ships a machine-read
 | KRas4B benchmark FASTA | `scripts/data/kras_ranaghan2021.fasta` (+ `.LICENSE.md`) | Ranaghan et al. 2021 | **CC BY 4.0** (cited; changes documented; ATUM/DNA2.0 truncation flagged). |
 | Reproducibility panel FASTA | `scripts/data/ranaghan2021_tab4.fasta` (+ `.LICENSE.md`) | Ranaghan et al. 2021, Table 4 | **CC BY 4.0** (cited). |
 | RiboNN weight manifest | `src/bt4/biomodels/expression/data/ribonn_sha256.json` | Public SHA-256 **content hashes only** (90 human + 90 mouse) | Hashes, not weights — no model bytes bundled. |
+| RiboNN gate attestations | (none committed yet) | Derived scalars + public content hashes only, never raw model outputs | An `ExpressionAttestation` records a passing gate license-cleanly; RiboNN's per-sequence scores are non-commercial outputs and are structurally excluded (`_ALLOWED_FIELDS`). |
 | ASSP cross-check fixtures | `tests/fixtures/assp/*.txt` | **Synthetic** ASSP-format reports (not real service captures) | BT4-authored test fixtures. |
 
 ## External models — wrapped, never bundled

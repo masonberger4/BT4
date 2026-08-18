@@ -9,6 +9,9 @@ Subcommands:
 * ``bt4 organisms`` -- list bundled codon-usage tables and their reference sets.
 * ``bt4 enzymes`` -- list known restriction enzymes.
 * ``bt4 build-table CDS.fasta`` -- build a codon table from a CDS FASTA.
+* ``bt4 expression-gate PANEL.tsv`` -- run the expression acceptance gate on a
+  measured CDS-variant panel, against the mandatory baselines. Reports; never
+  promotes.
 * ``bt4 --version`` -- print the single-sourced BT4 version.
 
 Only this module prints; everything else returns data.
@@ -589,6 +592,67 @@ def _cmd_build_table(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_expression_gate(args: argparse.Namespace) -> int:
+    """Run the expression acceptance gate over a measured panel and print the verdict."""
+    panel = api.read_panel(args.panel)
+    comparison = api.expression_gate(
+        panel,
+        args.backend,
+        settings=api.GateSettings(
+            within_group=args.within_group,
+            recalibrate=args.recalibrate,
+            target_coverage=args.target_coverage,
+            coverage_tolerance=args.coverage_tolerance,
+            min_spearman=args.min_spearman,
+            calibration_fraction=args.calibration_fraction,
+            bootstrap_resamples=args.bootstrap_resamples,
+            seed=args.seed,
+        ),
+        species=args.species,
+        cell_types=tuple(args.cell_types or ()),
+        num_workers=args.num_workers,
+        organism=args.organism,
+        reference_set=args.reference_set,
+    )
+
+    if not args.within_group:
+        print(
+            "warning: pooled mode credits between-protein skill, which is NOT the "
+            "regime BT4 deploys in. Pass --within-group for the strict bar.",
+            file=sys.stderr,
+        )
+
+    summary = panel.describe()
+    flag = "calibrated" if comparison.backend_calibrated else "UNCALIBRATED"
+    print(f"panel:    {summary['n_rows']} rows / {summary['n_groups']} groups")
+    print(f"          sha256 {comparison.panel_hash[:16]}...")
+    print(f"backend:  {comparison.backend}  [{flag}]")
+    print(f"mode:     {'within-protein' if args.within_group else 'POOLED'}")
+    print()
+    print(f"{'':<14}{'spearman':>10}{'CI low':>9}{'coverage':>10}{'width/IQR':>11}")
+    rows = [("HEAD", comparison.head), *((f"  {n}", r) for n, r in comparison.baselines)]
+    for label, report in rows:
+        print(
+            f"{label:<14}{report.spearman:>10.3f}{report.spearman_ci_low:>9.3f}"
+            f"{report.empirical_coverage:>10.3f}{report.width_over_iqr:>11.3f}"
+        )
+    print()
+    print(f"gate passed (thresholds) : {comparison.head.passed}")
+    print(
+        f"beats every baseline     : {comparison.beats_every_baseline} "
+        f"(best: {comparison.best_baseline} at {comparison.best_baseline_spearman:.3f})"
+    )
+    print(f"interval is informative  : {comparison.interval_is_informative}")
+    print(f"PROMOTABLE on this panel : {comparison.promotable}")
+    print()
+    print(
+        "This command flips nothing: 'promotable' means the pre-registered conditions "
+        "held on this panel. Promotion is a separate, recorded step, and min_spearman "
+        "is a pre-commitment rather than a community standard (none exists)."
+    )
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bt4", description="BT4 back-translation optimizer")
     parser.add_argument("--version", action="version", version=f"bt4 {__version__}")
@@ -683,6 +747,52 @@ def _parser() -> argparse.ArgumentParser:
                        help="codon window for the %%MinMax track")
     p_trk.add_argument("--json", action="store_true", help="emit full per-window arrays as JSON")
     p_trk.set_defaults(func=_cmd_tracks)
+
+    p_gate = sub.add_parser(
+        "expression-gate",
+        help="run the expression acceptance gate on a measured CDS-variant panel",
+    )
+    p_gate.add_argument("panel", help="panel TSV (group/variant_id/cds/measured/utr5/utr3)")
+    p_gate.add_argument("--backend", default="ribonn", help="expression backend name")
+    p_gate.add_argument("--species", default="human", choices=("human", "mouse"))
+    p_gate.add_argument(
+        "--cell-type", action="append", dest="cell_types", default=None,
+        help="restrict the head to this cell type (repeatable); match it to the panel, "
+             "since averaging every tissue against a single-cell-line measurement is a "
+             "scope error",
+    )
+    p_gate.add_argument(
+        "--within-group", action="store_true", dest="within_group",
+        help="score inside each protein -- the strict bar, and the regime BT4 actually "
+             "deploys in. Without it, a head that merely recognises which gene it is "
+             "looking at scores well",
+    )
+    p_gate.add_argument(
+        "--recalibrate", action="store_true",
+        help="fit measured ~ a*pred + b on the calibration fold before residuals; "
+             "required whenever the head's units differ from the assay's",
+    )
+    p_gate.add_argument("--min-spearman", type=float, default=0.30, dest="min_spearman")
+    p_gate.add_argument(
+        "--target-coverage", type=float, default=0.90, dest="target_coverage"
+    )
+    p_gate.add_argument(
+        "--coverage-tolerance", type=float, default=0.05, dest="coverage_tolerance"
+    )
+    p_gate.add_argument(
+        "--calibration-fraction", type=float, default=0.50, dest="calibration_fraction"
+    )
+    p_gate.add_argument(
+        "--bootstrap-resamples", type=int, default=1000, dest="bootstrap_resamples"
+    )
+    p_gate.add_argument("--num-workers", type=int, default=0, dest="num_workers")
+    p_gate.add_argument("--organism", default="homo_sapiens")
+    p_gate.add_argument(
+        "--reference-set", default=None, dest="reference_set",
+        choices=list(api.REFERENCE_SETS),
+    )
+    p_gate.add_argument("--seed", type=int, default=0)
+    p_gate.set_defaults(func=_cmd_expression_gate)
 
     p_bt = sub.add_parser("build-table", help="build a codon table from a CDS FASTA")
     p_bt.add_argument("cds", help="path to a FASTA of coding sequences")
