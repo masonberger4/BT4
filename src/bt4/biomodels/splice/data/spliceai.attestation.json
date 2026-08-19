@@ -1,0 +1,16 @@
+{
+  "backend": "spliceai",
+  "bt4_version": "0.4.0",
+  "max_abs_deviation": 0.0,
+  "n_cases": 18,
+  "passed": true,
+  "schema_version": 1,
+  "tolerance": 0.001,
+  "weight_sha256": {
+    "spliceai1.h5": "e1fd5adcef7489d604b10e79c40078ef790d51ef048c4ce3869c9119ac5de42b",
+    "spliceai2.h5": "6ab042b82ab966b6d3582cb31b96f0859ea08a864f168d69e83aa14450a3b66e",
+    "spliceai3.h5": "e2e790bde53dfdf410c6dc434a86122a7d12f3f38dc2ef45d85986e9ecf22fad",
+    "spliceai4.h5": "ca88ac9e58e69ba6fdeed319b72f063f164c9abf7392eaccef903e94c1d99dd6",
+    "spliceai5.h5": "791cd22c62a80a08d2ca674615a93ce8159d7b55bd157cfef2983b1bd6b41391"
+  }
+}

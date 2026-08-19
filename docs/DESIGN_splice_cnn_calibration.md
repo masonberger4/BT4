@@ -136,7 +136,8 @@ file; note `setup.py` still says "GPLv3", which is stale and wrong).
 conda create -n spliceai python=3.10 -y && conda activate spliceai
 pip install "tensorflow==2.15.*"        # last TF whose bundled Keras is 2.x
 pip install "numpy<2" "pandas<2.2" "setuptools<81"
-pip install spliceai==1.3.1 --no-deps  # --no-deps is REQUIRED on Windows; see below
+pip install spliceai==1.3.1 --no-deps   # --no-deps is REQUIRED on Windows (pysam)
+pip install "pandas<2.2" pyfaidx        # ...and these are what --no-deps skipped
 pip install -e '.[splice-spliceai]'     # from the BT4 checkout
 ```
 
@@ -157,14 +158,19 @@ declares **no upper bounds and no `requires_python`**:
 > a fresh install pulled a TF that installs cleanly and then fails at load. It is now
 > `tensorflow>=2.6,<2.16`.
 
-> **`--no-deps` is required on Windows, and costs nothing anywhere.** `spliceai`
-> depends on **pysam**, which has no Windows wheels and cannot build there (its
-> `setup.py` shells out to a configure script). pysam serves SpliceAI's own VCF command
-> line; **BT4 never uses it** — the adapter resolves the weights with
+> **`--no-deps` is required on Windows, and you must then add back three of the four.**
+> `spliceai` depends on **pysam**, which has no Windows wheels and cannot build there
+> (its `setup.py` shells out to a configure script). pysam serves SpliceAI's own VCF
+> command line; **BT4 never uses it** — the adapter resolves the weights with
 > `importlib.util.find_spec`, which locates the module without executing it, and loads
-> the `.h5` files with Keras directly. Verified on Windows with no pysam present:
-> `available()` returns `True`, and `from spliceai.utils import one_hot_encode` — which
-> the A4 capture script needs — imports fine.
+> the `.h5` files with Keras directly.
+>
+> But `--no-deps` skips *everything*, and `spliceai/utils.py` imports `pandas`, `numpy`,
+> `pyfaidx` and `keras` — so `pip install "pandas<2.2" pyfaidx` is required for **A4**.
+> The failure without it is late and misleading: `available()` still returns `True`,
+> because it needs only Keras and the weight files, while the capture dies importing
+> `one_hot_encode`. Measured with those installed and **pysam still absent**: capture
+> and gate both complete.
 
 > **Hold `TF_ENABLE_ONEDNN_OPTS` constant across capture and gate.** TensorFlow warns on
 > import that oneDNN "may see slightly different numerical results ... from different
