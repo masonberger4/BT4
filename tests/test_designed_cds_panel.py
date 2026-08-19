@@ -163,3 +163,49 @@ def test_the_bundled_ranaghan_panel_is_genuinely_synonymous() -> None:
         assert len(panel.designed(group)) == 30
         proteins = {m.protein for m in panel.group_members(group)}
         assert len(proteins) == 1, group
+
+
+def test_the_probe_reports_progress_and_is_silent_by_default() -> None:
+    """A silent multi-minute run is indistinguishable from a hang.
+
+    Fixed once for `splice-gate` and then reintroduced here: the probe accepted a
+    progress callback and the CLI did not pass one. Per *group* rather than per
+    sequence, because the probe hands a whole group to `backend_agreement`, which
+    scores its members internally — the group is the finest boundary this layer can
+    honestly report.
+    """
+    from bt4.pipeline.splice_gate import probe_designed_cds
+
+    panel = panel_from_members(_members(), provenance="test fixture")
+    seen: list[tuple[int, int, str, int]] = []
+    probe_designed_cds(panel, ("pwm",), progress=lambda *call: seen.append(call))
+    assert [entry[2] for entry in seen] == list(panel.groups)
+    assert all(entry[1] == len(panel.groups) for entry in seen)
+    assert [entry[0] for entry in seen] == list(range(1, len(panel.groups) + 1))
+
+    # The API default stays print-free and callback-free (section 3: only `cli` prints).
+    probe_designed_cds(panel, ("pwm",))
+
+
+def test_the_probe_reports_the_backends_own_names_not_the_aliases() -> None:
+    """`pwm` is a registry alias; `consensus-pwm-baseline` is what ran.
+
+    `backend_agreement` keys its results by the predictor's own name, so looking them
+    up by alias raised KeyError — found by running the probe. The resolved names also
+    carry configuration an alias loses, such as Pangolin's tissue set.
+    """
+    from bt4.pipeline.splice_gate import probe_designed_cds
+
+    panel = panel_from_members(_members(), provenance="test fixture")
+    probe = probe_designed_cds(panel, ("pwm",))[0]
+    assert probe.backends == ("consensus-pwm-baseline",)
+    assert set(probe.delta_spread) == {"consensus-pwm-baseline"}
+    assert set(probe.delta_range) == {"consensus-pwm-baseline"}
+
+
+def test_the_probe_has_no_pass_or_promotable_field() -> None:
+    """Structural: this panel has no labels, so nothing built on it may render a verdict."""
+    from bt4.pipeline.splice_gate import DesignedCdsProbe
+
+    fields = set(DesignedCdsProbe.__dataclass_fields__)
+    assert not fields & {"passed", "promotable", "thresholds_declared", "reasons"}

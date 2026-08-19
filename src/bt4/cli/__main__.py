@@ -706,6 +706,22 @@ def _splice_gate_progress(index: int, total: int, window_id: str, length: int) -
     )
 
 
+def _designed_probe_progress(index: int, total: int, group: str, length: int) -> None:
+    """Report which protein is being scored, to stderr.
+
+    Coarser than the site-gate's per-window line, and deliberately so: the probe hands
+    a whole group to `backend_agreement`, which scores its members internally, so the
+    group is the finest boundary this layer can honestly report. Naming the protein and
+    its CDS length still tells a reader which of three is in flight and roughly how much
+    of the wait it accounts for.
+    """
+    print(
+        f"  scoring {index}/{total}  {group}  ({length:,} nt native, all members)",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _cmd_designed_probe(args: argparse.Namespace) -> int:
     """Measure splice backends on designed synonymous CDS. Not a gate."""
     panel = api.read_designed_cds_panel(args.panel, provenance=args.provenance)
@@ -714,7 +730,11 @@ def _cmd_designed_probe(args: argparse.Namespace) -> int:
     print(f"          sha256 {panel.content_hash()[:16]}...")
     print(f"          {summary['provenance']}\n")
 
-    probes = api.designed_cds_probe(panel, tuple(args.backends))
+    probes = api.designed_cds_probe(
+        panel,
+        tuple(args.backends),
+        progress=None if args.quiet else _designed_probe_progress,
+    )
     for probe in probes:
         print(f"{probe.group}  ({probe.n_designs} designs vs native)")
         for name in probe.backends:
@@ -1234,6 +1254,10 @@ def _parser() -> argparse.ArgumentParser:
         choices=["pwm", "pangolin", "spliceai"],
         help="backends to compare. One is allowed (the spread is still meaningful); "
              "agreement needs two",
+    )
+    p_dprobe.add_argument(
+        "--quiet", action="store_true",
+        help="suppress the per-protein scoring progress on stderr",
     )
     p_dprobe.set_defaults(func=_cmd_designed_probe)
 
