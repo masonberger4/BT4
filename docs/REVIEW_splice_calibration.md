@@ -1,8 +1,10 @@
-# Splice calibration — measured results (variant-effect half)
+# Splice calibration — measured results
 
-**Status: the variant-effect half of Part B has been run. The site-prediction half has
-not.** Nothing here changes any backend's `calibrated` flag, and nothing here is a
-calibration claim. This is a record of what was measured, by whom, on which bytes.
+**Status: both halves of Part B have now been run** — the variant-effect half against a
+published benchmark's own scores, and the site-prediction half against BT4's own wrapped
+Pangolin on real genomic sequence. Nothing here changes any backend's `calibrated` flag,
+and nothing here is a calibration claim. This is a record of what was measured, by whom,
+on which bytes.
 
 Runbook: [`DESIGN_splice_cnn_calibration.md`](DESIGN_splice_cnn_calibration.md) Part B.
 Run on a maintainer's Windows machine, 2026-08-19, with BT4's own
@@ -121,9 +123,102 @@ text were not (fixed in #103, #104, #105).
 - **No promotion.** Every run reported `PROMOTABLE` unreachable or `False`, and no
   threshold was declared. `bt4.biomodels.splice.default()` still returns the PWM baseline.
 
+---
+
+# Site prediction — measured (2026-08-19)
+
+Run on the same maintainer machine, with **BT4's own wrapped Pangolin** against the
+hash-verified GPL weights. Unlike the variant half, this exercises BT4's adapter end to
+end: the one-hot encoding, the 12-model ensemble, the anchor convention, and the gate.
+
+Panel built by `scripts/make_gencode_splice_panel.py` from **GENCODE v44 / GRCh38
+primary assembly**, both downloaded from the same release directory and md5-verified
+(`7450ef42cf9cb3d29625320b22d4bb45`, `9c3fc2ca260a767530dddb0f26721a6b`). MANE Select
+transcripts only, ±5,000 nt of real flank, antisense-overlapping windows skipped.
+
+| panel | windows | positions | sites | prevalence | content hash |
+|---|---|---|---|---|---|
+| `trial.tsv` | 5 | 372,634 | 129 | 0.000346 | `cb9c8f519e279268…` |
+| `panel20.tsv` | 20 | 861,096 | 333 | 0.000387 | `d30ba2cc7dbe1d13…` |
+
+Both are **fully held out**: groups are chr1/3/5/7, none of which either model trained
+on. Motif consistency **100%** on both — every annotated site carries its canonical
+GT/AG, and none of these genes has a minor-spliceosome intron.
+
+## Results — `panel20.tsv`, Pangolin, `--cnn-anchors`
+
+| | AP | skill | ROC | top-k | ECE |
+|---|---|---|---|---|---|
+| **Pangolin** | **0.983** | **0.983** | 1.000 | **0.940** | 0.050 |
+| `pwm` (best baseline) | 0.096 | 0.096 | 0.994 | 0.159 | 0.080 |
+| `gt_ag` | 0.003 | 0.003 | 0.940 | 0.003 | 0.120 |
+| `permutation` | 0.000 | 0.000 | 0.509 | 0.003 | 0.050 |
+| `constant` | 0.000 | 0.000 | 0.500 | 0.000 | **0.000** |
+
+Bar declared **before** the run: `--min-pr-auc-skill 0.75`. All four conditions held, so
+the run reports `PROMOTABLE on this panel: True` — **the first time any BT4 splice
+backend has reached that state.** It is not a promotion, and §"What this does not
+establish" below is the reason.
+
+## What the numbers say
+
+**1. The per-kind anchors are confirmed on real data.** Donors peak at **−1** for 100% of
+sites and acceptors at **+1** for 99%. Those offsets were derived in #102 from SpliceAI's
+training-label construction and Pangolin's CLI — from reading source, not measuring — and
+this is the first check against real genomic sequence with real weights. It was the
+largest correctness risk in this half: a wrong scalar anchor previously drove the PWM
+control from 0.853 to 0.0001.
+
+**2. The result is stable across a 2.3× larger panel.** Between the two panels head skill
+moved −0.005 (0.988 → 0.983), top-k −0.006, and the `pwm` baseline −0.011. Five windows
+were not a lucky draw.
+
+**3. Pangolin beats every baseline by roughly 10×** on skill (0.983 against `pwm` 0.096).
+That margin is the point of the permanent baselines: BT4 ships the PWM for free and with
+no licence, so a wrapped CNN that could not clear it would not have earned a PyTorch
+dependency, a hash-pinned weight set, and a GPL term.
+
+**4. `gt_ag` is the clean illustration of why this gate leads on skill.** The canonical
+dinucleotide scores **ROC 0.940** and **AP 0.003**: it ranks acceptably and predicts
+appallingly, because at 1-in-2,600 prevalence there are thousands of GT/AGs that are not
+splice sites. ROC is near-saturated for everything here (`pwm` 0.994, head 1.000) and
+carries almost no information.
+
+**5. The ECE column is not evidence, and the run now says so.** `constant` and
+`permutation` both **match or beat** Pangolin's ECE of 0.050 — a base-rate predictor and
+a shuffled null are better calibrated than the model. That is what ECE measures at this
+prevalence, and it is why an ECE ceiling was removed from what counts as a declared bar
+(#109). The note naming the offending baselines is generated from the run's own numbers.
+
+## What this does NOT establish
+
+- **Not a promotion, and the panel is easier than the published benchmark.** Zeng & Li
+  report Pangolin at AUPRC **0.85** and top-1 **79%**; this run reads 0.983 and 0.940,
+  **+0.133 and +0.150 above published**, consistently across both panel sizes. A
+  systematic gap in the flattering direction is a statement about the panel, not the
+  model. Theirs is genome-wide across the test chromosomes with a far larger and harder
+  negative pool; this is 20 MANE gene bodies at 100% canonical motifs. The honest reading
+  is *"Pangolin locates splice sites within MANE gene bodies"*, which is narrower than
+  what the published figure measures.
+- **No exonic/intronic split is available here.** Pangolin emits one combined P(splice)
+  track, so the panel scores a single `splice` stratum. The 0.419-exonic / 0.773-intronic
+  penalty that matters most to BT4 is a *variant-effect* finding and is not checkable on
+  this panel shape — so this result must not be read as relieving it.
+- **Nothing about BT4's regime.** Every site here is a natural splice site in a natural
+  gene. BT4 designs **synonymous variants of a coding sequence in a vector**, and a model
+  that finds real splice sites has not thereby been shown to correctly stay silent on a
+  designed CDS, or to flag one that creates a cryptic site. This is the same gap CLAUDE.md
+  documents for RiboNN, for the same reason, and it is the one this benchmark cannot close.
+- **`calibrated` is unchanged.** Pangolin's flag still reports *integration fidelity*
+  only, `default()` still returns the PWM baseline, and promotion remains behind
+  `BT4_SPLICE_USE_ATTESTED`. Both gates now have a passing result on their own terms;
+  whether that warrants changing the default is a deliberate human decision, not a
+  consequence of this run.
+
 ## Still to run
 
-The **site-prediction** half: build a panel from a pinned GENCODE release with
-`scripts/make_gencode_splice_panel.py` and gate it with `bt4 splice-gate --cnn-anchors`.
-That half needs the ~3 GB genome download and the licensed weights, and it is the half
-that exercises BT4's own adapters rather than the benchmark's numbers.
+- The **SpliceAI** integration-fidelity gate (needs the CC BY-NC weights and a TF 2.15
+  environment), and the same site-prediction panel scored by SpliceAI — which would give
+  a genuine **two-backend agreement** figure, the first-class uncertainty signal of §6.
+- A panel that reaches BT4's actual regime: designed synonymous CDS variants, where the
+  question is specificity rather than recall.

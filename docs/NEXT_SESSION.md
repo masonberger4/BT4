@@ -386,10 +386,25 @@ items 1–3 are in
     runs and fixed (#103, #104, #105) — each a claim about numbers that no test could
     reach.
 
-    **Still ahead here:** the **site-prediction** half (needs the ~3 GB genome download and
-    the licensed weights; it is the half that exercises BT4's own adapters rather than the
-    benchmark's numbers), deriving BT4's own operating point from it, the
-    integration-fidelity gate for **SpliceAI**, and a Studio checkbox for the opt-in.
+    **The site-prediction half has now been RUN too** (2026-08-19, same machine), against
+    BT4's own wrapped Pangolin on a GENCODE v44 / GRCh38 panel — so this half exercises the
+    adapter end to end rather than a benchmark's pre-computed scores. On 20 held-out MANE
+    windows (861,096 positions, 333 sites) Pangolin scores **skill 0.983 / top-k 0.940**
+    against the `pwm` baseline's 0.096, and with a bar declared beforehand
+    (`--min-pr-auc-skill 0.75`) the run reports **`PROMOTABLE on this panel: True`** — a
+    first for any BT4 splice backend. The **per-kind anchors are confirmed on real data**
+    (donor −1 for 100% of sites, acceptor +1 for 99%), which was this half's largest
+    correctness risk. It is **not** a promotion: the figures sit +0.13/+0.15 *above*
+    published, which says the panel (20 MANE gene bodies, 100% canonical motifs) is easier
+    than the genome-wide benchmark, and every site is natural sequence rather than the
+    designed synonymous CDS BT4 actually emits. `calibrated` is unchanged and `default()`
+    still returns the PWM baseline.
+
+    **Still ahead here:** the integration-fidelity gate for **SpliceAI** (which would also
+    give a real two-backend agreement figure on this panel), a panel in BT4's own regime
+    (designed synonymous variants, where the question is specificity not recall), deciding
+    whether the attested-promotion opt-in should become the default, and a Studio checkbox
+    for it.
 
     **SpliceAI's tooling is now complete — only the licensed weights step is left.**
     `scripts/capture_spliceai_panel.py` ships alongside the Pangolin one (same

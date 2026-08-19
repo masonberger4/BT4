@@ -8,6 +8,61 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **The `tf_keras` fallback for SpliceAI's weights was unreachable, and the extra's
+  TensorFlow pin steered installs straight into the case it existed for.** SpliceAI's
+  weights are 2019 **Keras 2** `.h5` graphs and Keras 3 cannot load them; from
+  TensorFlow 2.16 `tensorflow.keras` **is** Keras 3.
+  - `_import_keras` ordered its candidates by module *availability* — try
+    `tensorflow.keras`, fall back on `ImportError` — so under TF ≥ 2.16 the first
+    import succeeded and returned the wrong Keras. The shim was only ever reached when
+    TensorFlow was absent entirely, which is the one situation it cannot help. Order is
+    now decided by the installed Keras **generation** (`_ambient_keras_is_v3`), read
+    from the packages rather than the TensorFlow version so an explicit `keras<3` or
+    `TF_USE_LEGACY_KERAS` is respected.
+  - `bt4[splice-spliceai]` declared `tensorflow>=2.6` with **no upper bound**, so a
+    fresh install pulled a TensorFlow that installs cleanly and then fails at load with
+    an opaque deserialization error about a file that is not corrupt. Now
+    `>=2.6,<2.16`, with the reason recorded inline and the `tf_keras` route named for
+    anyone who wants a newer TensorFlow.
+  - Three tests pin the resolution across environments (Keras 3 + shim, Keras 2, and
+    Keras 3 with no shim — which must degrade rather than refuse to import, so the
+    honest failure happens at the weights). The first was verified to fail unfixed.
+
+### Added
+- **`docs/REVIEW_splice_calibration.md` now records the site-prediction half too**, so
+  both halves of Part B are measured rather than planned. Run against BT4's own wrapped
+  Pangolin and the hash-verified GPL weights, on a GENCODE v44 / GRCh38 panel of 20
+  held-out MANE windows (861,096 positions, 333 sites, motif consistency 100%).
+  - **The per-kind anchors are confirmed on real data** — donors peak at −1 for 100% of
+    sites, acceptors at +1 for 99%. Those offsets were derived in #102 from upstream
+    source rather than measured, and this was the largest correctness risk in this half.
+  - Pangolin scores **skill 0.983 / top-k 0.940** against the `pwm` baseline's 0.096, and
+    with `--min-pr-auc-skill 0.75` declared beforehand the run reports **`PROMOTABLE on
+    this panel: True`** — a first for any BT4 splice backend. Stable across a 2.3× panel
+    size change (skill moved −0.005).
+  - Recorded as **not a promotion**: the figures sit **+0.133 / +0.150 above** Zeng & Li's
+    published 0.85 / 0.79, consistently, which says the panel is easier than the
+    genome-wide benchmark rather than that the model is better. Pangolin's combined track
+    also means there is **no exonic/intronic split** here, so the penalty that matters most
+    to BT4 is not checkable on this panel shape. `calibrated` is unchanged and `default()`
+    still returns the PWM baseline.
+
+- **`bt4 splice-gate` now reports which window it is scoring.** A CNN-backed run over a
+  real GENCODE panel takes tens of minutes — the wrapped models read ~10 kb of context
+  per position — and the command printed *nothing* until it finished, which is
+  indistinguishable from a hang. Two real runs were interrupted or queried on exactly
+  that ambiguity before this was added.
+  - `score_splice_panel` / `run_splice_panel_gate` take an optional `progress`
+    callback, `(index, total, window_id, length)`, invoked **before** each window so the
+    one being waited on is the one named. `None` is the default, keeping the API
+    print-free (§3: only `cli` prints).
+  - It carries the window's **length** because that, not the count, is what the
+    remaining wait is proportional to: windows are whole gene spans and vary by more
+    than an order of magnitude, so "12/20" alone predicts nothing.
+  - The CLI writes it to **stderr**, so the report on stdout stays pipeable, and
+    `--quiet` turns it off.
+
+### Fixed
 - **An ECE ceiling was accepted as a pre-registered bar, and it is a bar nothing can
   fail.** The first real GENCODE site-prediction run exposed it: at that panel's
   prevalence (129 sites in 372,634 positions) the `constant` baseline — which predicts

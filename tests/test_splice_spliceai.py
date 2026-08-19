@@ -241,3 +241,72 @@ def test_importing_module_does_not_load_tensorflow() -> None:
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+# --------------------------------------------------------------------------
+# Keras generation, not module availability, decides the loader
+
+
+def _fake_keras_env(
+    monkeypatch: pytest.MonkeyPatch, keras_version: str, *, shim: bool
+) -> object:
+    """Install a fake tensorflow/keras/tf_keras trio and return the resolved loader."""
+    import types
+
+    models = types.ModuleType("tensorflow.keras.models")
+    major = keras_version.split(".")[0]
+    models.load_model = lambda *a, **k: f"KERAS-{major}"  # type: ignore[attr-defined]
+    tf_keras_ns = types.ModuleType("tensorflow.keras")
+    tf_keras_ns.models = models  # type: ignore[attr-defined]
+    tf_keras_ns.__version__ = keras_version  # type: ignore[attr-defined]
+    tensorflow = types.ModuleType("tensorflow")
+    tensorflow.keras = tf_keras_ns  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "tensorflow", tensorflow)
+    monkeypatch.setitem(sys.modules, "tensorflow.keras", tf_keras_ns)
+    monkeypatch.setitem(sys.modules, "tensorflow.keras.models", models)
+    monkeypatch.delitem(sys.modules, "keras", raising=False)
+    monkeypatch.delitem(sys.modules, "keras.models", raising=False)
+
+    if shim:
+        shim_models = types.ModuleType("tf_keras.models")
+        shim_models.load_model = lambda *a, **k: "TF-KERAS-2"  # type: ignore[attr-defined]
+        shim_ns = types.ModuleType("tf_keras")
+        shim_ns.models = shim_models  # type: ignore[attr-defined]
+        shim_ns.__version__ = "2.16.0"  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "tf_keras", shim_ns)
+        monkeypatch.setitem(sys.modules, "tf_keras.models", shim_models)
+    else:
+        monkeypatch.delitem(sys.modules, "tf_keras", raising=False)
+        monkeypatch.delitem(sys.modules, "tf_keras.models", raising=False)
+
+    from bt4.biomodels.splice.spliceai import _import_keras
+
+    return _import_keras()("weights.h5")
+
+
+def test_keras_3_resolves_to_the_tf_keras_shim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SpliceAI's weights are 2019 Keras-2 `.h5` graphs; Keras 3 cannot load them.
+
+    The fallback used to be ordered by module *availability* -- try
+    `tensorflow.keras`, fall back on ImportError -- which made the shim
+    **unreachable**: under TF >= 2.16 `tensorflow.keras` imports perfectly well, it is
+    simply Keras 3. The failure then surfaced at `load_model` as an opaque
+    deserialization error about a file that is not corrupt.
+    """
+    assert _fake_keras_env(monkeypatch, "3.0.0", shim=True) == "TF-KERAS-2"
+
+
+def test_keras_2_keeps_using_tensorflow_keras(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TF <= 2.15 ships Keras 2, which loads the weights directly. Do not divert it."""
+    assert _fake_keras_env(monkeypatch, "2.15.0", shim=True) == "KERAS-2"
+
+
+def test_keras_3_without_the_shim_degrades_rather_than_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No shim installed is a worse environment, not a reason to refuse to import.
+
+    The honest failure then happens at `load_model`, where the weights actually are.
+    """
+    assert _fake_keras_env(monkeypatch, "3.0.0", shim=False) == "KERAS-3"
