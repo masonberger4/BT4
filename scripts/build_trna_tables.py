@@ -86,6 +86,72 @@ SPECS: dict[str, TrnaSpec] = {
             "number, so no information is lost by the merge."
         ),
     ),
+    "bacillus_subtilis": TrnaSpec(
+        organism="bacillus_subtilis",
+        url=(
+            "https://gtrnadb.ucsc.edu/genomes/bacteria/Baci_subt_subtilis_168/"
+            "baciSubt2-tRNAs.fa"
+        ),
+        sha256="b410ebfcc20ea710fee58ba2fde52ce48d0a4bb0f5f758ae9d93d81b4c664e27",
+        genome="Bacillus subtilis subsp. subtilis str. 168 (baciSubt2); chromosomal",
+        super_kingdom="bacteria",
+        expected_genes=86,
+        retrieved="2026-08-19",
+        note=(
+            "86 predictions, none excluded, over 33 anticodons. The count is "
+            "independently corroborated rather than merely self-consistent: 86 "
+            "tRNA genes is the figure reported for the B. subtilis 168 genome "
+            "(Kunst et al., Nature 1997, doi:10.1038/36786), so the pinned "
+            "GtRNAdb set and the published annotation agree exactly. Prokaryotic, "
+            "so the tAI model applies its sking=1 terms -- including the constant "
+            "W[ATA] for the lysidine-modified tRNA-Ile2, whose CAT anticodon is "
+            "counted here together with initiator and elongator Met."
+        ),
+    ),
+    "cricetulus_griseus_chok1gshd": TrnaSpec(
+        organism="cricetulus_griseus_chok1gshd",
+        url="https://gtrnadb.ucsc.edu/genomes/eukaryota/Cgris1/criGri1-tRNAs.fa",
+        sha256="ca60c30fb9c34b528df0a42c0fdef552364300ab02a163086c8f4940ca50a2b7",
+        genome="Cricetulus griseus (criGri1 / CriGri_1.0, CHO-K1 cell line)",
+        super_kingdom="eukaryota",
+        expected_genes=423,
+        retrieved="2026-08-19",
+        note=(
+            "427 predictions minus 2 SeC (selenocysteine), 1 suppressor and 1 "
+            "undetermined = 423 tRNA genes over 46 anticodons. ASSEMBLY CAVEAT, "
+            "stated because it is a real one: GtRNAdb's Chinese hamster set is on "
+            "CriGri_1.0, while BT4's codon table for this organism is counted on "
+            "Ensembl's CHOK1GS_HDv1. Both derive from the CHO-K1 lineage, but they "
+            "are different assemblies, so the tRNA gene copy numbers and the codon "
+            "counts do not come from the same bytes -- unlike human or mouse, where "
+            "GtRNAdb and Ensembl are assembly-matched. CriGri_1.0 is also the more "
+            "fragmented assembly and tRNA loci are repetitive, so treat these copy "
+            "numbers as the weaker input of the two. Recorded rather than smoothed "
+            "over: the sidecar names the genome each number actually came from."
+        ),
+    ),
+    "komagataella_phaffii": TrnaSpec(
+        organism="komagataella_phaffii",
+        url=(
+            "https://gtrnadb.ucsc.edu/genomes/eukaryota/Koma_past_GS115/"
+            "komaPast_GS115-tRNAs.fa"
+        ),
+        sha256="c81d542a62fda078725b40853c068dbfcdf3a075654087d11b06050a0ee525dd",
+        genome="Komagataella phaffii GS115 (komaPast_GS115)",
+        super_kingdom="eukaryota",
+        expected_genes=123,
+        retrieved="2026-08-19",
+        note=(
+            "123 predictions, none excluded, over 44 anticodons. Assembly-matched "
+            "to BT4's codon table for this organism: both are the GS115 genome "
+            "(GCA_000027005.1, De Schutter et al., Nat Biotechnol 2009). GtRNAdb "
+            "serves it under the superseded name Komagataella pastoris, as Ensembl "
+            "Fungi does. Unlike the B. subtilis entry, this gene count is the "
+            "pinned source's own and is NOT corroborated against an independent "
+            "published tally -- it pins the source against silent change, and is "
+            "not a second measurement of the same quantity."
+        ),
+    ),
 }
 
 

@@ -151,6 +151,7 @@ def _ensembl(
 
 
 ENSEMBL_BACTERIA_RELEASE = "63"
+ENSEMBL_FUNGI_RELEASE = "63"
 
 SPECS: tuple[OrganismSpec, ...] = (
     _ensembl(
@@ -180,6 +181,13 @@ SPECS: tuple[OrganismSpec, ...] = (
         source_sha256=(
             "b5c8ca361b5bead8429f99432792ac16496715e974655c0de8add2479dce162e"
         ),
+    ),
+    _ensembl(
+        "cricetulus_griseus_chok1gshd",
+        "Cricetulus griseus (Chinese hamster, CHO-K1 GS-null)",
+        "Cricetulus_griseus_chok1gshd.CHOK1GS_HDv1.cds.all.fa.gz", "CHOK1GS_HDv1",
+        "Ensembl ENS01",
+        "a9c7b472838861563c71a8734b56123f51523b20cb585b6ec82364df5b1c2c45",
     ),
     _ensembl(
         "mus_musculus", "Mus musculus (house mouse)",
@@ -227,6 +235,51 @@ SPECS: tuple[OrganismSpec, ...] = (
             "come from is Araport11 (Cheng et al., Plant J 2017, "
             "doi:10.1111/tpj.13415) -- assembly and annotation are not the same "
             "thing, and it is the annotation that defines the counted CDS."
+        ),
+    ),
+    OrganismSpec(
+        key="bacillus_subtilis",
+        common_name="Bacillus subtilis subsp. subtilis str. 168",
+        url=(
+            "https://ftp.ebi.ac.uk/ensemblgenomes/pub/bacteria/"
+            f"release-{ENSEMBL_BACTERIA_RELEASE}/fasta/bacteria_0_collection/"
+            "bacillus_subtilis_subsp_subtilis_str_168_gca_000009045/cds/"
+            "Bacillus_subtilis_subsp_subtilis_str_168_gca_000009045"
+            ".ASM904v1.cds.all.fa.gz"
+        ),
+        assembly="ASM904v1",
+        database="Ensembl Bacteria",
+        release=ENSEMBL_BACTERIA_RELEASE,
+        genebuild="ENA/INSDC annotation of GCA_000009045",
+        source_sha256=(
+            "49fa0c7f2234c163b1756677726cac7f63f85c39ad0a1df8bbc8237c019e2998"
+        ),
+    ),
+    OrganismSpec(
+        key="komagataella_phaffii",
+        common_name="Komagataella phaffii GS115 (Pichia pastoris)",
+        url=(
+            "https://ftp.ebi.ac.uk/ensemblgenomes/pub/fungi/"
+            f"release-{ENSEMBL_FUNGI_RELEASE}/fasta/komagataella_pastoris/cds/"
+            "Komagataella_pastoris.GCA_000027005.1.cds.all.fa.gz"
+        ),
+        assembly="ASM2700v1 (GCA_000027005.1)",
+        database="Ensembl Fungi",
+        release=ENSEMBL_FUNGI_RELEASE,
+        genebuild="ENA/INSDC annotation of GCA_000027005",
+        source_sha256=(
+            "4bd37ffe4807cb3f043acde72288f9d8799ca36b51c25a0860a6806ad0f31a3f"
+        ),
+        extra_citation=(
+            " Ensembl Fungi serves this genome under the superseded species name "
+            "*Komagataella pastoris* (its own URL path), while labelling the entry "
+            "'Komagataella phaffii GS115'. The species was split from *Pichia "
+            "pastoris* by Kurtzman (J Ind Microbiol Biotechnol 2009, "
+            "doi:10.1007/s10295-009-0638-4), and the industrial expression host is "
+            "*K. phaffii*; BT4 keys it by the current name and records the source "
+            "path verbatim above rather than propagating the deprecated one. The "
+            "GS115 genome is De Schutter et al. (Nat Biotechnol 2009, "
+            "doi:10.1038/nbt.1544)."
         ),
     ),
 )
