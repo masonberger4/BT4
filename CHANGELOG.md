@@ -7,6 +7,30 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Changed
+- **The splice-CNN install route is documented from a real Windows setup**, in a new
+  "Splice CNN environment gotchas" section of `NEXT_SESSION.md` mirroring the RiboNN
+  one, plus corrections to the runbook.
+  - **`pip install spliceai` fails on Windows and it does not matter.** It depends on
+    **pysam**, which has no Windows wheels and cannot build. `--no-deps` is the answer:
+    pysam serves SpliceAI's own VCF command line, and BT4 never uses it — the adapter
+    resolves weights with `importlib.util.find_spec` (which does not execute the module)
+    and loads the `.h5` files with Keras directly. Verified with no pysam present:
+    `available()` is `True` and upstream's `one_hot_encode`, which the capture script
+    requires, imports fine.
+  - **`TF_ENABLE_ONEDNN_OPTS` must be held constant across capture and gate.**
+    TensorFlow warns that oneDNN can change numerical results by reordering
+    computation; capturing with one setting and gating with the other would produce a
+    deviation caused by TensorFlow rather than by BT4's adapter — the one thing a
+    fidelity gate must not confuse.
+  - **The two model stacks share one environment**, contrary to the plan's assumption:
+    TF 2.15 forces `numpy<2`, and `torch 2.13.0+cpu` runs fine on numpy 1.26.4. Also
+    recorded: Windows has no `conda`, so `python -m venv`, and the activated prompt is
+    the check that a `pip install` lands where intended.
+  - Two now-stale runbook claims corrected: the `tensorflow>=2.6` pin note (done), and
+    the assertion that `_import_keras` "already falls back to `tf_keras`" — it did not
+    effectively, which is what the same-day fix addressed.
+
 ### Fixed
 - **The `tf_keras` fallback for SpliceAI's weights was unreachable, and the extra's
   TensorFlow pin steered installs straight into the case it existed for.** SpliceAI's
