@@ -60,6 +60,7 @@ from bt4.domain.sequence import validate_dna
 
 __all__ = [
     "ACCEPTOR_MOTIF",
+    "DEFAULT_EDGE_MARGIN",
     "DONOR_MOTIF",
     "HELD_OUT_CHROMOSOMES",
     "MIN_MOTIF_CONSISTENCY",
@@ -80,6 +81,18 @@ DONOR_MOTIF = "GT"
 
 ACCEPTOR_MOTIF = "AG"
 """The intron-closing dinucleotide. An acceptor position is its ``G``."""
+
+DEFAULT_EDGE_MARGIN = 15
+"""Bases from a window edge within which a site cannot be scored at all.
+
+Not a tuning knob but a structural fact about the shipped baseline: the PWM's acceptor
+window is 15 nt, so a site closer than this to an edge has no window to score and
+returns exactly ``0.0`` -- a ``label=1`` case the backend cannot get right, depressing
+every metric through no fault of the model. The wrapped CNNs are worse in a different
+way: they are trained on ~10 kb of context and merely *degrade* near an edge rather than
+returning zero, so a panel built for them wants orders of magnitude more margin than
+this. The default catches the structural zeros; :meth:`SplicePanel.edge_sites` takes a
+margin so a CNN panel can be checked against its own."""
 
 MIN_MOTIF_CONSISTENCY = 0.90
 """Fraction of sites that must carry the canonical dinucleotide at the declared
@@ -516,6 +529,32 @@ class SplicePanel:
         """
         return tuple(sorted(g for g in self.groups if normalize_chromosome(g) is None))
 
+    def edge_sites(self, margin: int = DEFAULT_EDGE_MARGIN) -> tuple[tuple[str, int, str], ...]:
+        """Return ``(window_id, position, kind)`` for sites too close to a window edge.
+
+        A site within ``margin`` of either end has insufficient flanking sequence for a
+        backend to score it, so it is a **forced miss**: a positive case the model
+        structurally cannot get right. Nothing here is wrong with the panel's *labels*
+        -- the motif check passes, because the dinucleotide really is there -- which is
+        exactly why this needs reporting separately. The cure is to extend the window,
+        not to drop the site.
+
+        Args:
+            margin: Bases from either edge. See :data:`DEFAULT_EDGE_MARGIN` for why the
+                default is a property of the shipped baseline rather than a preference,
+                and why a CNN panel wants far more.
+
+        Returns:
+            The offending sites, sorted.
+        """
+        flagged = [
+            (window.window_id, position, kind)
+            for window in self.windows
+            for position, kind in window.sites()
+            if position < margin or position >= len(window.sequence) - margin
+        ]
+        return tuple(sorted(flagged))
+
     def motif_consistency(self) -> MotifConsistency:
         """Check every declared position against its canonical dinucleotide."""
         return _consistency(self.windows)
@@ -576,6 +615,7 @@ class SplicePanel:
             "training_chromosome_overlap": list(self.training_overlap),
             "unclassified_groups": list(self.unclassified_groups),
             "motif_consistency": consistency.fraction,
+            "n_edge_sites": len(self.edge_sites()),
         }
 
 

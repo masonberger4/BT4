@@ -420,3 +420,43 @@ def test_an_unclassifiable_group_is_reported_as_unknown_not_clean() -> None:
     assert panel.training_overlap == ()
     assert panel.unclassified_groups == ("NC_000002.12",)
     assert panel.describe()["unclassified_groups"] == ["NC_000002.12"]
+
+
+# --------------------------------------------------------------------------
+# Sites the backend structurally cannot score
+
+
+def test_a_site_at_a_window_edge_is_reported_as_a_forced_miss() -> None:
+    """The labels are right and the case is still unwinnable.
+
+    A donor at position 0 carries a real ``GT``, so the motif check passes and the panel
+    is accepted -- but no backend has flanking sequence there, so the PWM returns exactly
+    ``0.0``. That is a ``label=1`` case the model cannot get right, depressing every
+    metric through no fault of its own. Reported separately precisely because nothing is
+    wrong with the panel's labels; the cure is a wider window, not a dropped site.
+    """
+    from bt4.biomodels.splice.panel import DEFAULT_EDGE_MARGIN
+
+    # A donor at position 0, and an identical one comfortably in the interior.
+    filler = "".join("ACTC"[i % 4] for i in range(60))
+    edge_seq = "GT" + filler + "CAG" + "GTAAGT" + filler
+    interior = edge_seq.index("CAG" + "GTAAGT") + 3
+    window = SpliceWindow("edgy", "chr1", edge_seq, donors=(0, interior))
+    panel = panel_from_windows([window], negative_construction=_NEG)
+
+    assert panel.motif_consistency().fraction == 1.0  # the labels are correct
+    assert panel.edge_sites() == (("edgy", 0, "donor"),)
+    assert panel.describe()["n_edge_sites"] == 1
+
+    scores = ConsensusPwmSplicePredictor().score_sequence(edge_seq)
+    assert scores.donor[0] == 0.0  # structurally unscoreable
+    assert scores.donor[interior] > 0.9  # the same motif, scored properly
+    assert DEFAULT_EDGE_MARGIN > 0
+
+
+def test_the_edge_margin_is_caller_settable_for_a_cnn_panel() -> None:
+    """A 10 kb-context CNN wants orders of magnitude more margin than the PWM."""
+    panel = _panel()
+    assert panel.edge_sites(margin=0) == ()
+    # With a CNN-sized margin every site in a short window is near an edge.
+    assert len(panel.edge_sites(margin=len(_SEQ))) == panel.n_sites

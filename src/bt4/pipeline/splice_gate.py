@@ -55,7 +55,12 @@ from bt4.biomodels.splice.gate import (
     SpliceSiteCase,
     verify_splice_gate,
 )
-from bt4.biomodels.splice.panel import SplicePanel, SpliceWindow, canonical_motif_at
+from bt4.biomodels.splice.panel import (
+    DEFAULT_EDGE_MARGIN,
+    SplicePanel,
+    SpliceWindow,
+    canonical_motif_at,
+)
 from bt4.pipeline.splice_crosscheck import resolve_splice_backend
 
 __all__ = [
@@ -556,6 +561,17 @@ def run_splice_panel_gate(
             "the backend emits one combined P(splice) track, so donor and acceptor are "
             "scored as a single 'splice' stratum rather than crediting it with an "
             "acceptor prediction it does not make"
+        )
+
+    edge = panel.edge_sites()
+    if edge:
+        # A forced miss is not a model failure, and a metric that silently absorbs one
+        # is misleading in the direction that matters least obviously: downward.
+        notes.append(
+            f"{len(edge)} annotated site(s) sit within {DEFAULT_EDGE_MARGIN} nt of a "
+            "window edge, where a backend has no flanking sequence and scores 0.0. They "
+            "are FORCED MISSES that depress every metric here; extend those windows "
+            f"rather than reading the result as model quality (first: {edge[0]})"
         )
 
     cases, refs = _build_cases(panel, scored, combined, anchor_offset)
