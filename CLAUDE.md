@@ -356,7 +356,21 @@ aborting with "no feasible codon".
   *inference-only* backends behind the existing
   `SplicePredictor` contract, feeding their dense per-nucleotide site scores into
   the already-shipped **Δsplicing** framing `P(site|designed) − P(site|reference)`
-  with **top-k / log-odds pooling** (never saturating noisy-OR, §10.14). *(License
+  with **top-k / log-odds pooling** (never saturating noisy-OR, §10.14). **That
+  pooling is hinged at an uncalibrated background, and the hinge is load-bearing:**
+  `pool_log_odds` counts only positions above `DEFAULT_SITE_PROBABILITY = 0.5`, and
+  measured against the hash-verified Pangolin weights on designed coding sequence
+  **no position on any sequence reached 0.5** — so every pooled risk, and every
+  `delta_splicing`, was identically zero while the underlying scores varied more than
+  twofold. BT4's headline splice objective is therefore **structurally mute in BT4's
+  own regime** until Part B derives a real operating point on data. The rule that
+  follows: **a pooled risk of zero is never reported alone.** `pooled_risk_detail`
+  carries `below_background` / `max_score` so a floored zero is distinguishable from a
+  measured one, `pool_top_k_logit` is the background-free ranking statistic that
+  survives the hinge (**not a risk** — it goes negative and has no calibrated zero),
+  and lowering the background to make the signal reappear is forbidden: it is the same
+  uncalibrated knob pointed somewhere more flattering. See
+  [`docs/REVIEW_splice_calibration.md`](docs/REVIEW_splice_calibration.md). *(License
   correction — the earlier roadmap called Pangolin "MIT"; the upstream repo is in
   fact **GPL-3.0**, and **SpliceAI is more restrictive still — PolyForm Strict
   1.0.0 code + CC BY-NC 4.0 (noncommercial) weights** (its `setup.py` "GPLv3"

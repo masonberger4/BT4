@@ -59,7 +59,7 @@ from bt4.biomodels.splice.base import (
     DEFAULT_TOP_K,
     SplicePredictor,
     SpliceResult,
-    pooled_risk,
+    pooled_risk_detail,
 )
 
 __all__ = [
@@ -146,7 +146,19 @@ class BackendCandidateAudit:
         delta_splicing: ``pooled_risk(reference) - pooled_risk(candidate)`` for this
             backend -- **larger is better** (positive = the redesign lowered pooled
             risk vs the reference). Note the opposite sign to each flag's
-            :attr:`SpliceFlag.added_risk_vs_reference`.
+            :attr:`SpliceFlag.added_risk_vs_reference`. Read it with
+            :attr:`risk_floored`: on designed coding sequence a zero here is usually
+            not a measurement.
+        risk_floored: ``True`` when **no** position of this candidate exceeded the
+            pooling background, so :attr:`pooled_risk` is zero *by construction* and
+            :attr:`delta_splicing` carries no information about this candidate.
+            Measured against the hash-verified Pangolin weights on designed CDS, this
+            was true of every sequence -- peak scores of 0.128 to 0.445 all pooled to
+            zero. A consumer must not present that zero as "no predicted risk".
+        max_site_score: The highest per-position score on this candidate. What
+            :attr:`risk_floored` discarded, so a floored zero can be reported with the
+            magnitude behind it -- ``0.44`` and ``0.001`` pool identically and mean
+            entirely different things.
     """
 
     backend: str
@@ -154,6 +166,8 @@ class BackendCandidateAudit:
     flags: tuple[SpliceFlag, ...]
     pooled_risk: float
     delta_splicing: float
+    risk_floored: bool = False
+    max_site_score: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,7 +327,10 @@ def audit_splice(
     # Score the reference once per backend (reused for every candidate's added-risk
     # and pooled delta -- never re-run per candidate, CLAUDE.md §7).
     ref_results = {p.name: p.score_sequence(reference) for p in predictors}
-    ref_pooled = {name: pooled_risk(res, top_k) for name, res in ref_results.items()}
+    ref_pooled = {
+        name: pooled_risk_detail(res, top_k, background=threshold)
+        for name, res in ref_results.items()
+    }
     # Score every candidate once per backend, retaining the results so combined-vs-
     # separated can be decided per backend across the whole panel (not per sequence).
     cand_results: list[dict[str, SpliceResult]] = [
@@ -362,16 +379,23 @@ def audit_splice(
                         also_flagged_by=also,
                     )
                 )
-            cand_pooled = pooled_risk(results[name], top_k)
-            delta = ref_pooled[name] - cand_pooled
+            # `threshold` is passed as the pooling background deliberately: it is the
+            # same operating point the flags above are localized at, and the audit
+            # would otherwise flag a site at the caller's threshold while pooling it
+            # against a different one. `pooled_risk_detail` returns the same number
+            # `pooled_risk` does, plus what says whether that number is a measurement.
+            cand_pooled = pooled_risk_detail(results[name], top_k, background=threshold)
+            delta = ref_pooled[name].risk - cand_pooled.risk
             delta_by_backend[name].append(delta)
             by_backend.append(
                 BackendCandidateAudit(
                     backend=name,
                     calibrated=predictor.calibrated,
                     flags=tuple(flags),
-                    pooled_risk=cand_pooled,
+                    pooled_risk=cand_pooled.risk,
                     delta_splicing=delta,
+                    risk_floored=cand_pooled.below_background,
+                    max_site_score=cand_pooled.max_score,
                 )
             )
         audits.append(

@@ -75,6 +75,15 @@ def _print_splice_crosscheck(dna: str, backend: str) -> None:
         lines.append("  (an opt-in splice cross-check outage never fails the run)")
     else:
         lines.append(f"  pooled risk {cc.pooled_risk:.3f} (top-{cc.top_k} log-odds; uncalibrated)")
+        if cc.risk_floored:
+            lines.append(
+                f"              ^ zero BY CONSTRUCTION: no position exceeded the "
+                f"{cc.threshold:g} background"
+            )
+            lines.append(
+                f"                (peak score {cc.max_site_score:.3f}). NOT a finding "
+                "of no splice risk."
+            )
         lines.append(f"  sites       {len(cc.sites)} predicted")
         for site in cc.sites:
             cls = f"  {site.site_class}" if site.site_class else ""
@@ -752,6 +761,7 @@ def _cmd_designed_probe(args: argparse.Namespace) -> int:
         tuple(args.backends),
         progress=None if args.quiet else _designed_probe_progress,
     )
+    any_degenerate = False
     for probe in probes:
         print(f"{probe.group}  ({probe.n_designs} designs vs native)")
         for name in probe.backends:
@@ -760,30 +770,77 @@ def _cmd_designed_probe(args: argparse.Namespace) -> int:
                 f"    {name:34s} delta spread {_signal(probe.delta_spread[name]):>10s}"
                 f"   range [{_signal(low, signed=True)}, {_signal(high, signed=True)}]"
             )
-            if probe.delta_spread[name] == 0.0:
+            if probe.degenerate(name):
+                any_degenerate = True
+                n_seq = probe.n_designs + 1
+                # The whole point of this branch: a zero here is NOT a measurement of
+                # the model. Saying "cannot rank these candidates" -- which this line
+                # once did -- reads the pooling's silence as the backend's.
                 print(
-                    "        ^ EXACTLY zero: identical pooled risk for the native and "
-                    "every design.\n"
-                    "          This backend cannot rank these candidates at all."
+                    f"        ^ ZERO BY CONSTRUCTION, not a measurement. On all {n_seq} "
+                    f"sequences, NO position\n"
+                    f"          exceeded the pooling background "
+                    f"{api.DEFAULT_SITE_PROBABILITY:g} (peak seen: "
+                    f"{probe.max_score[name]:.3f}), so the\n"
+                    "          hinge in pool_log_odds floored every score to zero before "
+                    "the delta was\n"
+                    "          taken. This says nothing about whether the backend "
+                    "responds -- read the\n"
+                    "          background-free response below, which is what survives."
                 )
+            elif probe.delta_spread[name] == 0.0:
+                print(
+                    "        ^ EXACTLY zero, and NOT floored: positions did clear the "
+                    "background, and\n"
+                    "          still the native and every design pooled identically. "
+                    "This backend does\n"
+                    "          not distinguish these candidates."
+                )
+            r_low, r_high = probe.response_range[name]
+            print(
+                f"    {'':34s} response spread "
+                f"{_signal(probe.response_spread[name]):>7s}"
+                f"   range [{_signal(r_low, signed=True)}, "
+                f"{_signal(r_high, signed=True)}]"
+            )
         for (first, second), rho in sorted(probe.rank_correlations.items()):
-            print(f"    rank agreement {first} vs {second}: {rho:+.3f}")
+            print(f"    rank agreement (risk)     {first} vs {second}: {rho:+.3f}")
+        for (first, second), rho in sorted(probe.response_rank_correlations.items()):
+            print(f"    rank agreement (response) {first} vs {second}: {rho:+.3f}")
         if len(probe.backends) > 1:
-            print(f"    sign agreement: {probe.sign_agreement:.3f}")
+            print(f"    sign agreement: risk {probe.sign_agreement:.3f}", end="")
+            print(f"   response {probe.response_sign_agreement:.3f}")
         print()
 
     print(
         "NOT A GATE, and there is no threshold to set. This panel carries no splice\n"
         "labels because designed coding sequence has no splice ground truth -- nothing\n"
         "here was assayed and none of it is annotated.\n\n"
-        "Read the SPREAD first: synonymous positions are the only thing BT4 changes, so\n"
-        "a backend whose delta barely moves across these designs cannot distinguish the\n"
-        "candidates BT4 produces, and routing it into candidate selection would be\n"
-        "picking at random with extra steps.\n\n"
+        "TWO POOLINGS ARE REPORTED, and they answer different questions.\n"
+        "  delta    is BT4's shipped pooled risk. It floors every position at or below\n"
+        f"           the {api.DEFAULT_SITE_PROBABILITY:g} background, so on designed CDS "
+        "it is routinely zero for\n"
+        "           reasons that have nothing to do with the model. A zero is only a\n"
+        "           finding when the line above does NOT say 'by construction'.\n"
+        "  response is the same top-k log-odds with the hinge and the background\n"
+        "           removed. It is monotone in the model's scores everywhere, so it\n"
+        "           still separates candidates the risk has flattened -- which is why\n"
+        "           it is the field to read for 'does this backend respond at all'.\n"
+        "           It is NOT a risk: it goes negative, it has no calibrated zero, and\n"
+        "           it must never be quoted as how spliceogenic a sequence is.\n\n"
+        "Neither number is evidence a backend is right. The response is background-free\n"
+        "precisely so this probe does not answer its own question by choosing a cutoff\n"
+        "that makes the signal reappear.\n\n"
         "The rank agreement is NOT the site panel's Jaccard and must not be set beside\n"
         "it: that is positional overlap on genomic sequence, this is rank agreement over\n"
         "candidate deltas."
     )
+    if any_degenerate:
+        print(
+            "\nAt least one backend above is degenerate under the risk pooling. Its risk\n"
+            "rank/sign agreements are statistics over constants and mean nothing; the\n"
+            "response ones are the comparable numbers."
+        )
     return 0
 
 

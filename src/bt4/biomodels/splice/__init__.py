@@ -71,11 +71,14 @@ from bt4.biomodels.splice.audit import (
 from bt4.biomodels.splice.base import (
     DEFAULT_SITE_PROBABILITY,
     DEFAULT_TOP_K,
+    PooledRisk,
     SplicePredictor,
     SpliceResult,
     logit,
     pool_log_odds,
+    pool_top_k_logit,
     pooled_risk,
+    pooled_risk_detail,
     score_in_context,
 )
 from bt4.biomodels.splice.baseline import ConsensusPwmSplicePredictor
@@ -164,6 +167,7 @@ __all__ = [
     "HttpAsspTransport",
     "MotifConsistency",
     "PangolinSplicePredictor",
+    "PooledRisk",
     "SpliceAiFidelityCase",
     "SpliceAiFidelityReport",
     "SpliceAiSplicePredictor",
@@ -195,7 +199,9 @@ __all__ = [
     "panel_from_windows",
     "parse_assp_report",
     "pool_log_odds",
+    "pool_top_k_logit",
     "pooled_risk",
+    "pooled_risk_detail",
     "promote_if_attested",
     "read_splice_panel",
     "read_variant_panel",

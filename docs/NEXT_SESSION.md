@@ -40,6 +40,21 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > `ConstructContext` + junction-correct constraints + junction folding + the
 > whole-construct audit with restriction-site uniqueness. See
 > [`REVIEW_2026-08_sota_and_roadmap.md`](REVIEW_2026-08_sota_and_roadmap.md) §4.
+> ⚠️ **BT4's splice risk pooling was structurally mute in BT4's own regime, and is now
+> honest about it (2026-08-19).** `pool_log_odds` counts only positions above
+> `DEFAULT_SITE_PROBABILITY = 0.5`; measured against the hash-verified Pangolin weights
+> on the designed-CDS panel, **no position on any of 93 sequences reached 0.5**, so every
+> `delta_splicing` was identically zero while the raw scores varied more than twofold.
+> The background was **deliberately not lowered** (same uncalibrated knob, better view).
+> Landed instead: `pool_top_k_logit` (background-free ranking statistic, **not a risk**),
+> `PooledRisk` / `pooled_risk_detail` (a zero is now attributable), pooling coupled to
+> the localization threshold in the audit and cross-check, and every risk-reporting
+> surface saying *which* zero it is. Re-measured, Pangolin's background-free response
+> spread across synonymous designs of one protein is 3.9–5.9 log-odds — it responds, and
+> BT4 was discarding it. Evidence:
+> [`REVIEW_splice_calibration.md`](REVIEW_splice_calibration.md). **The operating point
+> itself is still underived** — that is Part B, and it is `BLOCKED-data`.
+>
 > ✅ **Tier 3 (GenBank I/O) has landed too** — an annotated reader/writer whose
 > `misc_feature` spans put residual violations on the map the user opens, and whose
 > reader turns an existing vector map into a `ConstructContext`. **Tier 4 has now
@@ -64,6 +79,7 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | Splice PWM baseline | GROUNDWORK | no (baseline) | `biomodels/splice/` |
 | Splice CNNs: Pangolin (GPL) / SpliceAI (CC BY-NC) | **BOTH fidelity gates PASSED** (exact, 18 cases each, same panel `f3589fd1…`) | **yes, opt-in** for both (`BT4_SPLICE_USE_ATTESTED=1`) — integration fidelity only, NOT statistical calibration | `biomodels/splice/{pangolin,spliceai}.py`, `biomodels/splice/attestations.py` |
 | Splice audit (localize-and-flag) + backend agreement | DONE | advisory (`all_calibrated=False`) | `biomodels/splice/audit.py` |
+| **Splice risk pooling** (`pool_log_odds` + the background-free `pool_top_k_logit`) | DONE, and **honest about being degenerate on designed CDS** — a zero risk now reports whether it was floored | operating point **underived** (0.5 is a convention, not evidence) | `biomodels/splice/base.py` |
 | Splice fidelity-attestation layer | **DONE and in use** — a committed Pangolin attestation ships | n/a | `biomodels/splice/{attestation,attestations}.py`, `biomodels/splice/data/` |
 | **ASSP cross-check (opt-in, out-of-loop network validator)** | DONE | `network_derived`, not calibrated | `biomodels/splice/assp.py`, `pipeline/splice_crosscheck.py` |
 | Expression: `ExpressionPredictor` + `NullExpressionModel` + rerank hook | GROUNDWORK | placeholder=no | `biomodels/expression/`, `pipeline/rerank.py` |
@@ -331,6 +347,17 @@ items 1–3 are in
     unmet, and the regime where these models are measured weakest (median prAUC
     **0.419 exonic** vs 0.773 intronic, Smith & Kitzman 2023) — which is BT4's
     entire regime. State that wherever BT4 reports splice risk on a CDS.
+
+    **Part B now has a concrete, measured stake beyond "the score is uncalibrated".**
+    The shipped operating point does not merely risk being *wrong* — at `0.5` it makes
+    BT4's entire splice objective **inert in BT4's own regime**. Measured with the
+    hash-verified Pangolin weights on the designed-CDS panel, no position on any of 93
+    sequences reached 0.5, so every `delta_splicing` was exactly zero. That is now
+    *reported* honestly (`pool_top_k_logit`, `PooledRisk.below_background`; see
+    [`REVIEW_splice_calibration.md`](REVIEW_splice_calibration.md)) but not *fixed* — a
+    defensible replacement cannot be picked without labeled data, which is what makes
+    this item `BLOCKED-data` rather than a knob to turn. Deriving the operating point is
+    therefore part of this item's deliverable, not a follow-on.
 
     **Part B's machinery is now built; the data step is what is left.** Landed: the
     classification estimators (`pr_auc` as tie-grouped average precision, `roc_auc`,

@@ -295,12 +295,140 @@ prevalence, and it is why an ECE ceiling was removed from what counts as a decla
   whether that warrants changing the default is a deliberate human decision, not a
   consequence of this run.
 
+---
+
+# Designed synonymous CDS — measured (2026-08-19), and the defect it exposed
+
+The panel that reaches BT4's own regime: `scripts/make_designed_cds_panel.py` over
+Ranaghan et al. 2021 Table 4 (CC BY 4.0) — three proteins, each the native human CDS
+plus 30 designs from three anonymized commercial optimizers. 93 members, content hash
+`fa0df04f46e53dd9…`. It carries **no splice labels and cannot**: designed coding
+sequence has no splice ground truth. Everything below is label-free.
+
+## The first run was reported wrong, and the error was BT4's, not the model's
+
+The probe's headline field is the **Δsplicing spread** across a group's designs. On the
+first run, with the hash-verified Pangolin weights:
+
+| protein | Pangolin Δ spread | reported as |
+|---|---|---|
+| Beclin1 | `0.0000` | "flat across all 30 designs" |
+| KRas4B | `0.0000` | "cannot rank these candidates at all" |
+| PDE3A | `1.0885` | the one responsive group |
+
+That reading was wrong. Running Pangolin directly on the same sequences showed its raw
+per-position scores are **not** flat and **not** zero:
+
+| sequence | peak score | positions > 0.5 | pooled risk @ 0.5 | pooled @ 0.01 |
+|---|---|---|---|---|
+| KRas4B native | 0.128 | **0** | 0.0000 | 7.89 |
+| KRas4B design0 | 0.276 | **0** | 0.0000 | 9.38 |
+| Beclin1 design0 | 0.435 | **0** | 0.0000 | 10.96 |
+| PDE3A design1 | 0.445 | **0** | 0.0000 | 9.97 |
+
+Every position was nonzero and the native differed from its designs by more than
+twofold. **No position on any sequence reached 0.5** — and `pool_log_odds` sums
+`max(0, logit(p) − logit(background))` with `background = DEFAULT_SITE_PROBABILITY =
+0.5`, so the hinge floored every score to zero before the Δ was taken. The zeros were a
+property of BT4's pooling, reported as a property of the CNN.
+
+The same hinge explains the rest of that run: the `+0.000` rank agreements were Spearman
+correlations of constants, and the `0.000` sign agreement on KRas4B was the sign of zero.
+
+**Why it was invisible.** `DEFAULT_SITE_PROBABILITY` is documented as *"a display /
+localization knob, not a calibrated cutoff"* — but it was wired in as a hard gate inside
+risk pooling, where instead of shifting a display it silently zeroed the output. A pooled
+risk of `0.0` meant either "no risk" or "nothing cleared an admittedly-uncalibrated
+cutoff", with nothing distinguishing them. In BT4's regime the second is the universal
+case.
+
+Note this is *not* suppression of a long tail: with `top_k = 3` only three positions
+ever contribute, so top-k already excludes the tail. The hinge's only effect on those
+three is to floor them — buying non-negativity at the price of blindness below 0.5.
+
+## The fix
+
+**Lowering the background was rejected.** It is the same uncalibrated knob pointed
+somewhere more flattering, and the constant's own docstring says the number is a
+convention. Deriving a real operating point is Part B's job, on data.
+
+What landed instead:
+
+- `pool_top_k_logit` — the same top-k log-odds with the hinge **and the background
+  removed**. It takes no background parameter at all, so it introduces no operating
+  point; it is monotone in the model's scores everywhere, so it still separates
+  sequences the risk has flattened. It is **not a risk**: it goes negative, and it has
+  no calibrated zero. Where the hinge does not bind it equals the pooled risk exactly
+  (`logit(0.5) == 0`), so it adds a statistic without moving one.
+- `PooledRisk` / `pooled_risk_detail` — the same number plus what makes it attributable:
+  `n_above_background`, `max_score`, and `below_background`, which is true exactly when
+  the risk is zero *by construction*.
+- Every consumer that reports a risk now reports which zero it is: `bt4 designed-probe`,
+  `bt4 validate --splice-backend`, the Studio ASSP banner, `BackendCandidateAudit`, and
+  `AgreementReport.degenerate`.
+- The audit and the cross-check now **pool against the threshold they localize at**. They
+  passed the caller's `threshold` to localization and let pooling keep the default 0.5,
+  so `--threshold 0.2` flagged sites at 0.35 and pooled them as zero. At the default
+  threshold nothing changes — the two constants are the same number.
+
+No shipped number moved: `pool_log_odds` and `pooled_risk` are byte-identical, pinned by
+`test_default_background_reproduces_the_legacy_expression`.
+
+## Results, re-measured with the fix
+
+`bt4 designed-probe`, Pangolin (4 tissues) and the PWM baseline, 30 designs vs native:
+
+| protein | backend | Δ spread (risk) | response spread | rank agree (risk) | rank agree (response) |
+|---|---|---|---|---|---|
+| Beclin1 | Pangolin | `0` **floored**, peak 0.435 | 4.2301 | `+0.000` | `+0.614` |
+| Beclin1 | PWM | 7.4284 | 7.4284 | — | — |
+| KRas4B | Pangolin | `0` **floored**, peak 0.323 | 3.8850 | `+0.000` | `+0.195` |
+| KRas4B | PWM | 5.5951 | 5.5951 | — | — |
+| PDE3A | Pangolin | 1.0885 | 5.9209 | `+0.381` | `+0.162` |
+| PDE3A | PWM | 5.3478 | 5.3478 | — | — |
+
+Sign agreement, risk vs response: Beclin1 `0.000` / `0.400`, KRas4B `0.000` / `0.600`,
+PDE3A `0.100` / `0.667`.
+
+**What the numbers say.**
+
+- **Pangolin does respond to synonymous change.** Response spreads of 3.9–5.9 log-odds
+  across designs of the same protein, on the axis BT4 varies and nothing else. The
+  earlier "cannot rank these candidates" conclusion is withdrawn.
+- **BT4's shipped Δsplicing is mute in BT4's regime.** Two of three groups floored
+  entirely; the third (PDE3A, spread 1.0885) only because a few designs happened to
+  clear 0.5. Routing `delta_splicing` into candidate selection today would contribute
+  nothing on most proteins — not because the model is silent, but because the pooling is.
+- **The PWM baseline's risk and response are identical to four decimals in all three
+  groups.** That is the arithmetic working as expected, not a coincidence: its top-3
+  positions always clear 0.5, so the hinge never binds and the two poolings coincide. It
+  is also why this defect never showed up against the default backend.
+- **Cross-backend agreement is low where it is now measurable** — `+0.614`, `+0.195`,
+  `+0.162` response rank agreement between Pangolin and the PWM baseline. Two backends
+  that would often pick different candidates. That is an uncertainty signal, and it
+  argues against routing either into selection before Part B.
+
+## What this does NOT establish
+
+- **No labels, so no accuracy claim of any kind.** Nothing here was assayed and none of
+  it is annotated. "Responds to synonymous change" is not "responds correctly".
+- **The response statistic is not calibrated and is not a risk.** It is a ranking
+  quantity with no meaningful zero. It must never be quoted as how spliceogenic a
+  sequence is, and it does not move any `calibrated` flag.
+- **Low agreement does not say which backend is right**, and high agreement would not
+  either — both pad with 5,000 literal `N`, so a shared artifact is invisible to it.
+- **This is not the specificity panel.** Whether a model stays correctly silent on a
+  clean designed CDS and correctly flags one carrying a cryptic site still needs labels.
+
 ## Still to run
 
-- **A panel that reaches BT4's actual regime**: designed synonymous CDS variants, where
-  the question is *specificity* — does a model stay correctly silent on a clean designed
-  CDS, and correctly flag one that creates a cryptic site? Every measurement here is
-  recall on natural sites in natural genes.
+- **A specificity panel in BT4's regime**: designed synonymous CDS with *known* splice
+  outcomes — does a model stay correctly silent on a clean designed CDS, and correctly
+  flag one that creates a cryptic site? Every labeled measurement above is recall on
+  natural sites in natural genes, and the designed-CDS panel has no labels at all.
+- **Derive BT4's own operating point** (Part B). The measurements above are the concrete
+  argument for it: the shipped 0.5 makes the whole splice objective inert on designed
+  coding sequence, and no defensible replacement can be picked without labeled data.
 - **Resolve the 7 shared calls that are not annotated sites** — non-MANE isoform sites
   the panel scores as negatives, or shared false positives. The two readings have
   opposite implications and the panel as built cannot separate them.

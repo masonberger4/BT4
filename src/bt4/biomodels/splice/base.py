@@ -57,11 +57,14 @@ from typing import Protocol, runtime_checkable
 __all__ = [
     "DEFAULT_SITE_PROBABILITY",
     "DEFAULT_TOP_K",
+    "PooledRisk",
     "SplicePredictor",
     "SpliceResult",
     "logit",
     "pool_log_odds",
+    "pool_top_k_logit",
     "pooled_risk",
+    "pooled_risk_detail",
     "score_in_context",
 ]
 
@@ -93,6 +96,22 @@ pooled top-k log-odds and cannot be imported directly. Deriving BT4's own operat
 point is the job of the statistical-calibration gate
 (``docs/DESIGN_splice_cnn_calibration.md`` Part B), and *this* constant is what it
 would move.
+
+**Measured consequence, no longer hypothetical.** Run against the hash-verified
+Pangolin weights on designed coding sequence -- BT4's own regime -- **no position on
+any sequence exceeded 0.5**, across a native CDS and thirty synonymous redesigns of
+each of three proteins. Peak scores ran 0.128 to 0.445 and differed more than twofold
+between the native and its designs, and every one of them pooled to a risk of exactly
+``0.0``. So ``delta_splicing`` was identically zero for every candidate, the rank
+agreements computed from those deltas were Spearman correlations of constants, and
+none of it was visible in the output.
+
+Lowering this constant is **not** the fix, and must not be done to make the signal
+reappear: that is the same uncalibrated knob pointed somewhere more flattering, and
+this docstring already says the number is a convention. The fix is to stop reporting a
+floored zero as a measured one -- see :class:`PooledRisk`, which carries the counts
+that tell the two apart, and :func:`pool_top_k_logit`, the background-free statistic
+that still separates sequences when this hinge has flattened them.
 """
 
 DEFAULT_TOP_K: int = 3
@@ -168,6 +187,56 @@ def pool_log_odds(
     return math.fsum(max(0.0, value) for value in logits[:top_k])
 
 
+def pool_top_k_logit(probs: Iterable[float], top_k: int = DEFAULT_TOP_K) -> float:
+    """Pool per-position scores into a **background-free** top-k logit sum.
+
+    The same top-k / log-odds shape as :func:`pool_log_odds` with the hinge and the
+    background removed: the sum of the ``top_k`` largest ``logit(p)``, whatever
+    those are. It takes **no background parameter**, so unlike a pooled *risk* it
+    carries no operating point at all.
+
+    **This is not a risk, and it is not a probability.** It is negative whenever the
+    strongest positions score below 0.5, which on designed coding sequence is the
+    normal case rather than the exception. It has no zero point that means "no risk",
+    and it must never be presented as one.
+
+    **What it is for.** It is *monotone* in the per-position scores at every score,
+    which pooled risk is not: :func:`pool_log_odds` floors each of its ``top_k``
+    contributions at zero, so once every position falls below background the pooled
+    risk is a **constant zero** and the differences between sequences are gone.
+    Measured on Pangolin over designed CDS, that is not a corner case -- no position
+    on any sequence reached 0.5, so every pooled risk and every ``delta_splicing``
+    was identically zero while the underlying scores varied by more than twofold.
+    This statistic answers the question that survives there: **does the model respond
+    to the change at all, and do two backends rank the candidates the same way?**
+
+    Being background-free is what makes it honest to use in that regime. Lowering the
+    background to whatever happens to make the signal reappear would be the same
+    uncalibrated knob pointed somewhere more flattering; removing it means the
+    ranking rests on the model's own scores and on no threshold of BT4's choosing.
+
+    Not comparable across different ``top_k``, and not comparable to
+    :func:`pool_log_odds` -- a different functional, reported alongside it, never in
+    place of it.
+
+    Args:
+        probs: Per-position site probabilities (donor and/or acceptor). May be empty.
+        top_k: How many of the highest-scoring positions to sum. Must be positive.
+
+    Returns:
+        The sum of the ``top_k`` largest logits, or ``0.0`` for empty input. May be
+        negative. Larger means the model scored the sequence's strongest positions
+        higher -- **not** that the sequence is riskier in any calibrated sense.
+
+    Raises:
+        ValueError: If ``top_k`` is not positive.
+    """
+    if top_k <= 0:
+        raise ValueError(f"top_k must be a positive integer, got {top_k}")
+    logits = sorted((logit(p) for p in probs), reverse=True)
+    return math.fsum(logits[:top_k])
+
+
 @dataclass(frozen=True, slots=True)
 class SpliceResult:
     """Per-position donor / acceptor site scores for one sequence (immutable).
@@ -218,6 +287,102 @@ def pooled_risk(
         The pooled top-k log-odds splice risk of the sequence.
     """
     return pool_log_odds((*result.donor, *result.acceptor), top_k, background=background)
+
+
+@dataclass(frozen=True, slots=True)
+class PooledRisk:
+    """A pooled splice risk **together with what would make its value a lie.**
+
+    :func:`pooled_risk` returns a bare float, and that float has two completely
+    different meanings when it is ``0.0``:
+
+    * the sequence carries no predicted splice risk, or
+    * every position scored at or below :attr:`background`, so the pooling hinge
+      floored the whole sequence to zero and the risk is zero **by construction**.
+
+    Nothing distinguished them, and in BT4's own regime the second is the universal
+    case. Measured with the hash-verified Pangolin weights on designed coding
+    sequence, **no position on any sequence exceeded the 0.5 background** -- so every
+    pooled risk was ``0.0``, every ``delta_splicing`` was ``0.0``, and the model's
+    scores (which varied more than twofold between the native and the designs) were
+    discarded in full without a word. The rank agreements computed over those deltas
+    were Spearman correlations of constants.
+
+    This type is the fix: the same number, plus the evidence needed to attribute it.
+    A consumer that reports a risk should report :attr:`below_background` with it, and
+    must not present a floored zero as a measured one.
+
+    Attributes:
+        risk: Exactly :func:`pooled_risk` -- the hinged, background-relative top-k
+            log-odds. Unchanged, non-negative, and the only field that is a *risk*.
+        response: :func:`pool_top_k_logit` -- the same pooling with no hinge and no
+            background. Monotone in the scores everywhere, so it still separates
+            sequences that :attr:`risk` has flattened. **Not a risk**: it is negative
+            whenever the top positions score below 0.5, and it has no meaningful zero.
+        background: The background :attr:`risk` was pooled against.
+        top_k: The pooling depth both statistics used.
+        n_scored: Positions pooled (donor plus acceptor).
+        n_above_background: How many of them exceeded :attr:`background`. Zero is what
+            makes :attr:`risk` uninformative rather than merely small.
+        max_score: The highest per-position score seen, so a floored zero can be
+            reported with the magnitude that was thrown away -- ``0.44`` and ``0.001``
+            both pool to ``0.0`` and mean very different things.
+    """
+
+    risk: float
+    response: float
+    background: float
+    top_k: int
+    n_scored: int
+    n_above_background: int
+    max_score: float
+
+    @property
+    def below_background(self) -> bool:
+        """``True`` when :attr:`risk` is zero *by construction*, not by measurement.
+
+        Every scored position fell at or below :attr:`background`, so the hinge in
+        :func:`pool_log_odds` floored all of them and no difference between sequences
+        can survive into :attr:`risk` or into any Delta-splicing computed from it.
+        A consumer seeing this must say so rather than report the zero alone.
+        """
+        return self.n_scored > 0 and self.n_above_background == 0
+
+
+def pooled_risk_detail(
+    result: SpliceResult,
+    top_k: int = DEFAULT_TOP_K,
+    *,
+    background: float = DEFAULT_SITE_PROBABILITY,
+) -> PooledRisk:
+    """Pool a :class:`SpliceResult` and report **why** the pooled value is what it is.
+
+    Same pooling as :func:`pooled_risk`, and :attr:`PooledRisk.risk` is equal to it
+    exactly -- this adds the attribution, it does not change the number. See
+    :class:`PooledRisk` for why a bare pooled risk is not enough.
+
+    Args:
+        result: Per-position scores from :meth:`SplicePredictor.score_sequence`.
+        top_k: How many of the strongest positions to pool (see :func:`pool_log_odds`).
+        background: The probability below which a position contributes no risk.
+
+    Returns:
+        A :class:`PooledRisk` carrying the risk, the background-free response, and
+        the counts that say whether the risk was floored.
+
+    Raises:
+        ValueError: If ``top_k`` is not positive or ``background`` is outside ``(0, 1)``.
+    """
+    scores = (*result.donor, *result.acceptor)
+    return PooledRisk(
+        risk=pool_log_odds(scores, top_k, background=background),
+        response=pool_top_k_logit(scores, top_k),
+        background=background,
+        top_k=top_k,
+        n_scored=len(scores),
+        n_above_background=sum(1 for value in scores if value > background),
+        max_score=max(scores, default=0.0),
+    )
 
 
 @runtime_checkable

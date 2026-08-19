@@ -8,14 +8,47 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **BT4's splice risk pooling discarded its entire signal in BT4's own regime, silently.**
+  `pool_log_odds` sums `max(0, logit(p) - logit(background))` with `background =
+  DEFAULT_SITE_PROBABILITY = 0.5`, so only positions *above* 0.5 contribute. Measured
+  against the hash-verified Pangolin weights on the designed-CDS panel, **no position on
+  any of the 93 sequences reached 0.5** — peak scores ran 0.128–0.445 and differed more
+  than twofold between a native CDS and its synonymous redesigns, and every one of them
+  pooled to a risk of exactly `0.0`. So `delta_splicing` was identically zero for every
+  candidate, the cross-backend rank agreements computed from those deltas were Spearman
+  correlations of constants, and none of it was visible: a pooled risk of `0.0` meant
+  either "no risk" or "nothing cleared an uncalibrated cutoff", with nothing telling the
+  two apart. The constant is documented as *"a display / localization knob, not a
+  calibrated cutoff"* but was wired in as a hard gate inside risk pooling, where instead
+  of shifting a display it zeroed the output. **The background was deliberately not
+  lowered** — that is the same uncalibrated knob pointed somewhere more flattering, and
+  deriving a real operating point is the statistical-calibration gate's job, on data.
+  Instead: new `pool_top_k_logit`, the same top-k log-odds with the hinge *and the
+  background* removed (no operating point at all, monotone in the scores everywhere, so
+  it separates what the risk has flattened — and **not a risk**: it goes negative and has
+  no calibrated zero); new `PooledRisk` / `pooled_risk_detail`, carrying
+  `n_above_background`, `max_score` and `below_background` so a zero is attributable; and
+  every consumer that reports a risk now reports which zero it is — `bt4 designed-probe`,
+  `bt4 validate --splice-backend`, the Studio ASSP banner, `BackendCandidateAudit`,
+  `SpliceCrossCheck`, and `AgreementReport.degenerate`. Re-measured, Pangolin's
+  background-free response spread across designs of one protein is 3.9–5.9 log-odds: it
+  responds to synonymous change, and BT4 was throwing that away. `pool_log_odds` and
+  `pooled_risk` are byte-identical — no shipped number moved.
+- **The splice audit and cross-check pooled against a different cutoff than they
+  localized at.** Both passed the caller's `threshold` to site localization and let
+  pooling keep the default 0.5, so `--threshold 0.2` reported sites at 0.35 while the
+  pooled risk meant to summarize them stayed exactly zero. They now pool against the
+  threshold they localize at; at the default the two are the same number, so the shipped
+  path is unchanged.
 - **`bt4 designed-probe` rounded away the distinction its own conclusion rests on.** At
   `%.4f` an exactly-zero Δ spread and one of 1e-7 both print `0.0000`, and the two
   readings are opposite: exactly zero means the backend gave the native and every design
-  the same pooled risk and **cannot rank them at all**, while 1e-7 means it ranks them
-  and the signal is merely tiny. On the first real run Pangolin displayed `0.0000` for
-  two of three proteins, so the formatting was deciding the finding. Zero now prints as
-  `0`, sub-1e-4 values in scientific notation, and an exactly-zero spread gets an
-  explicit line saying the backend cannot rank the candidates.
+  the same pooled risk, while 1e-7 means it separates them and the signal is merely tiny.
+  On the first real run Pangolin displayed `0.0000` for two of three proteins, so the
+  formatting was deciding the finding. Zero now prints as `0` and sub-1e-4 values in
+  scientific notation. *(The explicit line that change added — "this backend cannot rank
+  the candidates at all" — was itself wrong, and is corrected by the pooling fix above:
+  the zero was BT4's hinge, not the backend's silence.)*
 - **`bt4 designed-probe` printed nothing while it ran** — the same silence-looks-like-a-hang
   defect fixed for `splice-gate` one change earlier, reintroduced in the new command:
   `probe_designed_cds` accepted a `progress` callback and the CLI did not pass one. Now

@@ -19,7 +19,7 @@ from bt4.biomodels.splice import (
     backend_agreement,
     spearman,
 )
-from bt4.biomodels.splice.agreement import pearson
+from bt4.biomodels.splice.agreement import agreement_from_deltas, pearson
 from bt4.biomodels.splice.base import pooled_risk
 
 
@@ -254,3 +254,77 @@ def test_real_baseline_backend_runs() -> None:
     assert report.delta_by_backend["consensus-pwm-baseline"][0] == pytest.approx(0.0)
     # Adding a canonical donor raises risk -> negative baseline delta.
     assert report.delta_by_backend["consensus-pwm-baseline"][1] < 0.0
+
+
+# --------------------------------------------------------------------------
+# A backend whose scores never clear the pooling background
+
+
+class _SubBackgroundPredictor:
+    """Scores every position below 0.5, responding to sequence content — like Pangolin.
+
+    Measured on the designed-CDS panel with the hash-verified weights, Pangolin's peak
+    per-position score was 0.323 to 0.445 and varied more than twofold between a native
+    CDS and its synonymous redesigns. Every one of those pooled to a risk of exactly
+    zero. This stub reproduces that regime without needing the licensed weights: the
+    scores differ per sequence, and none of them reaches the background.
+    """
+
+    name = "sub-background-stub"
+    calibrated = False
+    top_k = 3
+
+    def score_sequence(self, dna: str) -> SpliceResult:
+        # Content-dependent and strictly inside (0, 0.5): GC fraction scaled down.
+        gc = sum(1 for base in dna.upper() if base in "GC") / max(len(dna), 1)
+        peak = 0.05 + 0.4 * gc
+        return SpliceResult(
+            donor=(peak, peak * 0.9, peak * 0.8),
+            acceptor=(0.0, 0.0, 0.0),
+            model_name=self.name,
+            calibrated=False,
+        )
+
+    def delta_splicing(self, designed_dna: str, reference_dna: str) -> float:
+        return pooled_risk(self.score_sequence(reference_dna), self.top_k) - pooled_risk(
+            self.score_sequence(designed_dna), self.top_k
+        )
+
+
+def test_a_sub_background_backend_reports_zero_deltas_and_says_why() -> None:
+    """The defect's shape: real per-sequence differences, reported as none."""
+    predictor = _SubBackgroundPredictor()
+    # Distinct GC fractions, so this stub's scores genuinely differ per candidate.
+    candidates = ["ATGGCCGCCGCC", "ATGAAATTTAAA", "ATGGCCAAATTT"]
+    report = backend_agreement([predictor], candidates, "ATGAAAGGGTTT")
+
+    # The shipped risk deltas are all exactly zero...
+    assert report.delta_by_backend[predictor.name] == (0.0, 0.0, 0.0)
+    # ...and the report now says that is the pooling, not the model.
+    assert report.n_sub_background[predictor.name] == len(candidates) + 1
+    assert report.degenerate(predictor.name) is True
+    # The peak that was discarded is carried, so "0.001" and "0.44" stay distinct.
+    assert 0.0 < report.max_score_by_backend[predictor.name] < 0.5
+    # And the background-free response does separate the candidates.
+    responses = report.response_by_backend[predictor.name]
+    assert len(set(responses)) == len(candidates)
+
+
+def test_a_backend_above_background_is_not_reported_as_degenerate() -> None:
+    """The diagnostic must not fire on the case it exists to distinguish from.
+
+    The shipped PWM baseline scores a real donor consensus well above 0.5, so its
+    pooled risk is a measurement and its zeros — where it has any — are real.
+    """
+    predictor = ConsensusPwmSplicePredictor()
+    with_site = "ATGGTAAGTACCGGCGTAAGTGCC"
+    report = backend_agreement([predictor], [with_site, "ATGAAACCCTTT"], "ATGAAACCCTTT")
+    assert report.n_sub_background[predictor.name] < report.n_candidates + 1
+    assert report.degenerate(predictor.name) is False
+
+
+def test_degenerate_is_false_when_the_diagnostic_was_not_collected() -> None:
+    """Deltas supplied precomputed carry no evidence — and absence is not soundness."""
+    report = agreement_from_deltas({"a": (0.0, 0.0), "b": (0.0, 0.0)})
+    assert report.n_sub_background == {}
+    assert report.degenerate("a") is False

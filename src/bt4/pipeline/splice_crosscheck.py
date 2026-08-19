@@ -37,7 +37,7 @@ from bt4.biomodels.splice.base import (
     DEFAULT_TOP_K,
     SplicePredictor,
     SpliceResult,
-    pooled_risk,
+    pooled_risk_detail,
 )
 from bt4.biomodels.splice.baseline import ConsensusPwmSplicePredictor
 from bt4.biomodels.splice.pangolin import PangolinSplicePredictor
@@ -130,6 +130,12 @@ class SpliceCrossCheck:
             offline / hash-pinned backends.
         threshold: The localization threshold used for dense-track backends.
         top_k: The pooling depth used for :attr:`pooled_risk`.
+        risk_floored: ``True`` when no position exceeded :attr:`threshold`, so
+            :attr:`pooled_risk` is zero *by construction* rather than by measurement.
+            Always ``False`` when the backend was unavailable -- nothing was scored, so
+            nothing was floored.
+        max_site_score: The highest per-position score seen, or ``0.0`` when the
+            backend was unavailable. The magnitude a floored zero discarded.
         pooled_risk: The whole-sequence pooled top-k splice risk (``0.0`` when
             unavailable). Larger means more predicted risk.
         sites: The localized / classified splice sites (empty when unavailable),
@@ -146,6 +152,8 @@ class SpliceCrossCheck:
     top_k: int
     pooled_risk: float
     sites: tuple[CrossCheckSite, ...]
+    risk_floored: bool = False
+    max_site_score: float = 0.0
 
 
 def resolve_splice_backend(name: str) -> SplicePredictor:
@@ -280,7 +288,10 @@ def run_splice_crosscheck(
     network_derived = bool(getattr(pred, "network_derived", False))
     try:
         result = pred.score_sequence(seq)
-        pooled = pooled_risk(result, top_k)
+        # Pool against the SAME operating point the sites are localized at. With the
+        # two decoupled, a caller lowering `--threshold` saw sites reported at 0.35
+        # while the pooled risk that is supposed to summarize them stayed exactly zero.
+        pooled = pooled_risk_detail(result, top_k, background=threshold)
         sites = _sites_from_predictor(pred, result, seq, threshold)
     except _DEGRADE_ERRORS as exc:
         return SpliceCrossCheck(
@@ -304,6 +315,8 @@ def run_splice_crosscheck(
         network_derived=network_derived,
         threshold=threshold,
         top_k=top_k,
-        pooled_risk=pooled,
+        pooled_risk=pooled.risk,
+        risk_floored=pooled.below_background,
+        max_site_score=pooled.max_score,
         sites=sites,
     )

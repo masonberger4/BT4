@@ -30,10 +30,15 @@ numpy); it depends only on the :class:`SplicePredictor` protocol and
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from bt4.biomodels._stats import pearson, spearman
-from bt4.biomodels.splice.base import DEFAULT_TOP_K, SplicePredictor, pooled_risk
+from bt4.biomodels.splice.base import (
+    DEFAULT_SITE_PROBABILITY,
+    DEFAULT_TOP_K,
+    SplicePredictor,
+    pooled_risk_detail,
+)
 
 __all__ = [
     "AgreementReport",
@@ -64,6 +69,27 @@ class AgreementReport:
         sign_epsilon: The magnitude below which a Delta-splicing is treated as
             zero for the sign-agreement count.
         n_candidates: Number of candidates scored.
+        response_by_backend: For each backend, the same per-candidate Delta computed
+            from the **background-free** :func:`~bt4.biomodels.splice.base.pool_top_k_logit`
+            instead of the hinged pooled risk. Empty when the deltas were supplied
+            precomputed (:func:`agreement_from_deltas` cannot recover it). See
+            :attr:`n_sub_background` for why it is carried at all: when every position
+            of every sequence falls below the pooling background, ``delta_by_backend``
+            is a vector of exact zeros and this is the only thing left that separates
+            the candidates. It is **not a risk** and carries no operating point --
+            usable for ranking, never for a claim about how spliceogenic a sequence is.
+        n_sub_background: For each backend, how many of the scored sequences (the
+            reference plus every candidate) had **no** position above the pooling
+            background. When this equals ``n_candidates + 1`` the backend's entire
+            ``delta_by_backend`` vector is zero *by construction*, so its
+            :attr:`rank_correlations` and its contribution to :attr:`sign_agreement`
+            are statistics over constants and mean nothing. Empty when the deltas were
+            supplied precomputed.
+        max_score_by_backend: For each backend, the highest per-position score seen
+            anywhere across the reference and every candidate. The magnitude a floored
+            zero discarded: ``0.44`` and ``0.001`` both pool to a risk of ``0.0`` and
+            mean entirely different things. Empty when the deltas were supplied
+            precomputed.
     """
 
     backends: tuple[str, ...]
@@ -72,6 +98,21 @@ class AgreementReport:
     sign_agreement: float
     sign_epsilon: float
     n_candidates: int
+    response_by_backend: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    n_sub_background: dict[str, int] = field(default_factory=dict)
+    max_score_by_backend: dict[str, float] = field(default_factory=dict)
+
+    def degenerate(self, backend: str) -> bool:
+        """``True`` when ``backend``'s deltas are all zero because pooling floored them.
+
+        Distinguishes "this backend does not respond to synonymous change" from "this
+        backend responds and BT4 discarded the response" -- which, measured on
+        designed CDS, is what actually happens. Returns ``False`` when the diagnostic
+        was not collected (deltas supplied precomputed), because absence of evidence is
+        not evidence the deltas are sound.
+        """
+        n_sub = self.n_sub_background.get(backend)
+        return n_sub is not None and n_sub == self.n_candidates + 1
 
 
 def _sign(value: float, epsilon: float) -> int:
@@ -142,6 +183,7 @@ def backend_agreement(
     reference: str,
     *,
     top_k: int | None = None,
+    background: float = DEFAULT_SITE_PROBABILITY,
     sign_epsilon: float = 1e-9,
 ) -> AgreementReport:
     """Compare splice backends over ``candidates`` scored against ``reference``.
@@ -161,6 +203,10 @@ def backend_agreement(
             :data:`~bt4.biomodels.splice.base.DEFAULT_TOP_K`); when set, every
             backend is pooled at this ``top_k`` uniformly. Either way the reference
             is scored once per backend and reused across candidates.
+        background: The pooling background for the *risk* deltas, defaulting to BT4's
+            shared operating point. It does not touch ``response_by_backend``, which is
+            background-free by construction -- so moving it cannot change the ranking
+            signal, only the risk one.
         sign_epsilon: Dead-band around zero for sign agreement.
 
     Returns:
@@ -179,6 +225,9 @@ def backend_agreement(
         raise ValueError(f"backend names must be distinct, got {names}")
 
     delta_by_backend: dict[str, tuple[float, ...]] = {}
+    response_by_backend: dict[str, tuple[float, ...]] = {}
+    n_sub_background: dict[str, int] = {}
+    max_score_by_backend: dict[str, float] = {}
     for predictor in predictors:
         # Pool at `top_k` when overridden, else at the backend's own depth (its
         # `top_k` attribute, or DEFAULT_TOP_K if it exposes none). The contract
@@ -187,14 +236,33 @@ def backend_agreement(
         # delta_splicing per candidate -- while avoiding re-running the reference
         # through a heavy CNN C times (CLAUDE.md section 7, "everything incremental").
         depth = top_k if top_k is not None else getattr(predictor, "top_k", DEFAULT_TOP_K)
-        ref_risk = pooled_risk(predictor.score_sequence(reference), depth)
-        deltas = [
-            ref_risk - pooled_risk(predictor.score_sequence(cand), depth)
+        # `pooled_risk_detail` computes exactly `pooled_risk` and returns it as `.risk`,
+        # so the deltas below are unchanged; the extra fields ride along free from the
+        # same already-computed scores. That matters here specifically: this function
+        # is the one place holding every backend's per-position scores for the whole
+        # panel, so it is the only place that can tell a zero delta caused by agreement
+        # from one caused by the pooling hinge -- and on designed CDS it is the second.
+        ref = pooled_risk_detail(predictor.score_sequence(reference), depth, background=background)
+        pooled = [
+            pooled_risk_detail(predictor.score_sequence(cand), depth, background=background)
             for cand in candidates
         ]
-        delta_by_backend[predictor.name] = tuple(deltas)
+        delta_by_backend[predictor.name] = tuple(ref.risk - p.risk for p in pooled)
+        response_by_backend[predictor.name] = tuple(ref.response - p.response for p in pooled)
+        n_sub_background[predictor.name] = sum(
+            1 for detail in (ref, *pooled) if detail.below_background
+        )
+        max_score_by_backend[predictor.name] = max(
+            (detail.max_score for detail in (ref, *pooled)), default=0.0
+        )
 
-    return agreement_from_deltas(delta_by_backend, sign_epsilon=sign_epsilon)
+    report = agreement_from_deltas(delta_by_backend, sign_epsilon=sign_epsilon)
+    return replace(
+        report,
+        response_by_backend=response_by_backend,
+        n_sub_background=n_sub_background,
+        max_score_by_backend=max_score_by_backend,
+    )
 
 
 # --------------------------------------------------------------------------
