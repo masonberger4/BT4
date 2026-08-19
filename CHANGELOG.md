@@ -29,6 +29,13 @@ its first tagged release.
   - **Float dust defeated combined-track detection.** `_is_combined` tested exact
     `== 0.0`, so an acceptor channel carrying `1e-12` was scored with a donor/acceptor
     split — the exact artifact the collapse prevents, and silently.
+  - **Sites too close to a window edge were scored as silent forced misses.** A donor at
+    position 0 carries a real `GT`, so the motif check passes and the panel is accepted —
+    but no backend has flanking sequence there, so the PWM returns exactly `0.0`. That is
+    a `label=1` case the model structurally cannot get right, depressing every metric
+    through no fault of its own. `SplicePanel.edge_sites()` now reports them and the
+    runner notes the count, because nothing is wrong with the panel's *labels* and the
+    cure is a wider window rather than a dropped site.
   - **A silent backend was credited with perfect alignment.** The alignment probe's
     tie-break resolved a flat window to offset 0, so a backend emitting no signal read as
     "anchors agree" — a positive claim from an absence of evidence, in the one diagnostic
