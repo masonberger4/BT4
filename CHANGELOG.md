@@ -7,6 +7,16 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Changed
+- **`bt4 variant-gate` now states the published anchor's panel composition.** It printed
+  Smith & Kitzman's 0.419 / 0.773 beside the run's own figures without saying that the
+  published number is a *median across tools* pooled over **all six** of their datasets
+  — while the converter excludes MLH1 by default, so a default run is five datasets and
+  3,616 variants against an anchor computed on 3,912. Two numbers printed side by side
+  imply a comparability that was not there. The output now names both reasons a single
+  tool will not match, points at `--include-mlh1` for a like-for-like composition, and
+  says plainly that only the **gap** is meant to be compared directly.
+
 ### Added
 
 - **`bt4 variant-gate`** — runs the splice gate on a measured variant panel. The variant

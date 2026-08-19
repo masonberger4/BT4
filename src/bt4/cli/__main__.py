@@ -801,13 +801,20 @@ def _cmd_variant_gate(args: argparse.Namespace) -> int:
 
     # The published anchor this panel exists to reproduce.
     by_name = {s.name: s.pr_auc for s in report.strata}
+    n_rows, n_groups = len(panel.rows), len(panel.groups)
     if {"exonic", "intronic"} <= set(by_name):
-        print("Smith & Kitzman 2023 report a median across eight tools of")
+        print("Smith & Kitzman 2023 report, as a MEDIAN ACROSS TOOLS pooled over ALL SIX")
+        print("of their datasets (MLH1 included):")
         print(f"  exonic  0.419   (this run: {by_name['exonic']:.3f})")
         print(f"  intronic 0.773  (this run: {by_name['intronic']:.3f})")
-        print("A single tool will not equal the eight-tool median, but the exonic figure")
-        print("should sit well BELOW the intronic one. If it does not, suspect the panel")
-        print("build before the model.")
+        print()
+        print("Two reasons a single number here will not equal that one, and only the")
+        print("GAP is meant to be compared directly:")
+        print("  * it is a median over several tools, so a strong tool sits above it;")
+        print(f"  * this panel has {n_rows} variants over {n_groups} gene(s). The published")
+        print("    figure pools six datasets; --include-mlh1 makes the composition match.")
+        print("What must hold either way: the exonic figure sits well BELOW the intronic")
+        print("one. If it does not, suspect the panel build before the model.")
     print()
     print(f"gate passed (thresholds) : {report.passed}")
     for reason in report.reasons:
