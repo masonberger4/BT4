@@ -1075,7 +1075,12 @@ def _parser() -> argparse.ArgumentParser:
              "prevalence. NOT comparable across panels -- it still moves with how the "
              "negatives were sampled, which is why --negative-construction is required",
     )
-    p_sgate.add_argument("--max-ece", type=float, default=1.0, dest="max_ece")
+    p_sgate.add_argument(
+        "--max-ece", type=float, default=1.0, dest="max_ece",
+        help="per-stratum calibration ceiling. Reported, but NOT a bar on its own: a "
+             "base-rate predictor scores ECE 0.0 at splice prevalence, so declaring "
+             "only this leaves the run un-promotable. Pair it with --min-pr-auc-skill",
+    )
     p_sgate.add_argument("--bins", type=int, default=10, help="reliability bins")
     p_sgate.add_argument("--seed", type=int, default=0)
     p_sgate.set_defaults(func=_cmd_splice_gate)
