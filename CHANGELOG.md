@@ -8,6 +8,32 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **The variant half of the splice gate is reachable from data.**
+  `SpliceVariantCase` shipped with no way to construct one, which left the exonic /
+  intronic task — the one that matters most for BT4, since it designs coding sequence —
+  unusable.
+  - **`bt4.api.read_variant_panel`** (`biomodels/splice/variant_panel.py`) — a
+    tab-separated format where every column beyond `variant_id`/`group`/`region`/`label`
+    is read as a **named score column**, so a benchmark's own pre-computed predictions
+    come through as data rather than needing a schema change. `panel.cases(column)`
+    selects one.
+  - A score column with **gaps is refused**, not silently scored on its covered subset:
+    a tool that did not cover every variant is a real situation, and quietly dropping the
+    rows it missed while reporting the panel's name is the dishonest response to it.
+  - **Held-out status is checkable, and usually fails.** Each row may declare its gene's
+    chromosome; `training_overlap` / `held_out` report what the run can support, and a
+    gene with no declared chromosome is *unknown* rather than clean.
+  - **`scripts/make_splicebench_variant_panel.py`** converts `kitzmanlab/splicebench2023`
+    (MIT, 3,616 variants, already scored by eight tools). It maps `sdv_fc2` → label and
+    `exon` → region, keeps masked and unmasked scores as **separate** columns so that
+    choice stays at gate time, stamps each gene's chromosome, and excludes the separate
+    296-variant MLH1 clinical set unless asked — 3,616 and 3,912 are both true about
+    different things.
+  - This makes the cheapest real check available: gate the benchmark's own scores, with
+    no model installed, and confirm BT4 reproduces the published 0.419/0.773 split. If it
+    does not, the defect is in BT4.
+
+### Added
 - **`scripts/make_gencode_splice_panel.py` — the site-prediction panel, built rather than
   hand-assembled.** Turns a pinned GENCODE v44 + GRCh38 into the format
   `bt4.api.read_splice_panel` reads, with the position convention correct by construction.
