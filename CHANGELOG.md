@@ -7,6 +7,28 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **`docs/REVIEW_splice_calibration.md` records the SpliceAI run and the first
+  two-backend agreement measurement**, so all three panel20 results are in the repo
+  rather than a chat log.
+  - **Like-for-like on the shared task** (`--combined-track on`): Pangolin **0.983** vs
+    SpliceAI **0.965** skill, 0.940 vs 0.907 top-k. The **top-k gap (0.033) reproduces
+    the published one (0.040)** even though both absolute levels are inflated by an easy
+    panel; the AP gap is compressed because both sit near ceiling there.
+  - **Separating cost SpliceAI nothing** — its combined figures are the exact mean of its
+    separated pair to three decimals, so its kind discrimination is effectively perfect.
+    The comparability caveat added in the previous change is right in principle and its
+    measured magnitude here is **nil**; an earlier draft implied otherwise.
+  - **Agreement: Jaccard 0.855**, and of 333 sites both find 300, only Pangolin 15, only
+    SpliceAI 6, **neither 12**. Running both is not redundant — 21 sites (6.3%) are found
+    by exactly one model — but the 12 both miss are a **correlated blind spot**, which is
+    the standing limit on agreement as an uncertainty signal: it bounds independent
+    error, not shared error.
+  - Records an open question rather than resolving it: **7 positions both models call are
+    not annotated sites**, and on a MANE-Select-only panel those are as plausibly genuine
+    non-MANE isoform sites as shared false positives. The two readings have opposite
+    implications and this panel cannot separate them.
+
 ### Fixed
 - **Two consecutive `splice-gate` runs invited a comparison their numbers do not
   support, and nothing said so.** Pangolin emits one combined `P(splice)` track and is

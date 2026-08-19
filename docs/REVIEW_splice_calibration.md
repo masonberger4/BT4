@@ -145,7 +145,9 @@ Both are **fully held out**: groups are chr1/3/5/7, none of which either model t
 on. Motif consistency **100%** on both — every annotated site carries its canonical
 GT/AG, and none of these genes has a minor-spliceosome intron.
 
-## Results — `panel20.tsv`, Pangolin, `--cnn-anchors`
+## Results — `panel20.tsv`, `--cnn-anchors`
+
+### Pangolin (one combined track)
 
 | | AP | skill | ROC | top-k | ECE |
 |---|---|---|---|---|---|
@@ -159,6 +161,84 @@ Bar declared **before** the run: `--min-pr-auc-skill 0.75`. All four conditions 
 the run reports `PROMOTABLE on this panel: True` — **the first time any BT4 splice
 backend has reached that state.** It is not a promotion, and §"What this does not
 establish" below is the reason.
+
+### SpliceAI, and the comparison that needed making comparable
+
+SpliceAI emits separate donor and acceptor tracks, so its default run scores **two**
+strata against Pangolin's one — a different, harder task, because in the donor stratum
+an acceptor site is a *negative*. Putting those figures side by side is the comparison
+two consecutive gate runs invite and do not support; `--combined-track on` (added for
+this) scores it on the shared task.
+
+| run | stratum | skill | top-k | ECE |
+|---|---|---|---|---|
+| SpliceAI, default | acceptor | 0.969 | 0.910 | 0.000 |
+| SpliceAI, default | donor | 0.961 | 0.904 | 0.000 |
+| **SpliceAI, `--combined-track on`** | splice | **0.965** | **0.907** | 0.000 |
+| **Pangolin** | splice | **0.983** | **0.940** | 0.050 |
+
+**Separating cost SpliceAI nothing.** The combined figures are the exact mean of the
+separated pair to three decimals — skill `(0.969+0.961)/2 = 0.965`, top-k
+`(0.910+0.904)/2 = 0.907` — so its kind discrimination is effectively perfect: its donor
+track is already near zero at acceptor sites. The comparability caveat is still right in
+principle; its measured magnitude here is nil, and an earlier draft of this document
+implied otherwise.
+
+**The between-model gap reproduces the published one where the metric has room.**
+
+| | observed | published (Zeng & Li 2022) |
+|---|---|---|
+| top-k gap | **0.033** (0.940 − 0.907) | 0.040 (79% − 75%) |
+| AP gap | 0.018 (0.983 − 0.965) | 0.080 (0.85 − 0.77) |
+
+Both absolute levels sit far above published, as §"What this does not establish" records
+— but the *ordering* and, on top-k, the *magnitude* are faithful. The AP gap is
+compressed because both models are near ceiling there and average precision has nowhere
+left to go, while top-k at 0.94/0.91 still does.
+
+An internal check that had to hold and did: `pwm` scores **0.096 / 0.159 / 0.080** and
+`gt_ag` **0.003** in *both* combined runs, identical, because the baselines are
+sequence-derived and backend-independent. `permutation` differs (ROC 0.482 vs 0.509),
+correctly — it shuffles the *head's* scores, so a different head gives a different null.
+
+### Two-backend agreement — do they point at the same bases?
+
+`bt4 splice-agreement`, both CNNs over the same panel. Neither gate report above can
+answer this: two backends can each score ~0.97 while being confident about different
+positions.
+
+| | |
+|---|---|
+| Jaccard of called positions | **0.855** (307 shared of 359 union) |
+| Spearman over called positions | 0.820 |
+
+| annotated site recovered by | count | of 333 |
+|---|---|---|
+| both backends | 300 | 90.1% |
+| only Pangolin | 15 | 4.5% |
+| only SpliceAI | 6 | 1.8% |
+| **neither** | **12** | **3.6%** |
+
+Recall implied by the 2×2 — Pangolin 315/333 = **94.6%**, SpliceAI 306/333 = **91.9%** —
+tracks the gate's top-k (0.940, 0.907) as it should, the small differences being the two
+metrics' different denominators.
+
+**Running both is not redundant.** On **21 sites (6.3%)** exactly one model finds the
+site. Those are precisely the positions an audit should surface as uncertain, and no
+single-backend run can identify them.
+
+**But agreement is not correctness, and the 12 is the number that shows it.** Two
+independently-trained models miss the *same* 12 sites. Agreement on a miss is a
+**correlated blind spot**, not reassurance — these architectures are similar, their
+training corpora overlap, and both learned from the same style of annotation. That is
+the standing limit on reading cross-backend agreement as an uncertainty signal: it
+bounds *independent* error, not shared error.
+
+**Seven positions both models call are not annotated sites** (307 shared calls, 300 of
+them real). On a MANE-Select-only panel those are as likely to be genuine sites of
+non-MANE isoforms — which this panel scores as negatives — as they are to be shared false
+positives. Worth checking before either reading is adopted; it is a property of the panel
+construction, not a measured model error.
 
 ## What the numbers say
 
@@ -217,8 +297,12 @@ prevalence, and it is why an ECE ceiling was removed from what counts as a decla
 
 ## Still to run
 
-- The **SpliceAI** integration-fidelity gate (needs the CC BY-NC weights and a TF 2.15
-  environment), and the same site-prediction panel scored by SpliceAI — which would give
-  a genuine **two-backend agreement** figure, the first-class uncertainty signal of §6.
-- A panel that reaches BT4's actual regime: designed synonymous CDS variants, where the
-  question is specificity rather than recall.
+- **A panel that reaches BT4's actual regime**: designed synonymous CDS variants, where
+  the question is *specificity* — does a model stay correctly silent on a clean designed
+  CDS, and correctly flag one that creates a cryptic site? Every measurement here is
+  recall on natural sites in natural genes.
+- **Resolve the 7 shared calls that are not annotated sites** — non-MANE isoform sites
+  the panel scores as negatives, or shared false positives. The two readings have
+  opposite implications and the panel as built cannot separate them.
+- Deciding whether the attested-promotion opt-in should become the default, and a Studio
+  checkbox for it.
