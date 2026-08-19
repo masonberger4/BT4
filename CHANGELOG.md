@@ -7,6 +7,22 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **`bt4 splice-gate` now reports which window it is scoring.** A CNN-backed run over a
+  real GENCODE panel takes tens of minutes — the wrapped models read ~10 kb of context
+  per position — and the command printed *nothing* until it finished, which is
+  indistinguishable from a hang. Two real runs were interrupted or queried on exactly
+  that ambiguity before this was added.
+  - `score_splice_panel` / `run_splice_panel_gate` take an optional `progress`
+    callback, `(index, total, window_id, length)`, invoked **before** each window so the
+    one being waited on is the one named. `None` is the default, keeping the API
+    print-free (§3: only `cli` prints).
+  - It carries the window's **length** because that, not the count, is what the
+    remaining wait is proportional to: windows are whole gene spans and vary by more
+    than an order of magnitude, so "12/20" alone predicts nothing.
+  - The CLI writes it to **stderr**, so the report on stdout stays pipeable, and
+    `--quiet` turns it off.
+
 ### Fixed
 - **An ECE ceiling was accepted as a pre-registered bar, and it is a bar nothing can
   fail.** The first real GENCODE site-prediction run exposed it: at that panel's

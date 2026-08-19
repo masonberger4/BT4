@@ -691,6 +691,21 @@ def _resolve_anchor_offsets(args: argparse.Namespace) -> int | dict[str, int]:
     return offsets
 
 
+def _splice_gate_progress(index: int, total: int, window_id: str, length: int) -> None:
+    """Report which window is being scored, to stderr.
+
+    A wrapped CNN reads ~10 kb of context per position, so a real panel runs for tens of
+    minutes with nothing to distinguish it from a hang. This goes to **stderr** so the
+    report on stdout stays pipeable, and it names the window's length because that -- not
+    the count -- is what the remaining wait is proportional to.
+    """
+    print(
+        f"  scoring {index}/{total}  {window_id}  ({length:,} nt)",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def _cmd_splice_gate(args: argparse.Namespace) -> int:
     """Run the splice acceptance gate over an annotated panel and print the verdict."""
     panel = api.read_splice_panel(
@@ -711,6 +726,7 @@ def _cmd_splice_gate(args: argparse.Namespace) -> int:
             seed=args.seed,
         ),
         anchor_offset=_resolve_anchor_offsets(args),
+        progress=None if args.quiet else _splice_gate_progress,
     )
 
     summary = panel.describe()
@@ -1083,6 +1099,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     p_sgate.add_argument("--bins", type=int, default=10, help="reliability bins")
     p_sgate.add_argument("--seed", type=int, default=0)
+    p_sgate.add_argument(
+        "--quiet", action="store_true",
+        help="suppress the per-window scoring progress on stderr. A CNN-backed run takes "
+             "tens of minutes and reports nothing without it; the report on stdout is "
+             "unaffected either way",
+    )
     p_sgate.set_defaults(func=_cmd_splice_gate)
 
     p_vgate = sub.add_parser(

@@ -1117,3 +1117,33 @@ def test_a_baseline_matching_the_heads_ece_is_called_out() -> None:
     assert note, "a baseline matching the head's ECE must be called out"
     for entry in beaten:
         assert entry in note
+
+
+def test_scoring_reports_progress_and_is_silent_by_default() -> None:
+    """A CNN-backed panel runs for tens of minutes; silence is indistinguishable from a
+    hang.
+
+    Reported *before* each window rather than after, so the window being waited on is
+    the one named, and carrying its length because that -- not the count -- is what the
+    remaining wait is proportional to (windows are whole gene spans and vary by more
+    than an order of magnitude).
+    """
+    panel = _hard_panel()
+
+    seen: list[tuple[int, int, str, int]] = []
+    score_splice_panel(panel, "pwm", progress=lambda *call: seen.append(call))
+    assert [entry[0] for entry in seen] == list(range(1, len(panel.windows) + 1))
+    assert all(entry[1] == len(panel.windows) for entry in seen)
+    assert [entry[2] for entry in seen] == [w.window_id for w in panel.windows]
+    assert [entry[3] for entry in seen] == [len(w.sequence) for w in panel.windows]
+
+    # The API default must stay print-free and callback-free (section 3: only `cli`
+    # prints), so a caller that wants nothing gets nothing.
+    score_splice_panel(panel, "pwm")
+
+    # And nothing is scored when results are supplied, so nothing is reported.
+    never: list[object] = []
+    run_splice_panel_gate(
+        panel, "pwm", results=_oracle(panel), progress=lambda *call: never.append(call)
+    )
+    assert never == []

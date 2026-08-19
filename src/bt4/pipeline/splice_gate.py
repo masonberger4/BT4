@@ -46,7 +46,7 @@ fidelity attestation -- a different gate answering a different question.
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from bt4.biomodels.splice.base import DEFAULT_SITE_PROBABILITY, SpliceResult
@@ -70,12 +70,22 @@ __all__ = [
     "SPLICE_BASELINES",
     "AlignmentDiagnostic",
     "KindAlignment",
+    "ProgressCallback",
     "SpliceGateComparison",
     "SpliceGateSettings",
     "baseline_predictions",
     "run_splice_panel_gate",
     "score_splice_panel",
 ]
+
+ProgressCallback = Callable[[int, int, str, int], None]
+"""``(index, total, window_id, length)`` -- reported before each window is scored.
+
+``index`` is 1-based. ``length`` is the window's nucleotide count, which is what the
+wait is actually proportional to: windows are whole gene spans and vary by more than
+an order of magnitude, so "12/20" alone does not predict the remaining time and the
+length is what tells a reader a 2 Mb gene is next."""
+
 
 SPLICE_BASELINES: tuple[str, ...] = ("permutation", "gt_ag", "pwm", "constant")
 """Baselines a splice backend must beat. Kept permanently: a control that disappears
@@ -401,7 +411,12 @@ def _is_combined(results: Sequence[SpliceResult]) -> bool:
     )
 
 
-def score_splice_panel(panel: SplicePanel, backend: str) -> list[SpliceResult]:
+def score_splice_panel(
+    panel: SplicePanel,
+    backend: str,
+    *,
+    progress: ProgressCallback | None = None,
+) -> list[SpliceResult]:
     """Score every window with ``backend``, in panel order.
 
     Args:
@@ -409,6 +424,13 @@ def score_splice_panel(panel: SplicePanel, backend: str) -> list[SpliceResult]:
         backend: A splice backend name (``"pwm"``, ``"pangolin"``, ``"spliceai"``).
             Resolved through :func:`~bt4.pipeline.splice_crosscheck.resolve_splice_backend`,
             so a committed attestation is honored only under the standing opt-in.
+        progress: Called **before** each window is scored, as
+            ``(index, total, window_id, length)`` with a 1-based ``index``. A real panel
+            takes tens of minutes on a CPU -- a wrapped CNN reads ~10 kb of context per
+            position -- and reporting nothing for that long is indistinguishable from
+            hanging. Reporting *before* rather than after means the slow window is named
+            while it is the one being waited on. ``None`` is silent, so the API default
+            stays print-free (section 3: only ``cli`` prints).
 
     Returns:
         One :class:`~bt4.biomodels.splice.base.SpliceResult` per window.
@@ -417,7 +439,13 @@ def score_splice_panel(panel: SplicePanel, backend: str) -> list[SpliceResult]:
         ValueError: On an unknown backend name.
     """
     predictor = resolve_splice_backend(backend)
-    return [predictor.score_sequence(window.sequence) for window in panel.windows]
+    total = len(panel.windows)
+    results: list[SpliceResult] = []
+    for index, window in enumerate(panel.windows, start=1):
+        if progress is not None:
+            progress(index, total, window.window_id, len(window.sequence))
+        results.append(predictor.score_sequence(window.sequence))
+    return results
 
 
 def _positive_indices(
@@ -674,6 +702,7 @@ def run_splice_panel_gate(
     anchor_offset: int | Mapping[str, int] = 0,
     combined_track: bool | None = None,
     results: Sequence[SpliceResult] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> SpliceGateComparison:
     """Score ``panel`` with ``backend``, gate it, gate every baseline, and compare.
 
@@ -696,6 +725,8 @@ def run_splice_panel_gate(
             (``False``). ``None`` detects it from the backend's own output.
         results: Pre-computed per-window scores, to gate a panel without re-running a
             heavy model (or to evaluate a backend this registry cannot construct).
+        progress: Forwarded to :func:`score_splice_panel`; ignored when ``results`` is
+            supplied, since nothing is scored then. ``None`` is silent.
 
     Returns:
         A :class:`SpliceGateComparison`. **This function flips nothing.**
@@ -713,7 +744,7 @@ def run_splice_panel_gate(
 
     notes: list[str] = []
     if results is None:
-        scored = score_splice_panel(panel, backend)
+        scored = score_splice_panel(panel, backend, progress=progress)
         probe = resolve_splice_backend(backend)
         name, calibrated = probe.name, probe.calibrated
     else:
