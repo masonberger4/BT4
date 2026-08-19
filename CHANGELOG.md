@@ -7,6 +7,21 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **Two consecutive `splice-gate` runs invited a comparison their numbers do not
+  support, and nothing said so.** Pangolin emits one combined `P(splice)` track and is
+  scored as a single `splice` stratum; SpliceAI emits separate donor and acceptor tracks
+  and is scored as two. On the same GENCODE panel that reads as Pangolin **0.983** against
+  SpliceAI **0.969 / 0.961** — and the natural conclusion is wrong, because a
+  kind-separated stratum treats **the other kind's sites as negatives**: the backend must
+  locate the site *and* get its kind right. Separated is the harder task, so setting it
+  beside a combined figure understates it.
+  - A separated run now carries a note saying exactly that, mirroring the one a combined
+    run already had, and naming the flag that fixes it.
+  - **`--combined-track {auto,on,off}`** exposes the stratification the pipeline already
+    supported but the CLI could not reach, so a two-track backend can be scored on the
+    same task a one-track backend solves and the two numbers become like-for-like.
+
 ### Added
 - **`bt4 splice-agreement` — do two backends call the same *positions*?** §6 names
   cross-backend agreement a first-class uncertainty signal, and `backend_agreement`

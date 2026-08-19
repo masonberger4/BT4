@@ -769,6 +769,22 @@ def run_splice_panel_gate(
             "scored as a single 'splice' stratum rather than crediting it with an "
             "acceptor prediction it does not make"
         )
+    else:
+        # The mirror of the note above, and the one a reader actually needs. A
+        # kind-separated run solves a HARDER problem than a combined one: in the donor
+        # stratum an acceptor site is a negative, so the backend must locate the site
+        # AND get its kind right. Setting a separated backend's number beside a
+        # combined backend's single figure therefore understates the separated one --
+        # and nothing in the table says so, which is exactly the comparison two
+        # consecutive gate runs invite.
+        notes.append(
+            "this backend emits separate donor and acceptor tracks, so each kind is its "
+            "own stratum -- and in the donor stratum an ACCEPTOR site is a negative, "
+            "which is a harder task than a single combined 'is this a site at all'. "
+            "These figures are therefore NOT comparable with a combined-track backend's "
+            "single number; pass combined_track=True (CLI: --combined-track on) to score "
+            "this backend on the same task and get a like-for-like figure"
+        )
 
     edge = panel.edge_sites()
     if edge:

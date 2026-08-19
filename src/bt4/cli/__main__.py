@@ -763,6 +763,7 @@ def _cmd_splice_gate(args: argparse.Namespace) -> int:
             seed=args.seed,
         ),
         anchor_offset=_resolve_anchor_offsets(args),
+        combined_track={"auto": None, "on": True, "off": False}[args.combined_track],
         progress=None if args.quiet else _splice_gate_progress,
     )
 
@@ -1133,6 +1134,16 @@ def _parser() -> argparse.ArgumentParser:
         help="per-stratum calibration ceiling. Reported, but NOT a bar on its own: a "
              "base-rate predictor scores ECE 0.0 at splice prevalence, so declaring "
              "only this leaves the run un-promotable. Pair it with --min-pr-auc-skill",
+    )
+    p_sgate.add_argument(
+        "--combined-track", choices=["auto", "on", "off"], default="auto",
+        dest="combined_track",
+        help="how to stratify. 'auto' detects it from the backend's own output. Use "
+             "'on' to score a two-track backend (SpliceAI) on the SAME combined task a "
+             "one-track backend (Pangolin) solves -- without it the two backends' "
+             "numbers answer different questions and must not be set side by side, "
+             "because a kind-separated stratum treats the other kind's sites as "
+             "negatives and is the harder problem",
     )
     p_sgate.add_argument("--bins", type=int, default=10, help="reliability bins")
     p_sgate.add_argument("--seed", type=int, default=0)
