@@ -8,6 +8,21 @@ its first tagged release.
 ## [Unreleased]
 
 ### Changed
+- **`bt4 variant-gate` no longer claims the exonic/intronic *gap* is comparable to the
+  published one.** The previous wording said "only the GAP is meant to be compared
+  directly". Measured against the real benchmark, it is not: a single tool sits above a
+  median-over-tools on both strata and by more on the harder one, which **compresses**
+  the gap — 0.266 observed against 0.354 published. Only the **ordering** is comparable,
+  and that is the finding that matters.
+  - The panel-composition hypothesis was tested and **refuted**: matching the published
+    six-dataset composition with `--include-mlh1` moved both figures *further* from the
+    published pair (exonic 0.535 → 0.575, intronic 0.777 → 0.841), because MLH1's
+    variants are easier than average. The output now says so rather than implying the
+    flag would close the gap.
+  - Notes that an exact reproduction *is* possible — the archive carries all eight tools'
+    scores — and that it needs the other six mapped in.
+
+### Changed
 - **`bt4 variant-gate` now states the published anchor's panel composition.** It printed
   Smith & Kitzman's 0.419 / 0.773 beside the run's own figures without saying that the
   published number is a *median across tools* pooled over **all six** of their datasets
