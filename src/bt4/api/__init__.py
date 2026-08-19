@@ -49,6 +49,7 @@ from bt4.biomodels.splice import (
     read_splice_panel,
     read_variant_panel,
     variant_panel_from_rows,
+    verify_splice_gate,
 )
 from bt4.biomodels.splice import (
     MIN_MOTIF_CONSISTENCY as MIN_SPLICE_MOTIF_CONSISTENCY,
@@ -237,6 +238,7 @@ __all__ = [
     "validate",
     "validate_protein",
     "variant_panel_from_rows",
+    "verify_splice_gate",
     "write_genbank",
     "write_table",
 ]

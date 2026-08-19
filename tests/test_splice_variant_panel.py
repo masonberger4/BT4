@@ -289,3 +289,88 @@ def test_reader_treats_an_empty_score_cell_as_uncovered(tmp_path: Path) -> None:
     assert len(panel.cases("pangolin_masked")) == 2
     with pytest.raises(ValueError, match="missing for 1 of 2 rows"):
         panel.cases("spliceai_masked")
+
+
+# --------------------------------------------------------------------------
+# The CLI surface
+
+
+def _write_cli_panel(tmp_path: Path) -> str:
+    header = "variant_id\tgroup\tregion\tlabel\tchromosome\tspliceai_masked"
+    lines = [header]
+    for gene, chrom in (("BRCA1", "17"), ("POU1F1", "3")):
+        for i in range(20):
+            sdv = i % 4 == 0
+            region = "exonic" if (i // 4) % 2 == 0 else "intronic"
+            lines.append(
+                f"{gene}_{i}\t{gene}\t{region}\t{'True' if sdv else 'False'}\t{chrom}\t"
+                f"{0.9 if sdv else 0.1}"
+            )
+    path = tmp_path / "variants.tsv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_cli_lists_score_columns_when_none_is_chosen(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Masked and unmasked answer different questions, so the pick is deliberate."""
+    from bt4.cli.__main__ import main
+
+    assert main(["variant-gate", _write_cli_panel(tmp_path), "--negative-construction", _NEG]) == 0
+    out = capsys.readouterr().out
+    assert "spliceai_masked" in out
+    assert "Pick one with --score" in out
+
+
+def test_cli_warns_that_a_training_chromosome_panel_is_optimistic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """BRCA1 is on chr17. Over half of splicebench2023 is in this position."""
+    from bt4.cli.__main__ import main
+
+    assert (
+        main(
+            [
+                "variant-gate",
+                _write_cli_panel(tmp_path),
+                "--negative-construction",
+                _NEG,
+                "--score",
+                "spliceai_masked",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "NOT HELD OUT" in out
+    assert "BRCA1" in out
+    assert "cannot support promotion" in out
+
+
+def test_cli_prints_the_published_anchor_beside_the_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exonic/intronic gap is what this panel exists to let BT4 reproduce."""
+    from bt4.cli.__main__ import main
+
+    main(
+        [
+            "variant-gate",
+            _write_cli_panel(tmp_path),
+            "--negative-construction",
+            _NEG,
+            "--score",
+            "spliceai_masked",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "0.419" in out and "0.773" in out
+    assert "suspect the panel" in out
+
+
+def test_cli_requires_the_negative_construction(tmp_path: Path) -> None:
+    from bt4.cli.__main__ import main
+
+    with pytest.raises(SystemExit):
+        main(["variant-gate", _write_cli_panel(tmp_path)])

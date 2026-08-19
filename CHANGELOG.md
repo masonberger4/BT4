@@ -7,6 +7,15 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **`bt4 variant-gate`** — runs the splice gate on a measured variant panel. The variant
+  half was API-only, so following the runbook meant writing Python; it is now a command.
+  It lists the panel's score columns when none is chosen (masked and unmasked answer
+  different questions), warns when genes sit on chromosomes both models trained on, and
+  prints the published **0.419 exonic / 0.773 intronic** anchor beside the run's own
+  numbers — because reproducing that gap is what the benchmark is for, and a run that
+  does not should be read as a panel-build problem before a model one.
+
 ### Fixed
 - **A second adversarial review, over the ~1,200 lines written since the first, found ten
   more defects — including two the per-kind anchor rewrite introduced.**
