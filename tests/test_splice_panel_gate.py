@@ -624,13 +624,18 @@ def test_a_bare_call_can_never_be_promotable() -> None:
     [
         SpliceGateSettings(min_pr_auc=0.10),
         SpliceGateSettings(min_pr_auc_skill=0.10),
-        SpliceGateSettings(max_ece=0.90),
     ],
 )
-def test_any_one_declared_threshold_counts_as_pre_registration(
+def test_any_one_declared_discrimination_threshold_counts_as_pre_registration(
     settings: SpliceGateSettings,
 ) -> None:
-    """Setting any of the three bars is a deliberate act; one is enough."""
+    """Setting either discrimination bar is a deliberate act; one is enough.
+
+    ``max_ece`` used to be in this list, and that was wrong: measured at real splice
+    prevalence a base-rate predictor scores ECE 0.0, so an ECE ceiling is a condition
+    no predictor can fail. See
+    ``test_an_ece_ceiling_alone_is_not_a_declared_bar``.
+    """
     panel = _hard_panel()
     comparison = run_splice_panel_gate(panel, "pwm", results=_oracle(panel), settings=settings)
     assert comparison.thresholds_declared is True
@@ -1057,3 +1062,58 @@ def test_a_combined_track_reports_its_anchors_per_site_kind() -> None:
     assert {k.kind for k in diagnostic.kinds} == {"donor", "acceptor"}
     assert diagnostic.recommended_offsets == {"donor": -1, "acceptor": 1}
     assert diagnostic.aligned is True
+
+
+def test_an_ece_ceiling_alone_is_not_a_declared_bar() -> None:
+    """`max_ece` is a bar no predictor can fail, so it must not unlock `promotable`.
+
+    Measured at the prevalence of a real GENCODE panel (129 sites in 372,634
+    positions), the `constant` baseline -- which predicts the base rate -- scores ECE
+    **0.000000**, the identical score a *perfect* classifier gets; an all-zero
+    predictor lands at 0.0003. So a run whose only pre-registered condition is an ECE
+    ceiling has registered a condition that cannot fail, which is the same hole as
+    dropping the baseline a backend would lose to. Promotion needs a discrimination bar.
+    """
+    panel = _hard_panel()
+    ece_only = run_splice_panel_gate(
+        panel, "pwm", results=_oracle(panel), settings=SpliceGateSettings(max_ece=0.5)
+    )
+    assert ece_only.thresholds_declared is False
+    assert ece_only.promotable is False
+    assert any("NOT a bar" in note for note in ece_only.notes)
+
+    # The same run with a discrimination bar added is promotable.
+    with_skill = run_splice_panel_gate(
+        panel,
+        "pwm",
+        results=_oracle(panel),
+        settings=SpliceGateSettings(max_ece=0.5, min_pr_auc_skill=0.60),
+    )
+    assert with_skill.thresholds_declared is True
+    assert with_skill.promotable is True
+
+
+def test_a_baseline_matching_the_heads_ece_is_called_out() -> None:
+    """The ECE column sits beside AP and invites being read as evidence. It is not.
+
+    On the first real GENCODE run the `constant` baseline scored ECE 0.000 against
+    Pangolin's 0.050 -- the no-information control was better calibrated than the
+    model -- and nothing in the output said so.
+    """
+    # A REAL head, not the oracle: a perfect classifier is also perfectly calibrated,
+    # so it is the one head no baseline can match on ECE -- exactly the case that would
+    # hide this. The live Pangolin run was a committing, imperfect model, like this one.
+    panel = _hard_panel()
+    comparison = run_splice_panel_gate(panel, "pwm")
+    head_ece = {stratum.name: stratum.ece for stratum in comparison.head.strata}
+    beaten = [
+        f"{name}/{stratum.name}"
+        for name, report in comparison.baselines
+        for stratum in report.strata
+        if stratum.ece <= head_ece[stratum.name] + 1e-9
+    ]
+    assert beaten, "fixture must have at least one baseline at or below the head's ECE"
+    note = next((n for n in comparison.notes if "match or beat" in n), "")
+    assert note, "a baseline matching the head's ECE must be called out"
+    for entry in beaten:
+        assert entry in note

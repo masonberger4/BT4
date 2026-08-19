@@ -8,6 +8,27 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **An ECE ceiling was accepted as a pre-registered bar, and it is a bar nothing can
+  fail.** The first real GENCODE site-prediction run exposed it: at that panel's
+  prevalence (129 sites in 372,634 positions) the `constant` baseline — which predicts
+  the base rate — scored ECE **0.000000**, the identical figure a *perfect* classifier
+  gets, while the backend under test scored 0.050. The no-information control was better
+  calibrated than the model.
+  - `thresholds_declared` now requires a **discrimination** threshold (`min_pr_auc` or
+    `min_pr_auc_skill`). `max_ece` alone leaves a run un-promotable and says why. This is
+    the same hole as dropping the baseline a backend would lose to: a condition that
+    cannot fail is not a pre-registration.
+  - A run whose baselines **match or beat the head's ECE** now says so, naming them,
+    wherever the ECE column could be read as evidence — not only when it was declared as
+    a threshold. ECE rewards predicting the base rate, so at splice prevalence it
+    describes the score distribution and never the quality; the skill column carries the
+    verdict.
+  - The `--max-ece` CLI help now states this rather than presenting the flag as a bar.
+  - A pre-existing test asserted the disproved belief — that any one of the three
+    thresholds counts as pre-registration. It is corrected, with the measurement that
+    superseded it named in its docstring.
+
+### Fixed
 - **`read_splice_panel` could not read a single panel the GENCODE builder produces.**
   Python's `csv` caps one field at 131,072 characters; a splice window is a gene span
   plus 5,000 nt of flank each side, which routinely exceeds that. So BT4's own writer

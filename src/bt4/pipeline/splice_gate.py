@@ -81,6 +81,13 @@ SPLICE_BASELINES: tuple[str, ...] = ("permutation", "gt_ag", "pwm", "constant")
 """Baselines a splice backend must beat. Kept permanently: a control that disappears
 once it is inconvenient was never a control."""
 
+_ECE_TIE = 1e-9
+"""How close two ECEs must be to count as matching, for the note below.
+
+Far above float-summation noise (a base-rate baseline computes 1.1e-16 where an exact
+oracle computes 0.0) and far below any difference that would mean something."""
+
+
 CNN_ANCHOR_OFFSETS: dict[str, int] = {"donor": -1, "acceptor": 1}
 """Where SpliceAI and Pangolin put a site's score, relative to BT4's panel convention.
 
@@ -803,16 +810,52 @@ def run_splice_panel_gate(
     # A bar the caller never set is not a bar that held. The defaults are permissive by
     # design (this module must not bless a threshold), so the honest consequence is that
     # a bare call reports numbers and cannot recommend anything.
-    thresholds_declared = (
-        settings.min_pr_auc > 0.0
-        or settings.min_pr_auc_skill > 0.0
-        or settings.max_ece < 1.0
-    )
+    # `max_ece` deliberately does NOT count. At splice prevalence ECE is not a bar a
+    # backend can fail: the `constant` baseline predicts the base rate, so its ECE is
+    # 0 BY CONSTRUCTION -- measured at this panel's prevalence, exactly the score a
+    # PERFECT classifier gets -- and an all-zero predictor lands at 0.0003. A run whose
+    # only declared threshold is on ECE has pre-registered a condition no predictor can
+    # fail, which is the same hole as dropping the baseline a backend would lose to.
+    # Promotion needs a DISCRIMINATION bar.
+    discrimination_declared = settings.min_pr_auc > 0.0 or settings.min_pr_auc_skill > 0.0
+    thresholds_declared = discrimination_declared
     if not thresholds_declared:
+        if settings.max_ece < 1.0:
+            notes.append(
+                f"the only declared threshold is max_ece={settings.max_ece:g}, which is "
+                "NOT a bar: at splice prevalence a base-rate predictor scores ECE 0.0 -- "
+                "the same as a perfect classifier -- so no backend can fail it. Declare "
+                "min_pr_auc_skill (or min_pr_auc) as well; this run cannot be promotable"
+            )
+        else:
+            notes.append(
+                "no threshold was declared (min_pr_auc / min_pr_auc_skill are at their "
+                "permissive defaults), so 'gate passed' is vacuous here and this run "
+                "cannot be promotable. Set the bar deliberately, before the run"
+            )
+
+    # And say it wherever the ECE column could be read as evidence, not only when it was
+    # declared as a threshold: a baseline matching or beating the head on ECE is the
+    # measured demonstration that the column is not discriminating on this panel.
+    head_ece = {stratum.name: stratum.ece for stratum in head.strata}
+    outscored = sorted(
+        {
+            f"{baseline_name}/{stratum.name}"
+            for baseline_name, report in reports
+            for stratum in report.strata
+            # A tolerance, not `<=`: the note claims "match or beat", and two
+            # equally-calibrated predictors differ by float noise (a base-rate
+            # baseline lands at 1.1e-16 where an exact oracle lands at 0.0).
+            if stratum.ece <= head_ece.get(stratum.name, float("inf")) + _ECE_TIE
+        }
+    )
+    if outscored:
         notes.append(
-            "no threshold was declared (min_pr_auc / min_pr_auc_skill / max_ece are all "
-            "at their permissive defaults), so 'gate passed' is vacuous here and this "
-            "run cannot be promotable. Set the bar deliberately, before the run"
+            f"baseline(s) {outscored} match or beat the backend's ECE. ECE rewards "
+            "predicting the base rate, which every one of these baselines does better "
+            "than a model that commits, so read it as a description of the score "
+            "distribution and NEVER as evidence of quality -- the skill column carries "
+            "the verdict"
         )
 
     overlap = panel.training_overlap
