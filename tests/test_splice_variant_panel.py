@@ -366,7 +366,9 @@ def test_cli_prints_the_published_anchor_beside_the_run(
     )
     out = capsys.readouterr().out
     assert "0.419" in out and "0.773" in out
-    assert "suspect the panel" in out
+    # The anchor is stated with its composition, and the ordering is read on skill.
+    assert "MEDIAN ACROSS TOOLS" in out
+    assert "read on SKILL, not on" in out
 
 
 def test_cli_requires_the_negative_construction(tmp_path: Path) -> None:
@@ -374,3 +376,93 @@ def test_cli_requires_the_negative_construction(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit):
         main(["variant-gate", _write_cli_panel(tmp_path)])
+
+
+def _inverted_panel(tmp_path: Path) -> str:
+    """A panel reproducing the AP inversion a real held-out run produced.
+
+    Exonic prevalence 50%, intronic 20%, with the backend genuinely **better** on
+    intronic. Average precision's floor is the prevalence, so the exonic AP starts from
+    0.5 and the intronic from 0.2 -- and raw AP inverts while skill does not.
+    """
+    import random
+
+    rng = random.Random(0)
+    lines = ["variant_id\tgroup\tregion\tlabel\tchromosome\tspliceai_masked"]
+    for gene in ("POU1F1", "MST1R"):
+        for i in range(400):
+            exonic = i % 2 == 0
+            prevalence, shift = (0.5, 0.02) if exonic else (0.2, 0.10)
+            positive = (i // 2) % round(1 / prevalence) == 0
+            score = 0.5 + (shift if positive else -shift) + rng.gauss(0, 0.25)
+            lines.append(
+                f"{gene}_{i}\t{gene}\t{'exonic' if exonic else 'intronic'}\t"
+                f"{'True' if positive else 'False'}\t3\t{score:.4f}"
+            )
+    path = tmp_path / "inverted.tsv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_an_ap_inversion_from_unequal_prevalence_is_explained_not_blamed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The failure mode a real held-out run hit, and the guidance that was wrong.
+
+    Measured on the real benchmark's chr3 genes: exonic AP 0.665 *above* intronic
+    0.598, while exonic skill 0.419 sat *below* intronic 0.480. The cause was
+    prevalence -- 42.3% exonic against 22.7% intronic -- so average precision's floor
+    differed by nearly double and raw AP was never comparable between them.
+
+    The CLI previously said "the exonic figure should sit well BELOW the intronic one.
+    If it does not, suspect the panel build" -- which would have sent a reader hunting a
+    panel bug that did not exist. It now reads the ordering on **skill** and explains the
+    AP inversion as the prevalence artifact it is.
+    """
+    from bt4.cli.__main__ import main
+
+    assert (
+        main(
+            [
+                "variant-gate",
+                _inverted_panel(tmp_path),
+                "--negative-construction",
+                _NEG,
+                "--score",
+                "spliceai_masked",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "prev" in out  # the floor is shown beside every AP
+    assert "prevalence artifact, not a finding" in out
+    assert "The panel is fine." in out
+    assert "suspect the panel build" not in out
+
+
+def test_a_genuine_skill_inversion_still_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exonic skill above intronic is the result that should prompt suspicion."""
+    from bt4.cli.__main__ import main
+
+    header = "variant_id\tgroup\tregion\tlabel\tchromosome\tspliceai_masked"
+    lines = [header]
+    for gene in ("POU1F1", "MST1R"):
+        for i in range(200):
+            exonic = i % 2 == 0
+            positive = i % 4 < 2
+            # Backend is strong exonically and useless intronically -- the wrong way round.
+            score = (0.95 if positive else 0.05) if exonic else 0.5
+            lines.append(
+                f"{gene}_{i}\t{gene}\t{'exonic' if exonic else 'intronic'}\t"
+                f"{'True' if positive else 'False'}\t3\t{score:.4f}"
+            )
+    path = tmp_path / "wrong_way.tsv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    main(["variant-gate", str(path), "--negative-construction", _NEG,
+          "--score", "spliceai_masked"])
+    out = capsys.readouterr().out
+    assert "should prompt suspicion of the panel build" in out

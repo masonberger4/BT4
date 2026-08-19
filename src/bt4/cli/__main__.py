@@ -793,10 +793,16 @@ def _cmd_variant_gate(args: argparse.Namespace) -> int:
               "trained on.\n         These metrics are optimistic and cannot support "
               "promotion. Rebuild with\n         --held-out-only for a held-out run.")
     print()
-    print(f"{'stratum':<12}{'n':>7}{'AP':>9}{'skill':>9}{'ROC':>9}{'ECE':>9}")
+    print(
+        f"{'stratum':<12}{'n':>7}{'prev':>8}{'AP':>9}{'skill':>9}{'ROC':>9}{'ECE':>9}"
+    )
     for stratum in report.strata:
-        print(f"{stratum.name:<12}{stratum.n_cases:>7}{stratum.pr_auc:>9.3f}"
-              f"{stratum.pr_auc_skill:>9.3f}{stratum.roc_auc:>9.3f}{stratum.ece:>9.3f}")
+        print(f"{stratum.name:<12}{stratum.n_cases:>7}{stratum.prevalence:>8.3f}"
+              f"{stratum.pr_auc:>9.3f}{stratum.pr_auc_skill:>9.3f}"
+              f"{stratum.roc_auc:>9.3f}{stratum.ece:>9.3f}")
+    print()
+    print("'prev' is average precision's FLOOR. Compare strata on 'skill' (AP rescaled")
+    print("so 0 is no-skill at any prevalence), never on raw AP.")
     print()
 
     # The published anchor this panel exists to reproduce.
@@ -818,10 +824,29 @@ def _cmd_variant_gate(args: argparse.Namespace) -> int:
         print("the gap. Measured here, matching the composition moved both figures")
         print("FURTHER from the published pair, not closer.")
         print()
-        print("What is comparable is the ORDERING, and it is the finding that matters:")
-        print("exonic must sit well below intronic. If it does not, suspect the panel")
-        print("build before the model. (The archive carries all eight tools' scores, so")
-        print("an exact reproduction is possible -- it needs the other six mapped in.)")
+        print("What is comparable is the ORDERING -- and it must be read on SKILL, not on")
+        print("AP, because the two strata rarely share a prevalence. (The archive carries")
+        print("all eight tools' scores, so an exact reproduction is possible; it needs the")
+        print("other six mapped in.)")
+        skill = {s.name: s.pr_auc_skill for s in report.strata}
+        prevalence = {s.name: s.prevalence for s in report.strata}
+        ap_inverted = by_name["exonic"] >= by_name["intronic"]
+        skill_ordered = skill["exonic"] < skill["intronic"]
+        print()
+        if ap_inverted and skill_ordered:
+            # The documented failure mode, caught rather than left to mislead: raw AP
+            # can invert purely because one stratum has more positives.
+            print("NOTE: raw AP is INVERTED here (exonic above intronic), but that is a")
+            exonic_prev = f"{prevalence['exonic']:.1%}"
+            intronic_prev = f"{prevalence['intronic']:.1%}"
+            print(f"      prevalence artifact, not a finding -- exonic {exonic_prev} vs "
+                  f"intronic {intronic_prev}")
+            print("      positives, so exonic AP starts from a much higher floor. On skill")
+            print(f"      the expected ordering holds ({skill['exonic']:.3f} < "
+                  f"{skill['intronic']:.3f}). The panel is fine.")
+        elif not skill_ordered:
+            print("WARNING: exonic skill is NOT below intronic. That is the one result that")
+            print("         should prompt suspicion of the panel build before the model.")
     print()
     print(f"gate passed (thresholds) : {report.passed}")
     for reason in report.reasons:
