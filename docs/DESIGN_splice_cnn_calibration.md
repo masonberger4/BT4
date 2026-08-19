@@ -661,6 +661,41 @@ is a working check that BT4's gate reproduces a published benchmark.
 > such a run held out, and it cannot support a promotion. For a held-out gate run, use
 > the chr3 genes only.
 
+**`scripts/make_splicebench_variant_panel.py` does the conversion** *(landed)*:
+
+```
+python scripts\make_splicebench_variant_panel.py --data data\scored_data --out variants.tsv
+python scripts\make_splicebench_variant_panel.py --data data\scored_data --out heldout.tsv --held-out-only
+```
+
+It maps `sdv_fc2` → `label`, `exon` → `region`, and keeps **masked and unmasked scores as
+separate columns** (`spliceai_masked`, `spliceai_unmasked`, `pangolin_masked`,
+`pangolin_unmasked`) rather than choosing between them — they answer different questions,
+and the choice belongs at gate time and on the record. It stamps each gene's chromosome,
+so `read_variant_panel(...).held_out` reports what the run can support. It excludes MLH1
+unless asked, since 3,616 and 3,912 are both true about different things.
+
+Then gate the benchmark's **own** pre-computed scores, which needs no model installed:
+
+```python
+from bt4.api import read_variant_panel
+from bt4.biomodels.splice import verify_splice_gate
+
+panel = read_variant_panel(
+    "variants.tsv",
+    negative_construction="assayed variants the assay called non-disruptive",
+    assay="MPSA sdv_fc2 composite over six assays",
+)
+report = verify_splice_gate(
+    panel.cases("spliceai_masked"),
+    negative_construction=panel.negative_construction,
+)
+```
+
+That is the cheapest real check available: if BT4's gate does not reproduce the published
+**0.419 exonic / 0.773 intronic** on this panel, the defect is in BT4, not in the models.
+
+
 #### The file format to build (and the off-by-one it refuses)
 
 **Landed:** `bt4.api.read_splice_panel` reads a small tab-separated format, so B1 has

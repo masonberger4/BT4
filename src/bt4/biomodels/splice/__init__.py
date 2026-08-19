@@ -113,6 +113,13 @@ from bt4.biomodels.splice.spliceai import (
     SpliceAiSplicePredictor,
     verify_spliceai_fidelity,
 )
+from bt4.biomodels.splice.variant_panel import (
+    REGIONS,
+    SpliceVariantPanel,
+    VariantRow,
+    read_variant_panel,
+    variant_panel_from_rows,
+)
 
 # Names carrying the `splice` qualifier, for re-export through `bt4.api` where
 # "attestation" alone would be ambiguous against the expression head's.
@@ -132,6 +139,7 @@ __all__ = [
     "FIXTURE_DIR_ENV_VAR",
     "MAX_ATTESTATION_TOLERANCE",
     "MIN_MOTIF_CONSISTENCY",
+    "REGIONS",
     "SITE_PREDICTION",
     "TRAINING_CHROMOSOMES",
     "USE_ATTESTED_ENV_VAR",
@@ -168,7 +176,9 @@ __all__ = [
     "SpliceSiteCase",
     "SpliceStratumReport",
     "SpliceVariantCase",
+    "SpliceVariantPanel",
     "SpliceWindow",
+    "VariantRow",
     "attest_backend",
     "attested_promotion_enabled",
     "attested_splice_promotion_enabled",
@@ -188,8 +198,10 @@ __all__ = [
     "pooled_risk",
     "promote_if_attested",
     "read_splice_panel",
+    "read_variant_panel",
     "score_in_context",
     "spearman",
+    "variant_panel_from_rows",
     "verified_predictor",
     "verify_pangolin_fidelity",
     "verify_splice_gate",
