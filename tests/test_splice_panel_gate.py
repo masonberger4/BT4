@@ -1278,3 +1278,39 @@ def test_panel_agreement_refuses_a_results_length_mismatch() -> None:
             panel, ("pangolin", "spliceai"),
             results={"pangolin": oracle, "spliceai": oracle[:1]},
         )
+
+
+def test_a_kind_separated_run_warns_that_it_is_not_comparable_to_a_combined_one() -> None:
+    """Two consecutive gate runs invite a comparison the numbers do not support.
+
+    A separated stratum treats the *other* kind's sites as negatives, so the backend
+    must locate the site and get its kind right — strictly harder than a combined
+    "is this a site at all". Setting a separated figure beside a combined one
+    therefore understates the separated backend, and nothing in the table said so.
+    """
+    panel = _hard_panel()
+    separated = run_splice_panel_gate(
+        panel, "pwm", results=_oracle(panel), combined_track=False
+    )
+    assert {s.name for s in separated.head.strata} == {"donor", "acceptor"}
+    assert any("NOT comparable" in note for note in separated.notes)
+    assert any("--combined-track on" in note for note in separated.notes)
+
+    # And the combined run keeps its own, different note.
+    combined = run_splice_panel_gate(
+        panel, "pwm", results=_oracle(panel), combined_track=True
+    )
+    assert {s.name for s in combined.head.strata} == {"splice"}
+    assert any("single 'splice' stratum" in note for note in combined.notes)
+    assert not any("NOT comparable" in note for note in combined.notes)
+
+
+def test_forcing_combined_makes_a_two_track_backend_scoreable_on_the_shared_task() -> None:
+    """`--combined-track on` is what makes a cross-backend comparison honest."""
+    panel = _hard_panel()
+    forced = run_splice_panel_gate(
+        panel, "pwm", results=_oracle(panel), combined_track=True
+    )
+    # One stratum, so one number to set beside a combined-track backend's.
+    assert len(forced.head.strata) == 1
+    assert forced.head.strata[0].name == "splice"
