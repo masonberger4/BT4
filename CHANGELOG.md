@@ -7,6 +7,39 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **`scripts/make_gencode_splice_panel.py` — the site-prediction panel, built rather than
+  hand-assembled.** Turns a pinned GENCODE v44 + GRCh38 into the format
+  `bt4.api.read_splice_panel` reads, with the position convention correct by construction.
+  - **The arithmetic was executed, not reasoned about.** Over 1,206 annotated sites from
+    64 chr1 MANE Select transcripts it comes out **99.42% canonical GT/AG on both
+    strands**, while the two plausible wrong conventions score 0.08% and 44.2%. The
+    residual ~0.6% is the real minor spliceosome, which is why the reader's floor is 90%.
+  - **Two traps that silently relabel true positives as negatives**, neither catchable by
+    a motif check: a ±5,000 nt window contains a **median of 8** annotated sites (only
+    2.8% contain the centre site alone), and **27%** of gene-body windows contain
+    opposite-strand sites. The script collects every overlapping MANE transcript's sites,
+    and skips antisense-overlapping windows by default (`--keep-antisense` opts in and
+    records the count per window).
+  - MANE Select filtering is what keeps a panel stable: from GENCODE v44 to v50 the
+    protein-coding transcript count on the held-out chromosomes grows **4.1×** while MANE
+    Select grows **1.3%**.
+  - Tested against a synthetic genome for both strands, with BT4's own reader
+    independently verifying the output at `motif_consistency: 1.0` — so the composition of
+    GTF convention, strand handling, reverse-complementing and index mapping is evidence
+    rather than assertion.
+
+### Changed
+- **The runbook's B1 now carries verified acquisition recipes for both panels** — pinned
+  URLs with md5s, which GTF variant and why, exact column names, and the
+  `for_zenodo` → `data` rename `splicebench2023`'s notebooks require.
+  - **Recorded: 53% of `splicebench2023` is not held out.** BRCA1 (chr17), FAS (chr10) and
+    WT1 (chr11) are on chromosomes both models trained on; only the chr3 genes are held
+    out. That includes BRCA1, otherwise the closest public thing to BT4's regime.
+  - **Recorded: SpliceAI's held-out split is second-hand.** Pangolin's is in its own
+    paper; SpliceAI's Cell paper is paywalled, so chr1/3/5/7/9 comes from OpenSpliceAI
+    (eLife 2025), a reimplementation that rebuilt its data pipeline.
+
 ### Fixed
 - **A second round of adversarial review found five more ways the splice gate's verdict
   could be won without winning.** All measured, all in the Part B gate.
