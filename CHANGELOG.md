@@ -8,6 +8,14 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **`bt4 designed-probe` rounded away the distinction its own conclusion rests on.** At
+  `%.4f` an exactly-zero Δ spread and one of 1e-7 both print `0.0000`, and the two
+  readings are opposite: exactly zero means the backend gave the native and every design
+  the same pooled risk and **cannot rank them at all**, while 1e-7 means it ranks them
+  and the signal is merely tiny. On the first real run Pangolin displayed `0.0000` for
+  two of three proteins, so the formatting was deciding the finding. Zero now prints as
+  `0`, sub-1e-4 values in scientific notation, and an exactly-zero spread gets an
+  explicit line saying the backend cannot rank the candidates.
 - **`bt4 designed-probe` printed nothing while it ran** — the same silence-looks-like-a-hang
   defect fixed for `splice-gate` one change earlier, reintroduced in the new command:
   `probe_designed_cds` accepted a `progress` callback and the CLI did not pass one. Now

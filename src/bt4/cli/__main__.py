@@ -706,6 +706,23 @@ def _splice_gate_progress(index: int, total: int, window_id: str, length: int) -
     )
 
 
+def _signal(value: float, *, signed: bool = False) -> str:
+    """Format a Δ so that "zero" and "very small" stay distinguishable.
+
+    At ``%.4f`` an exactly-zero spread and one of 1e-7 both print ``0.0000``, and here
+    those support opposite conclusions: exactly zero means the backend assigned the
+    native and all 30 designs the same pooled risk and cannot rank them at all, while
+    1e-7 means it ranks them and the signal is merely tiny. Rounding the distinction
+    away would decide the reader's conclusion for them, in whichever direction the
+    formatting happened to fall.
+    """
+    if value == 0.0:
+        return "0" if not signed else "+0"
+    if abs(value) < 1e-4:
+        return f"{value:+.2e}" if signed else f"{value:.2e}"
+    return f"{value:+.4f}" if signed else f"{value:.4f}"
+
+
 def _designed_probe_progress(index: int, total: int, group: str, length: int) -> None:
     """Report which protein is being scored, to stderr.
 
@@ -740,9 +757,15 @@ def _cmd_designed_probe(args: argparse.Namespace) -> int:
         for name in probe.backends:
             low, high = probe.delta_range[name]
             print(
-                f"    {name:34s} delta spread {probe.delta_spread[name]:8.4f}"
-                f"   range [{low:+.4f}, {high:+.4f}]"
+                f"    {name:34s} delta spread {_signal(probe.delta_spread[name]):>10s}"
+                f"   range [{_signal(low, signed=True)}, {_signal(high, signed=True)}]"
             )
+            if probe.delta_spread[name] == 0.0:
+                print(
+                    "        ^ EXACTLY zero: identical pooled risk for the native and "
+                    "every design.\n"
+                    "          This backend cannot rank these candidates at all."
+                )
         for (first, second), rho in sorted(probe.rank_correlations.items()):
             print(f"    rank agreement {first} vs {second}: {rho:+.3f}")
         if len(probe.backends) > 1:

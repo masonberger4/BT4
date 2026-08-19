@@ -209,3 +209,23 @@ def test_the_probe_has_no_pass_or_promotable_field() -> None:
 
     fields = set(DesignedCdsProbe.__dataclass_fields__)
     assert not fields & {"passed", "promotable", "thresholds_declared", "reasons"}
+
+
+def test_zero_and_nearly_zero_stay_distinguishable_in_the_report() -> None:
+    """`%.4f` printed an exactly-zero Δ spread and a 1e-7 one identically.
+
+    On the first real run Pangolin's spread displayed as `0.0000` for two of three
+    proteins, and the two readings that display permits are opposite: exactly zero
+    means the backend gave the native and all 30 designs the same pooled risk and
+    cannot rank them at all, while 1e-7 means it ranks them and the signal is merely
+    tiny. Rounding that away decides the reader's conclusion for them.
+    """
+    from bt4.cli.__main__ import _signal
+
+    assert _signal(0.0) == "0"
+    assert _signal(0.0, signed=True) == "+0"
+    assert _signal(1e-7) == "1.00e-07"
+    assert _signal(-3.2e-6, signed=True) == "-3.20e-06"
+    # Ordinary magnitudes keep the readable fixed-point form.
+    assert _signal(0.8349) == "0.8349"
+    assert _signal(-1.0885, signed=True) == "-1.0885"
