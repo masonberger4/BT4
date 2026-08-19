@@ -56,6 +56,7 @@ from bt4.pipeline.splice_crosscheck import (
     run_splice_crosscheck,
 )
 from bt4.pipeline.splice_gate import (
+    CNN_ANCHOR_OFFSETS,
     SPLICE_BASELINES,
     AlignmentDiagnostic,
     SpliceGateComparison,
@@ -68,6 +69,7 @@ from bt4.pipeline.tracks import Track, TracksResult, run_tracks, summarize
 __all__ = [
     "APPLICATION_PRESETS",
     "BASELINES",
+    "CNN_ANCHOR_OFFSETS",
     "PACKAGING_LIMITS",
     "SPLICE_BASELINES",
     "AlignmentDiagnostic",

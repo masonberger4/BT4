@@ -7,6 +7,27 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **`anchor_offset` was a single scalar, and no scalar is correct for a real backend.**
+  Research into SpliceAI's and Pangolin's source established that **both anchor on the
+  exonic boundary base**, one base *before* BT4's donor position and one base *after* its
+  acceptor position — opposite directions. Measured with a perfect exonically-anchored
+  backend: at `-1` donors score AP 1.000 and acceptors 0.006; at `+1` the reverse.
+  - **And the alignment diagnostic endorsed the broken setting.** Under either value half
+    the sites aligned and half landed two bases off, and the modal tie-break resolved
+    that `{0: N, ±2: N}` split to `0` — printing **"anchors agree" at 50% alignment**
+    while a perfect model read as hopeless on half the panel. The one check meant to
+    catch misalignment was confirming the wrong value.
+  - `anchor_offset` now accepts a **per-kind mapping**, `CNN_ANCHOR_OFFSETS` records the
+    verified values, and the diagnostic is **per site kind** so the false-agreement state
+    is unrepresentable. Case building shifts each site's label by *its own kind's* offset
+    before any union, which is the only formulation that can handle Pangolin's combined
+    track (its union drops the kind).
+  - `bt4 splice-gate` gains `--cnn-anchors`, `--donor-offset` and `--acceptor-offset`.
+    A scalar remains valid: a kind-separated panel is a legitimate way to run a real
+    backend, and `read_splice_panel` already accepts donors-only or acceptors-only
+    windows.
+
 ### Added
 - **The variant half of the splice gate is reachable from data.**
   `SpliceVariantCase` shipped with no way to construct one, which left the exonic /

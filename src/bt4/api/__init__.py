@@ -85,6 +85,7 @@ from bt4.io import (
 )
 from bt4.pipeline import (
     APPLICATION_PRESETS,
+    CNN_ANCHOR_OFFSETS,
     PACKAGING_LIMITS,
     SPLICE_BASELINES,
     AlignmentDiagnostic,
@@ -136,6 +137,7 @@ from bt4.pipeline import (
 __all__ = [
     "AMINO_ACIDS",
     "APPLICATION_PRESETS",
+    "CNN_ANCHOR_OFFSETS",
     "DEFAULT_SITE_PROBABILITY",
     "GENOME_WIDE",
     "HIGHLY_EXPRESSED",

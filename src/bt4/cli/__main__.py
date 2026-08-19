@@ -666,6 +666,27 @@ def _cmd_expression_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_anchor_offsets(args: argparse.Namespace) -> int | dict[str, int]:
+    """Combine the anchor flags into one scalar or per-kind mapping.
+
+    Per-kind wins over the scalar, and ``--cnn-anchors`` is the measured default for the
+    wrapped CNNs. A scalar remains valid because a kind-separated panel is a legitimate
+    way to run them.
+    """
+    base = 0 if args.anchor_offset is None else args.anchor_offset
+    if args.cnn_anchors:
+        offsets = dict(api.CNN_ANCHOR_OFFSETS)
+    elif args.donor_offset is None and args.acceptor_offset is None:
+        return base
+    else:
+        offsets = dict.fromkeys(("donor", "acceptor", "splice"), base)
+    if args.donor_offset is not None:
+        offsets["donor"] = args.donor_offset
+    if args.acceptor_offset is not None:
+        offsets["acceptor"] = args.acceptor_offset
+    return offsets
+
+
 def _cmd_splice_gate(args: argparse.Namespace) -> int:
     """Run the splice acceptance gate over an annotated panel and print the verdict."""
     panel = api.read_splice_panel(
@@ -685,7 +706,7 @@ def _cmd_splice_gate(args: argparse.Namespace) -> int:
             n_bins=args.bins,
             seed=args.seed,
         ),
-        anchor_offset=args.anchor_offset,
+        anchor_offset=_resolve_anchor_offsets(args),
     )
 
     summary = panel.describe()
@@ -909,10 +930,24 @@ def _parser() -> argparse.ArgumentParser:
              "reproducible-from-manifest guarantee, so it cannot support a gate result",
     )
     p_sgate.add_argument(
-        "--anchor-offset", type=int, default=0, dest="anchor_offset",
-        help="where the backend anchors its per-position score relative to the panel's "
-             "convention (donor = the G of GT, acceptor = the G of AG). Declared, never "
-             "fitted -- the report says whether the declaration looks right",
+        "--anchor-offset", type=int, default=None, dest="anchor_offset",
+        help="one offset for every site kind. Fine for a kind-separated panel; NOT "
+             "sufficient for a mixed one scored by a real backend -- see --cnn-anchors",
+    )
+    p_sgate.add_argument(
+        "--donor-offset", type=int, default=None, dest="donor_offset",
+        help="anchor offset for donors only (overrides --anchor-offset)",
+    )
+    p_sgate.add_argument(
+        "--acceptor-offset", type=int, default=None, dest="acceptor_offset",
+        help="anchor offset for acceptors only (overrides --anchor-offset)",
+    )
+    p_sgate.add_argument(
+        "--cnn-anchors", action="store_true", dest="cnn_anchors",
+        help="use the measured SpliceAI/Pangolin anchors: donor -1, acceptor +1. Both "
+             "models score a site on the EXONIC boundary base while BT4's panel anchors "
+             "on the intronic dinucleotide, so the two kinds need OPPOSITE offsets and "
+             "no single value is correct for a mixed panel",
     )
     p_sgate.add_argument(
         "--min-motif-consistency", type=float, default=api.MIN_SPLICE_MOTIF_CONSISTENCY,
