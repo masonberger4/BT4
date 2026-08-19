@@ -216,9 +216,17 @@ def test_zero_and_nearly_zero_stay_distinguishable_in_the_report() -> None:
 
     On the first real run Pangolin's spread displayed as `0.0000` for two of three
     proteins, and the two readings that display permits are opposite: exactly zero
-    means the backend gave the native and all 30 designs the same pooled risk and
-    cannot rank them at all, while 1e-7 means it ranks them and the signal is merely
-    tiny. Rounding that away decides the reader's conclusion for them.
+    means the backend gave the native and all 30 designs the same pooled risk, while
+    1e-7 means it separates them and the signal is merely tiny. Rounding that away
+    decides the reader's conclusion for them.
+
+    **Correction.** This docstring used to finish "…and cannot rank them at all", and
+    that inference was wrong — it is what the exactly-zero reading was then used to
+    conclude. An exactly-zero *pooled-risk* spread does not imply the backend cannot
+    rank: measured, Pangolin's scores varied more than twofold across those designs and
+    BT4's pooling hinge floored all of it, because no position reached the 0.5
+    background. Keeping the digits distinguishable is still right; the conclusion drawn
+    from them needed `DesignedCdsProbe.degenerate` to be sound.
     """
     from bt4.cli.__main__ import _signal
 
@@ -229,3 +237,69 @@ def test_zero_and_nearly_zero_stay_distinguishable_in_the_report() -> None:
     # Ordinary magnitudes keep the readable fixed-point form.
     assert _signal(0.8349) == "0.8349"
     assert _signal(-1.0885, signed=True) == "-1.0885"
+
+
+# --------------------------------------------------------------------------
+# A zero spread must say WHICH zero it is
+
+
+def test_the_probe_carries_a_background_free_response_beside_the_risk() -> None:
+    """The risk pooling is degenerate in this panel's regime; the response is not.
+
+    Measured against the hash-verified Pangolin weights, no position on any of the 93
+    sequences reached the 0.5 background, so every risk Δ was exactly zero. Without a
+    second, background-free statistic the probe's central question — does a synonymous
+    change move the score at all — is unanswerable here by construction.
+    """
+    from bt4.pipeline.splice_gate import probe_designed_cds
+
+    panel = panel_from_members(_members(), provenance="test fixture")
+    probe = probe_designed_cds(panel, ("pwm",))[0]
+    for field in ("response_spread", "response_range", "sub_background", "max_score"):
+        assert set(getattr(probe, field)) == {"consensus-pwm-baseline"}
+    assert isinstance(probe.response_sign_agreement, float)
+
+
+def test_degenerate_distinguishes_a_floored_zero_from_a_measured_one() -> None:
+    """The distinction the probe's whole conclusion rests on."""
+    from bt4.pipeline.splice_gate import DesignedCdsProbe
+
+    def _probe(sub_background: int) -> DesignedCdsProbe:
+        return DesignedCdsProbe(
+            group="G",
+            n_designs=30,
+            backends=("b",),
+            delta_spread={"b": 0.0},
+            delta_range={"b": (0.0, 0.0)},
+            rank_correlations={},
+            sign_agreement=1.0,
+            response_spread={"b": 3.9},
+            response_range={"b": (-2.1, 1.7)},
+            response_rank_correlations={},
+            response_sign_agreement=1.0,
+            sub_background={"b": sub_background},
+            max_score={"b": 0.323},
+        )
+
+    # Every one of the 31 sequences floored => the zero is by construction.
+    assert _probe(31).degenerate("b") is True
+    # Even one sequence clearing background means the zero is a real measurement.
+    assert _probe(30).degenerate("b") is False
+    assert _probe(0).degenerate("b") is False
+
+
+def test_the_cli_never_calls_a_floored_zero_a_failure_to_rank() -> None:
+    """Structural: the sentence that turned BT4's silence into the model's.
+
+    `designed-probe` printed "This backend cannot rank these candidates at all" on any
+    exactly-zero spread. On the panel it was written for, that spread is produced by
+    BT4's own pooling hinge for every backend whose scores stay under 0.5 — so the line
+    reported a property of `pool_log_odds` as a property of the CNN.
+    """
+    from pathlib import Path as _Path
+
+    source = (
+        _Path(__file__).resolve().parent.parent / "src" / "bt4" / "cli" / "__main__.py"
+    ).read_text(encoding="utf-8")
+    assert "cannot rank these candidates at all" not in source
+    assert "ZERO BY CONSTRUCTION" in source

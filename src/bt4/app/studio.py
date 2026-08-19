@@ -2949,6 +2949,17 @@ class StudioWindow(QtWidgets.QMainWindow):
             f"(top-{report.top_k} log-odds, uncalibrated) &middot; "
             f"{len(report.sites)} predicted site(s)."
         )
+        if report.risk_floored:
+            # A pooled risk of 0.000 has two opposite readings and the number alone
+            # cannot tell them apart. Measured on designed CDS, the floored one is the
+            # normal case -- so showing the bare zero would read as "no risk found".
+            parts.append(
+                "<i>That <b>0.000</b> is zero <b>by construction, not by "
+                "measurement</b>: no position exceeded the "
+                f"{report.threshold:g} pooling background (peak score "
+                f"{report.max_site_score:.3f}), so every score was floored before "
+                "pooling. It does <b>not</b> mean no splice risk was found.</i>"
+            )
         self.assp_banner.setText("<br>".join(parts))
 
         self.assp_table.setRowCount(len(report.sites))

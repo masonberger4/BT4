@@ -1050,17 +1050,40 @@ class DesignedCdsProbe:
             question.
         n_designs: Designs scored against the group's native reference.
         delta_spread: Per backend, ``max - min`` of Δsplicing across the designs.
-            **The number that decides whether these models are usable in BT4's loop.**
-            Synonymous positions are the only thing BT4 changes; a backend whose spread
-            is ~0 cannot distinguish the candidates BT4 produces, and routing it into
-            candidate selection would be picking at random with extra steps.
+            Synonymous positions are the only thing BT4 changes, so a backend whose
+            spread is ~0 **and whose scores actually reached the pooling background**
+            cannot distinguish the candidates BT4 produces. Read it with
+            :attr:`sub_background` or it will be misread: a spread of zero is the
+            *expected* output here whatever the model does, because the pooling hinge
+            floors every sub-background score to zero.
         delta_range: Per backend, the ``(min, max)`` Δ, so the spread has a location --
             a spread of 0.1 around zero and one around -3 mean different things.
         rank_correlations: Pairwise Spearman agreement of the backends' Δ *rankings*.
-            The decision-relevant form of agreement here: if BT4 ranked candidates by
-            splice Δ, this is whether the winner would depend on which backend ran.
+            If BT4 ranked candidates by splice Δ, this is whether the winner would
+            depend on which backend ran -- **but only when the Δs are not degenerate**.
+            Over a backend whose Δs are all zero this is a correlation of constants.
         sign_agreement: Fraction of designs where all backends agree on the Δ's sign --
-            better or worse than native.
+            better or worse than native. Same caveat as ``rank_correlations``.
+        response_spread: Per backend, ``max - min`` of the **background-free** Δ
+            (:func:`~bt4.biomodels.splice.base.pool_top_k_logit`). This is the field
+            that answers question 1 below when the risk Δ has been floored: it is
+            monotone in the model's scores at every score, so it separates candidates
+            that ``delta_spread`` cannot. It is a *ranking* statistic and **not a
+            risk** -- it has no calibrated zero and says nothing about how
+            spliceogenic any sequence is.
+        response_range: Per backend, the ``(min, max)`` background-free Δ.
+        response_rank_correlations: ``rank_correlations`` recomputed over the
+            background-free Δs -- the agreement number that survives a floored risk.
+        response_sign_agreement: ``sign_agreement`` over the background-free Δs.
+        sub_background: Per backend, how many of the ``n_designs + 1`` scored sequences
+            had **no** position above the pooling background. Equal to
+            ``n_designs + 1`` means the backend's every risk Δ is zero *by
+            construction* and the risk-based fields above carry no information.
+            Measured with the hash-verified Pangolin weights, this is what happens:
+            all of them.
+        max_score: Per backend, the highest per-position score seen anywhere in the
+            group. The magnitude the hinge discarded -- ``0.44`` and ``0.001`` both
+            floor to a risk of zero and mean entirely different things.
         backends: The backends' **own** names, in input order -- ``pwm`` resolves to
             ``consensus-pwm-baseline`` and Pangolin to a name carrying its tissue set.
             Those identify what actually ran, which a registry alias does not.
@@ -1073,6 +1096,22 @@ class DesignedCdsProbe:
     delta_range: dict[str, tuple[float, float]]
     rank_correlations: dict[tuple[str, str], float]
     sign_agreement: float
+    response_spread: dict[str, float]
+    response_range: dict[str, tuple[float, float]]
+    response_rank_correlations: dict[tuple[str, str], float]
+    response_sign_agreement: float
+    sub_background: dict[str, int]
+    max_score: dict[str, float]
+
+    def degenerate(self, backend: str) -> bool:
+        """``True`` when ``backend``'s risk Δs are all zero because pooling floored them.
+
+        The distinction the probe's whole conclusion rests on: "this backend does not
+        respond to synonymous change" versus "this backend responds and BT4 threw the
+        response away". Without it a reader takes a zero spread for the former, which
+        is what happened when this probe was first run.
+        """
+        return self.sub_background.get(backend, 0) == self.n_designs + 1
 
 
 def probe_designed_cds(
@@ -1114,7 +1153,7 @@ def probe_designed_cds(
     if len(set(names)) != len(names):
         raise ValueError(f"backend names must be distinct, got {names!r}")
 
-    from bt4.biomodels.splice.agreement import backend_agreement
+    from bt4.biomodels.splice.agreement import agreement_from_deltas, backend_agreement
 
     predictors = [resolve_splice_backend(name) for name in names]
     # Report under the predictors' OWN names, not the registry aliases asked for.
@@ -1134,22 +1173,43 @@ def probe_designed_cds(
         report = backend_agreement(
             predictors, [m.cds for m in designs], native.cds
         )
-        spread: dict[str, float] = {}
-        ranges: dict[str, tuple[float, float]] = {}
-        for name in resolved:
-            deltas = report.delta_by_backend[name]
-            lo, hi = (min(deltas), max(deltas)) if deltas else (0.0, 0.0)
-            spread[name] = hi - lo
-            ranges[name] = (lo, hi)
+        # The background-free deltas get the identical rank/sign treatment, through the
+        # same function -- so the two agreement numbers are the same statistic on two
+        # poolings, and neither can be the flattering one by construction.
+        response_report = agreement_from_deltas(
+            report.response_by_backend, sign_epsilon=report.sign_epsilon
+        )
+
+        def _spread(
+            by_backend: dict[str, tuple[float, ...]],
+        ) -> tuple[dict[str, float], dict[str, tuple[float, float]]]:
+            spread: dict[str, float] = {}
+            ranges: dict[str, tuple[float, float]] = {}
+            for name in resolved:
+                values = by_backend[name]
+                lo, hi = (min(values), max(values)) if values else (0.0, 0.0)
+                spread[name] = hi - lo
+                ranges[name] = (lo, hi)
+            return spread, ranges
+
+        delta_spread, delta_range = _spread(report.delta_by_backend)
+        response_spread, response_range = _spread(report.response_by_backend)
+
         probes.append(
             DesignedCdsProbe(
                 group=group,
                 n_designs=len(designs),
                 backends=resolved,
-                delta_spread=spread,
-                delta_range=ranges,
+                delta_spread=delta_spread,
+                delta_range=delta_range,
                 rank_correlations=dict(report.rank_correlations),
                 sign_agreement=report.sign_agreement,
+                response_spread=response_spread,
+                response_range=response_range,
+                response_rank_correlations=dict(response_report.rank_correlations),
+                response_sign_agreement=response_report.sign_agreement,
+                sub_background=dict(report.n_sub_background),
+                max_score=dict(report.max_score_by_backend),
             )
         )
     return tuple(probes)

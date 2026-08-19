@@ -22,6 +22,23 @@ cutoff at 0.2, not 0.5), the trap had to be closed before that number could move
 
 These tests pin: the default is byte-identical to the old behaviour, the background
 is now movable, and every consumer reads one constant.
+
+**The trap was then measured, and it was not a corner case.** Run against the
+hash-verified Pangolin weights on the designed-CDS panel — BT4's own regime — *no
+position on any sequence* exceeded 0.5, across a native CDS and thirty synonymous
+redesigns for each of three proteins. Peak scores were 0.323 / 0.435 and varied more
+than twofold between the native and its designs, and every one of them pooled to a
+risk of exactly ``0.0``. So ``delta_splicing`` was identically zero for every
+candidate, the rank agreements computed from those deltas were Spearman correlations
+of constants (they printed ``+0.000``), and the CLI reported it as the backend being
+unable to rank the candidates — a statement about BT4's pooling, read as a statement
+about the model.
+
+Lowering the background is *not* the fix; that is the same uncalibrated knob pointed
+somewhere more flattering. The second half of this file pins the fix that was made
+instead: :class:`PooledRisk` carries the counts that tell a floored zero from a
+measured one, and :func:`pool_top_k_logit` is a **background-free** statistic that
+still separates sequences the hinge has flattened.
 """
 
 from __future__ import annotations
@@ -32,7 +49,13 @@ import pytest
 
 from bt4.biomodels.splice import DEFAULT_SITE_PROBABILITY, SpliceResult
 from bt4.biomodels.splice.audit import DEFAULT_SITE_THRESHOLD
-from bt4.biomodels.splice.base import logit, pool_log_odds, pooled_risk
+from bt4.biomodels.splice.base import (
+    logit,
+    pool_log_odds,
+    pool_top_k_logit,
+    pooled_risk,
+    pooled_risk_detail,
+)
 from bt4.pipeline.splice_crosscheck import DEFAULT_CROSSCHECK_THRESHOLD
 
 
@@ -157,3 +180,152 @@ def test_no_bare_threshold_literals_remain_in_source() -> None:
             if "threshold: float = 0.5" in stripped or "THRESHOLD: float = 0.5" in stripped:
                 offenders.append(f"{path.relative_to(src)}:{n}")
     assert not offenders, f"bare 0.5 threshold defaults reintroduced: {offenders}"
+
+
+# --------------------------------------------------------------------------
+# The fix: a floored zero is distinguishable from a measured one
+
+
+# Pangolin's actual peak per-position scores on the designed-CDS panel, measured with
+# the hash-verified weights. Every one is below the 0.5 background; they differ from
+# each other by more than twofold. Kept as literals so this regression does not need
+# the licensed weights to run.
+_MEASURED_PEAKS = (0.128, 0.276, 0.323, 0.435, 0.445)
+
+
+def test_pool_top_k_logit_takes_no_background_at_all() -> None:
+    """The response statistic has no operating point to choose, honestly or otherwise."""
+    import inspect
+
+    params = inspect.signature(pool_top_k_logit).parameters
+    assert "background" not in params
+    assert set(params) == {"probs", "top_k"}
+
+
+def test_pool_top_k_logit_is_monotone_below_the_background_where_risk_is_flat() -> None:
+    """The property the fix turns on: response separates what risk has flattened."""
+    weak = [0.10, 0.12, 0.14]
+    strong = [0.40, 0.42, 0.44]  # every value still below 0.5
+    assert pool_log_odds(weak, 3) == pool_log_odds(strong, 3) == 0.0  # risk: identical
+    assert pool_top_k_logit(strong, 3) > pool_top_k_logit(weak, 3)  # response: not
+
+
+def test_pool_top_k_logit_is_negative_below_the_background() -> None:
+    """It is not a risk, and the sign says so rather than a docstring alone."""
+    assert pool_top_k_logit(list(_MEASURED_PEAKS), 3) < 0.0
+
+
+def test_response_equals_risk_exactly_when_the_hinge_does_not_bind() -> None:
+    """``logit(0.5) == 0``, so above background the two poolings coincide.
+
+    This is why adding the response changed no shipped number: where BT4's pooled risk
+    was ever informative, the response *is* it.
+    """
+    above = [0.9, 0.8, 0.7, 0.2]
+    assert pool_top_k_logit(above, 3) == pytest.approx(pool_log_odds(above, 3))
+
+
+def test_pooled_risk_detail_reproduces_pooled_risk_exactly() -> None:
+    """The attribution rides along; it does not move the number."""
+    for donor, acceptor in (
+        ((0.9, 0.1), (0.3, 0.8)),
+        (_MEASURED_PEAKS, (0.0,) * 5),
+        ((), ()),
+    ):
+        result = SpliceResult(
+            donor=tuple(donor), acceptor=tuple(acceptor), model_name="s", calibrated=False
+        )
+        assert pooled_risk_detail(result).risk == pooled_risk(result)
+
+
+def test_below_background_separates_the_two_meanings_of_zero() -> None:
+    """The defect, now attributable: floored-to-zero versus genuinely-zero."""
+    floored = SpliceResult(
+        donor=_MEASURED_PEAKS, acceptor=(0.0,) * 5, model_name="s", calibrated=False
+    )
+    detail = pooled_risk_detail(floored)
+    assert detail.risk == 0.0
+    assert detail.below_background is True  # ...because nothing cleared background
+    assert detail.n_above_background == 0
+    assert detail.max_score == 0.445  # ...and this is the magnitude discarded
+
+    # A sequence that genuinely has no signal reports the same risk and a different why.
+    quiet = SpliceResult(
+        donor=(0.001, 0.002), acceptor=(0.0,), model_name="s", calibrated=False
+    )
+    assert pooled_risk_detail(quiet).risk == 0.0
+    assert pooled_risk_detail(quiet).max_score == 0.002
+
+
+def test_below_background_is_false_when_there_is_nothing_to_score() -> None:
+    """An empty result is not evidence the pooling floored anything."""
+    empty = SpliceResult(donor=(), acceptor=(), model_name="s", calibrated=False)
+    detail = pooled_risk_detail(empty)
+    assert detail.risk == 0.0
+    assert detail.n_scored == 0
+    assert detail.below_background is False
+
+
+def test_the_measured_regression_delta_is_zero_while_response_is_not() -> None:
+    """The exact shape of what was found, pinned: a real difference reported as none.
+
+    Two sequences whose peak scores differ more than twofold, both entirely below
+    background. ``delta_splicing`` cannot tell them apart; the response can.
+    """
+
+    def _result(peaks: tuple[float, ...]) -> SpliceResult:
+        return SpliceResult(
+            donor=peaks, acceptor=(0.0,) * len(peaks), model_name="s", calibrated=False
+        )
+
+    native = _result((0.128, 0.110, 0.098))
+    design = _result((0.276, 0.240, 0.201))
+    native_d = pooled_risk_detail(native)
+    design_d = pooled_risk_detail(design)
+
+    assert native_d.risk - design_d.risk == 0.0  # delta_splicing: exactly nothing
+    assert native_d.below_background and design_d.below_background
+    assert native_d.response - design_d.response < -1.0  # the design scores higher
+
+
+# --------------------------------------------------------------------------
+# The localization cutoff and the pooling background now move together
+
+
+def test_the_audit_pools_against_the_threshold_it_localizes_at() -> None:
+    """Lowering the visible cutoff must lower the hidden one, or they disagree.
+
+    The trap this file opens with, closed at the consumer: a site flagged at 0.35 used
+    to contribute exactly zero to the pooled risk that is meant to summarize the flags,
+    because the audit passed the caller's ``threshold`` to localization and let pooling
+    keep the default 0.5.
+    """
+    from bt4.biomodels.splice import ConsensusPwmSplicePredictor
+    from bt4.biomodels.splice.audit import audit_splice
+
+    predictor = ConsensusPwmSplicePredictor()
+    candidate = "ATGGTAAGTACCGGCGTGAGTGCCAAATTTGGC"
+    reference = "ATGAAACCCTTTAAACCCTTTAAACCCTTTGGC"
+
+    low = audit_splice([predictor], [candidate], reference, threshold=0.2)
+    flags = low.candidates[0].by_backend[0].flags
+    if any(flag.score <= DEFAULT_SITE_PROBABILITY for flag in flags):
+        # A site flagged below the default background must now carry pooled risk.
+        assert low.candidates[0].by_backend[0].pooled_risk > 0.0
+
+
+def test_the_audit_default_threshold_is_unchanged() -> None:
+    """Coupling the two must not have moved the shipped default path."""
+    from bt4.biomodels.splice import ConsensusPwmSplicePredictor
+    from bt4.biomodels.splice.audit import DEFAULT_SITE_THRESHOLD, audit_splice
+
+    predictor = ConsensusPwmSplicePredictor()
+    seq = "ATGGTAAGTACCGGCGTGAGTGCCAAATTTGGC"
+    ref = "ATGAAACCCTTTAAACCCTTTAAACCCTTTGGC"
+    explicit = audit_splice([predictor], [seq], ref, threshold=DEFAULT_SITE_THRESHOLD)
+    assert DEFAULT_SITE_THRESHOLD == DEFAULT_SITE_PROBABILITY
+    # The default background and the default threshold are the same number, so the
+    # audit's pooled risk equals the bare `pooled_risk` it used to call.
+    assert explicit.candidates[0].by_backend[0].pooled_risk == pooled_risk(
+        predictor.score_sequence(seq), explicit.top_k
+    )
