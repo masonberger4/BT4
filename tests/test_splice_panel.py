@@ -370,3 +370,53 @@ def test_lowering_the_consistency_floor_is_possible_but_deliberate(tmp_path: Pat
         path, negative_construction=_NEG, annotation="U12 AT-AC set", min_motif_consistency=0.0
     )
     assert panel.motif_consistency().fraction == 0.0
+
+
+# --------------------------------------------------------------------------
+# Chromosome naming: the panel builder's most likely trip-up
+
+
+@pytest.mark.parametrize(
+    ("group", "normalized"),
+    [
+        ("chr2", "2"), ("CHR2", "2"), ("2", "2"), ("chrX", "X"), ("x", "X"),
+        ("chr1", "1"), (" chr9 ", "9"),
+        ("NC_000002.12", None), ("scaffold_7", None), ("", None), ("chrZ", None),
+    ],
+)
+def test_chromosome_names_normalize_across_conventions(
+    group: str, normalized: str | None
+) -> None:
+    """GENCODE writes ``chr2``, Ensembl writes ``2``, and both are the same chromosome."""
+    from bt4.biomodels.splice.panel import normalize_chromosome
+
+    assert normalize_chromosome(group) == normalized
+
+
+def test_training_overlap_matches_either_spelling() -> None:
+    """A training panel must be caught whichever convention named it.
+
+    Matching only the ``chr``-prefixed spelling meant an Ensembl-named panel drawn
+    entirely from the models' training chromosomes reported no overlap at all.
+    """
+    for group in ("chr2", "2", "CHR2", "chrX", "X"):
+        panel = panel_from_windows([_window("w", group)], negative_construction=_NEG)
+        assert panel.training_overlap == (group,), group
+        assert panel.unclassified_groups == ()
+
+
+def test_held_out_chromosomes_match_in_either_spelling() -> None:
+    for group in ("chr1", "1", "chr9", "9"):
+        panel = panel_from_windows([_window("w", group)], negative_construction=_NEG)
+        assert panel.training_overlap == ()
+        assert panel.unclassified_groups == ()
+
+
+def test_an_unclassifiable_group_is_reported_as_unknown_not_clean() -> None:
+    """Absence from ``training_overlap`` must not be read as evidence of anything."""
+    panel = panel_from_windows(
+        [_window("w", "NC_000002.12")], negative_construction=_NEG
+    )
+    assert panel.training_overlap == ()
+    assert panel.unclassified_groups == ("NC_000002.12",)
+    assert panel.describe()["unclassified_groups"] == ["NC_000002.12"]

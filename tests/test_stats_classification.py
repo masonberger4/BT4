@@ -34,6 +34,7 @@ from bt4.biomodels._stats import (
     expected_calibration_error,
     mcc,
     pr_auc,
+    pr_auc_skill,
     reliability_bins,
     roc_auc,
     top_k_accuracy,
@@ -283,3 +284,55 @@ def test_non_binary_labels_raise(fn) -> None:  # type: ignore[no-untyped-def]
     """Ground truth must be 0/1; a probability passed as a label is a real bug."""
     with pytest.raises(ValueError, match="labels must be 0/1"):
         fn([0, 2], [0.5, 0.5])
+
+
+# --------------------------------------------------------------------------
+# What pr_auc_skill does NOT do
+
+
+def test_pr_auc_skill_is_not_comparable_across_prevalences() -> None:
+    """Pins the correction to a claim this module's docstring used to make.
+
+    ``pr_auc_skill`` puts average precision's floor at 0 and its ceiling at 1 for every
+    prevalence. It is tempting -- and wrong -- to read that as making the number
+    comparable across panels: AP's prevalence dependence is not a constant offset, so
+    rescaling the floor does not remove it.
+
+    With model quality held **fixed** and only the negative count varied, the skill
+    score collapses while ROC-AUC holds. A threshold on skill is therefore still
+    passable by sampling fewer negatives, which is why the splice gate requires a
+    declared ``negative_construction`` rather than trusting the rescaling.
+    """
+    import math
+    import random
+
+    def sigmoid(x: float) -> float:
+        return 1.0 / (1.0 + math.exp(-x))
+
+    rng = random.Random(0)
+    positives = [sigmoid(rng.gauss(2, 1)) for _ in range(100)]
+
+    skills, rocs = [], []
+    for n_negative in (1_000, 10_000, 30_000):
+        neg_rng = random.Random(1)
+        negatives = [sigmoid(neg_rng.gauss(0, 1)) for _ in range(n_negative)]
+        labels = [1] * len(positives) + [0] * len(negatives)
+        scores = positives + negatives
+        skills.append(pr_auc_skill(labels, scores))
+        rocs.append(roc_auc(labels, scores))
+
+    # ROC-AUC is stable: the model really is unchanged.
+    assert max(rocs) - min(rocs) < 0.01
+    # The skill score is not, and by a wide margin.
+    assert skills[0] > 3 * skills[-1]
+    assert skills == sorted(skills, reverse=True)
+
+
+def test_pr_auc_skill_keeps_its_floor_and_ceiling_at_any_prevalence() -> None:
+    """What it *does* do, and the reason it is reported: 0 at no-skill, 1 at perfect."""
+    for n_negative in (10, 100, 1_000):
+        labels = [1] * 10 + [0] * n_negative
+        perfect = [1.0] * 10 + [0.0] * n_negative
+        prevalence = 10 / len(labels)
+        assert pr_auc_skill(labels, perfect) == pytest.approx(1.0)
+        assert pr_auc_skill(labels, [prevalence] * len(labels)) == pytest.approx(0.0, abs=1e-9)

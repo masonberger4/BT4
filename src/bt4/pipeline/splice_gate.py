@@ -59,6 +59,7 @@ from bt4.biomodels.splice.panel import SplicePanel, SpliceWindow, canonical_moti
 from bt4.pipeline.splice_crosscheck import resolve_splice_backend
 
 __all__ = [
+    "COMBINED_TRACK_EPSILON",
     "PEAK_SEARCH",
     "SPLICE_BASELINES",
     "AlignmentDiagnostic",
@@ -88,8 +89,11 @@ class SpliceGateSettings:
             rather than an ad-hoc one.
         min_pr_auc: Per-stratum average-precision floor. A **pre-commitment** recorded
             at gate time, never a bar this module blesses.
-        min_pr_auc_skill: Per-stratum prevalence-normalized floor, the one that stays
-            comparable across panels.
+        min_pr_auc_skill: Per-stratum floor on average precision rescaled so no-skill
+            is 0 and perfect is 1 at any prevalence. Note this is **not** a
+            cross-panel-comparable quantity -- see
+            :func:`~bt4.biomodels._stats.pr_auc_skill` -- so a bar set here is only
+            meaningful against a pinned ``negative_construction``.
         max_ece: Per-stratum expected-calibration-error ceiling.
         n_bins: Reliability bins.
         seed: Seed for the permutation baseline (invariant #7).
@@ -117,6 +121,9 @@ class AlignmentDiagnostic:
             These are **residual** shifts, measured on the already-aligned track, so
             ``0`` means the declared ``anchor_offset`` is right.
         n_sites: Sites the probe ran over.
+        n_flat: Sites whose probe window was flat, so no peak existed to align. Tracked
+            separately because the tie-break would otherwise resolve them to ``0`` and
+            report a silent backend as perfectly aligned.
         applied_offset: The ``anchor_offset`` that was in force during the probe.
             Carried so :meth:`note` can name the **absolute** value to declare rather
             than the residual -- a user told to "pass anchor_offset=+1" while already
@@ -126,6 +133,7 @@ class AlignmentDiagnostic:
     counts: tuple[tuple[int, int], ...]
     n_sites: int
     applied_offset: int = 0
+    n_flat: int = 0
 
     @property
     def modal_offset(self) -> int:
@@ -148,9 +156,29 @@ class AlignmentDiagnostic:
         """Return a one-line verdict on whether the anchors agree."""
         if not self.n_sites:
             return "alignment: no sites to probe"
+        # A completely flat probe window has no argmax, and the tie-break resolves it to
+        # 0 -- so a backend emitting no signal at all was being credited with peaks
+        # landing exactly on every declared site. That is a positive alignment claim
+        # from an absence of evidence, in the one diagnostic whose job is to separate
+        # "misaligned" from "scoring near zero".
+        if self.n_flat == self.n_sites:
+            return (
+                "alignment: the backend's scores are FLAT around every declared site, so "
+                "there is no peak to align. This says nothing about the anchors -- it "
+                "says the backend produced no signal on this panel"
+            )
+        if self.n_flat:
+            return (
+                f"alignment: {self.n_flat}/{self.n_sites} sites have flat scores with no "
+                f"peak to align; of the rest, "
+            ) + self._peak_note()
+        return "alignment: " + self._peak_note()
+
+    def _peak_note(self) -> str:
+        """The alignment verdict over the sites that actually carried a peak."""
         if self.modal_offset:
             return (
-                f"alignment: the backend's score peaks {self.modal_offset:+d} from the "
+                f"the backend's score peaks {self.modal_offset:+d} from the "
                 f"declared position for most sites (only {self.fraction_at_zero:.1%} "
                 f"peak exactly on it) -- the anchors DISAGREE. Pass "
                 f"anchor_offset={self.recommended_offset:+d} (currently "
@@ -158,7 +186,7 @@ class AlignmentDiagnostic:
                 "rather than reading these metrics as model quality"
             )
         return (
-            f"alignment: peaks land on the declared position for "
+            f"peaks land on the declared position for "
             f"{self.fraction_at_zero:.1%} of sites with anchor_offset="
             f"{self.applied_offset:+d} -- anchors agree"
         )
@@ -239,15 +267,28 @@ def _tracks(result: SpliceResult, combined: bool) -> dict[str, tuple[float, ...]
     return {"donor": result.donor, "acceptor": result.acceptor}
 
 
+COMBINED_TRACK_EPSILON: float = 1e-9
+"""Below this, an acceptor track counts as absent rather than merely small.
+
+Exact ``== 0.0`` was too strict: a backend whose acceptor channel carries float32
+softmax dust (or any caller-supplied ``results``, a path the API explicitly offers)
+would be scored with a donor/acceptor split, producing exactly the artifact the
+detection exists to prevent -- and silently, since the explanatory note only appears
+when the collapse happens. No real per-position probability is meaningfully non-zero
+at this scale."""
+
+
 def _is_combined(results: Sequence[SpliceResult]) -> bool:
     """Return whether the backend emits one combined track rather than two.
 
-    Detected from the output: an identically-zero acceptor track over the whole panel
-    is either Pangolin's binary head (which never separated the two) or a backend whose
-    acceptor scores are unusable anyway. Either way it must not be scored as an
-    acceptor prediction. Callers can override the detection when they know better.
+    Detected from the output: an all-but-zero acceptor track over the whole panel is
+    either Pangolin's binary head (which never separated the two) or a backend whose
+    acceptor scores are unusable anyway. Either way it must not be scored as an acceptor
+    prediction. Callers can override the detection when they know better.
     """
-    return all(value == 0.0 for result in results for value in result.acceptor)
+    return all(
+        abs(value) < COMBINED_TRACK_EPSILON for result in results for value in result.acceptor
+    )
 
 
 def score_splice_panel(panel: SplicePanel, backend: str) -> list[SpliceResult]:
@@ -331,6 +372,7 @@ def _alignment(
     """
     counts = dict.fromkeys(PEAK_SEARCH, 0)
     n_sites = 0
+    n_flat = 0
     for window, result in zip(panel.windows, results, strict=True):
         tracks = _tracks(result, combined)
         for position, kind in window.sites():
@@ -338,17 +380,24 @@ def _alignment(
             if track is None:
                 continue
             n_sites += 1
+            probed = [_aligned(track, position + d, anchor_offset) for d in PEAK_SEARCH]
+            if max(probed) - min(probed) < COMBINED_TRACK_EPSILON:
+                # No peak exists here. Counting the tie-break's 0 would manufacture an
+                # "anchors agree" claim out of a backend that produced nothing.
+                n_flat += 1
+                continue
             # Ties resolve to the offset nearest zero, then the lower one, so the probe
-            # is deterministic (invariant #7) and never invents a shift from flat scores.
+            # is deterministic (invariant #7).
             best = max(
-                PEAK_SEARCH,
-                key=lambda d: (_aligned(track, position + d, anchor_offset), -abs(d), -d),
-            )
+                zip(PEAK_SEARCH, probed, strict=True),
+                key=lambda item: (item[1], -abs(item[0]), -item[0]),
+            )[0]
             counts[best] += 1
     return AlignmentDiagnostic(
         counts=tuple(sorted(counts.items())),
         n_sites=n_sites,
         applied_offset=anchor_offset,
+        n_flat=n_flat,
     )
 
 
@@ -539,9 +588,33 @@ def run_splice_panel_gate(
             for scored_stratum in report.strata:
                 if scored_stratum.name == stratum and scored_stratum.pr_auc_skill > top:
                     winner, top = baseline, scored_stratum.pr_auc_skill
+        # A stratum no baseline scored is an UNCONTESTED stratum, not a won one. Left as
+        # the initial `-inf` it read as a win against a control that never ran -- and it
+        # reported `-inf` as though it were that control's skill.
+        if winner == "none":
+            beats = False
+            best.append((stratum, "none (uncontested)", float("nan")))
+            notes.append(
+                f"no baseline scored the {stratum!r} stratum, so the backend was not "
+                "contested there; an uncontested stratum is never counted as beaten"
+            )
+            continue
         best.append((stratum, winner, top))
         if head_skill[stratum] <= top:
             beats = False
+
+    # `SPLICE_BASELINES` says the controls are "kept permanently: a control that
+    # disappears once it is inconvenient was never a control". Nothing enforced that:
+    # dropping `pwm` alone let BT4's own shipped default certify itself with one keyword.
+    # Running a subset is still allowed -- it is useful for a quick look -- it just
+    # cannot produce a recommendation.
+    missing_baselines = tuple(b for b in SPLICE_BASELINES if b not in tuple(baselines))
+    if missing_baselines:
+        notes.append(
+            f"baseline(s) {list(missing_baselines)} were not run, so this comparison is "
+            "incomplete and cannot be promotable. Dropping the control a backend would "
+            "lose to is exactly how a weak result gets certified"
+        )
 
     # A bar the caller never set is not a bar that held. The defaults are permissive by
     # design (this module must not bless a threshold), so the honest consequence is that
@@ -559,11 +632,21 @@ def run_splice_panel_gate(
         )
 
     overlap = panel.training_overlap
-    held_out = not overlap
+    unclassified = panel.unclassified_groups
+    held_out = not overlap and not unclassified
     if overlap:
         notes.append(
             f"NOT HELD OUT: {list(overlap)} are chromosomes both models trained on, so "
             "these metrics are optimistic and cannot support promotion"
+        )
+    if unclassified:
+        # "I do not recognise this name" must never read as "held out". A GENCODE/Ensembl
+        # panel names chromosomes `2`, `4`, `X` -- bare, no `chr` -- so a panel drawn
+        # ENTIRELY from training chromosomes used to report held_out=True.
+        notes.append(
+            f"group(s) {list(unclassified)} are not recognisable as human chromosomes, so "
+            "whether this panel is held out could not be established. Name groups as "
+            "chromosomes (`chr1` or `1`); an unrecognised group is never assumed clean"
         )
 
     return SpliceGateComparison(
@@ -579,6 +662,12 @@ def run_splice_panel_gate(
         held_out=held_out,
         thresholds_declared=thresholds_declared,
         alignment=alignment,
-        promotable=bool(head.passed and beats and held_out and thresholds_declared),
+        promotable=bool(
+            head.passed
+            and beats
+            and held_out
+            and thresholds_declared
+            and not missing_baselines
+        ),
         notes=tuple(notes),
     )
