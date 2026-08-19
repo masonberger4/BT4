@@ -58,11 +58,38 @@ WITH_ABUNDANCE: tuple[str, ...] = (
     "saccharomyces_cerevisiae",
 )
 
-#: The one organism deliberately left without one: PaxDb identifies *A.
-#: thaliana* proteins by UniProt accession, which the pinned Ensembl Plants
-#: annotation does not carry, so the join would need an unpinned external
-#: mapping. BT4 ships no table rather than one built on a guess.
-WITHOUT_ABUNDANCE: tuple[str, ...] = ("arabidopsis_thaliana",)
+#: Organisms deliberately shipped WITHOUT a highly-expressed table. Each entry
+#: records the *measured* reason, because "we did not get to it" and "the
+#: evidence does not support one" are different claims and only the second
+#: justifies an absence:
+#:
+#: * *A. thaliana* -- PaxDb identifies its proteins by UniProt accession, which
+#:   the pinned Ensembl Plants annotation does not carry, so the join would need
+#:   an unpinned external mapping.
+#: * *C. griseus* (CHO) -- PaxDb v6.1 holds **no whole-organism integrated**
+#:   dataset for taxon 10029, only a single study
+#:   (``10029-PXD014877_Mueller_Nature_2020``). Every table above is built from
+#:   the integrated set; one built from a single study would carry the same
+#:   ``highly_expressed`` label while meaning something materially different
+#:   (one lab, one condition, no cross-study integration). Distinguishing them
+#:   needs the reference-set label to carry its evidence class, which is a
+#:   design change and not a data addition.
+#: * *K. phaffii* -- PaxDb v6.1 has no dataset directory for taxon 644223 at all.
+#:
+#: *B. subtilis* is the near-miss worth recording: the integrated dataset **does**
+#: exist (taxon 224308) and the join is available -- PaxDb writes ``BSU35360``
+#: where Ensembl Bacteria writes ``BSU_35360``, and that declared ``^BSU`` ->
+#: ``BSU_`` rewrite joins 4,042/4,052 = 99.8%. That is a locus-tag punctuation
+#: difference derivable from the two pinned files alone, not a third-party
+#: mapping, so it is admissible -- it just needs the builder to support a
+#: declared per-spec rewrite, which is a separate change from adding the
+#: genome-wide tables.
+WITHOUT_ABUNDANCE: tuple[str, ...] = (
+    "arabidopsis_thaliana",
+    "bacillus_subtilis",
+    "cricetulus_griseus_chok1gshd",
+    "komagataella_phaffii",
+)
 
 #: The reference-set size every shipped table was built at.
 TOP_N = 300

@@ -1147,7 +1147,7 @@ control.
   mouse/rat independently landing within 1.5 points of human, and the known
   preferred Leu/stop codons per species. **The three legacy hand-curated tables
   are done:** human, *E. coli* and *S. cerevisiae* are now recounted through the
-  same pinned-Ensembl pipeline as the other six, so **all nine** bundled tables
+  same pinned-Ensembl pipeline as the other six, so **all** bundled tables
   are re-derivable counts and no organism — least of all the default — rests on
   undocumented numbers. That rebuild changed no delivered sequence (byte-identical
   across a four-protein × three-organism panel; CAI moved ≤ 0.0003), because CAI
@@ -1168,12 +1168,31 @@ control.
   The tables reproduce the classic *E. coli* and yeast optimal codons and show
   **stronger codon bias than genome-wide in all eight** organisms, with the gap
   largest in yeast/fly and smallest in human/rat — the ordering dos Reis (2004)
-  predicts. Eight of nine organisms have one; *A. thaliana* does not, because
+  predicts. Eight organisms have one; *A. thaliana* does not, because
   PaxDb identifies its proteins by UniProt accession that the pinned Ensembl
   Plants annotation does not carry, so BT4 ships none for it rather than one built
   on a guess. What remains in this phase is enumerated in
   [`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md), not here — a "still ahead" list
   in two documents is exactly the pair of status facts §10.11 forbids.
+  **The three industrial expression hosts have now landed too** — **CHO**
+  (*Cricetulus griseus*, CHOK1GS_HDv1), ***B. subtilis*** 168 and ***K. phaffii***
+  GS115 (*Pichia pastoris*) — taking BT4 to **twelve** selectable organisms, each
+  with a recounted genome-wide table *and* a GtRNAdb tRNA table, because a codon
+  table without tRNA data would make tAI silently unavailable exactly where a user
+  asked for it (a shipped invariant, not a preference). Two honest limits ride with
+  them, both recorded in their sidecars rather than smoothed over: CHO's tRNA set is
+  GtRNAdb's CriGri_1.0 while its codon table is Ensembl's CHOK1GS_HDv1 — **the one
+  organism whose two inputs are not assembly-matched**; and none of the three ships a
+  highly-expressed reference set, for three *different* measured reasons (PaxDb has
+  no data at all for *K. phaffii*; only a single study, not the whole-organism
+  integrated set, for CHO; and for *B. subtilis* the integrated set exists and joins
+  at 99.8% via a declared `BSU` → `BSU_` locus-tag rewrite the builder does not yet
+  support). *B. subtilis* also loses **22.5%** of its CDS to the shared ATG-start
+  filter — more than double *E. coli*'s 9.6%, since it genuinely uses TTG/GTG starts
+  — and that was **measured for this organism** rather than inherited: counting the
+  dropped genes back in moves **no** amino acid's top codon and shifts `w` by at most
+  0.023, so it is a precision gap, not a wrong answer.
+
   **Tissue/cell-type-specific tables are deliberately out of scope** (maintainer
   decision): the work is large, the resulting number is hard to qualify honestly,
   and the upside over a whole-organism highly-expressed reference is small.

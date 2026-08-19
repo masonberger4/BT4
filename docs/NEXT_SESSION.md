@@ -59,19 +59,31 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > `misc_feature` spans put residual violations on the map the user opens, and whose
 > reader turns an existing vector map into a `ConstructContext`. **Tier 4 has now
 > partly landed too** — the functional (bipartite) poly(A) constraint and AAV/LVV
-> packaging accounting, and **tAI now reaches all nine organisms** (E. coli was the
+> packaging accounting, and **tAI now reaches every bundled organism** (E. coli was the
 > last gap; exercising its bacterial path surfaced and fixed a latent tAI
-> fidelity bug). **Start here is now the rest of queue item 6 (more organisms,
-> bacterial alternative start codons).**
+> fidelity bug).
+>
+> ✅ **The three industrial expression hosts have landed (2026-08-19)** — **CHO**
+> (CHOK1GS_HDv1), ***B. subtilis*** 168 and ***K. phaffii*** GS115 (*Pichia
+> pastoris*), taking BT4 from nine selectable organisms to **twelve**, each with a
+> recounted genome-wide codon table *and* a GtRNAdb tRNA table (the shipped
+> invariant: a codon table without tRNA data makes tAI silently unavailable exactly
+> where a user asked for it). Two limits ride with them and are recorded, not
+> smoothed: CHO is **the one organism whose two inputs are not assembly-matched**
+> (tRNA on CriGri_1.0, codons on CHOK1GS_HDv1), and none of the three ships a
+> highly-expressed set — for three *different* measured reasons. **Start here is now
+> the *B. subtilis* highly-expressed table**, which is a real, evidence-backed next
+> step rather than a wish: its PaxDb integrated dataset exists and joins at 99.8%
+> via a declared `BSU` → `BSU_` rewrite (queue item 6).
 
 | Component | State | Calibrated? | Primary file(s) |
 |---|---|---|---|
 | Exact-DP codon trellis + certificate | DONE | n/a | `optimize/exact_dp.py` |
 | Rust trellis port (`trellis_solve`, regime-gated) | DONE | n/a | `rust/bt4_core`, `bt4_native` |
 | Objectives: CAI, tAI, GC, ramp, CpG, %MinMax, codon-pair | DONE | n/a | `objectives/` |
-| tAI (real GtRNAdb, **all 9 organisms**; prokaryotic `sking` from provenance) | DONE | n/a | `biomodels/codon/tai.py`, `scripts/build_trna_tables.py` |
-| Codon tables: **all 9** recounted from pinned Ensembl CDS (`genome_wide`) | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
-| **Highly-expressed reference sets** (PaxDb top-300, 8 of 9 organisms, the **default**) | DONE | n/a (a declared reference set, not a model) | `scripts/build_highly_expressed_tables.py`, `biomodels/codon/tables.py` |
+| tAI (real GtRNAdb, **all 12 organisms**; prokaryotic `sking` from provenance) | DONE | n/a | `biomodels/codon/tai.py`, `scripts/build_trna_tables.py` |
+| Codon tables: **all 12** recounted from pinned Ensembl CDS (`genome_wide`) | DONE | n/a | `biomodels/codon/data/`, `scripts/build_organism_tables.py` |
+| **Highly-expressed reference sets** (PaxDb top-300, 8 of 12 organisms, the **default**) | DONE | n/a (a declared reference set, not a model) | `scripts/build_highly_expressed_tables.py`, `biomodels/codon/tables.py` |
 | Constraints: homopolymer, GC-run, max-repeat, tandem/inverted, forbidden+presets, restriction, Kozak-ATG, uORF, splice-motif | DONE | n/a | `constraints/` |
 | Budget backends: CP-SAT, Lagrangian, dinucleotide-count | DONE | n/a | `optimize/{cpsat,lagrangian}.py` |
 | SA refinement + block moves + parallel tempering | DONE | n/a | `optimize/anneal_refine.py` |
@@ -272,12 +284,31 @@ items 1–3 are in
 6. **[START HERE · self-contained] Phase-5 breadth, continued.** Nine organisms ship recounted
    genome-wide tables and eight also ship a highly-expressed reference set. What
    remains:
-   - **Add further organisms** by extending `SPECS` in `build_organism_tables.py`
-     (CHO/*P. pastoris*/*B. subtilis* are the obvious industrial gaps). Pair each
-     with GtRNAdb tRNA data and a PaxDb `SPECS_HE` entry where they exist; never
-     fabricate a table, and never join abundance IDs through an unpinned mapping
-     (that is why *A. thaliana* has no highly-expressed table).
-   - **Bacterial alternative start codons.** Both builders' shared validity filter
+   - **Add further organisms — the three industrial hosts are DONE 2026-08.** CHO
+     (`cricetulus_griseus_chok1gshd`, CHOK1GS_HDv1), *B. subtilis* 168 and
+     *K. phaffii* GS115 all ship recounted genome-wide tables **and** GtRNAdb tRNA
+     tables, taking BT4 from nine selectable organisms to twelve. None ships a
+     highly-expressed set, for three different measured reasons — see the
+     `WITHOUT_ABUNDANCE` note in `tests/test_highly_expressed_tables.py`, which
+     records the evidence per organism rather than a blanket "not done".
+     **The concrete follow-up this surfaced:** *B. subtilis* **can** have one. PaxDb
+     v6.1 has its whole-organism integrated dataset (taxon 224308) and the join is
+     available — PaxDb writes `BSU35360` where Ensembl Bacteria writes `BSU_35360`,
+     and that `^BSU` → `BSU_` rewrite joins **4,042/4,052 = 99.8%**. It is a
+     locus-tag punctuation difference derivable from the two pinned files alone, not
+     a third-party mapping, so it is admissible under the *A. thaliana* rule; it
+     needs `AbundanceSpec` to carry a **declared per-spec identifier rewrite** (plus
+     a minimum-join-rate check so a bad rewrite fails loudly rather than thinning the
+     reference set). That builder change is the next task here.
+     Further organisms beyond these still follow the same rules: never fabricate a
+     table, and never join abundance IDs through an unpinned mapping.
+   - **Bacterial alternative start codons.** *(Now measured for a second organism:
+     the filter costs *B. subtilis* **954 of 4,237 CDS = 22.5%** — TTG 553, GTG 387,
+     ATT 8, CTG 5, ATC 1 — more than double *E. coli*'s share, because it genuinely
+     uses alternative starts. Counting them back in moves **no** amino acid's top
+     codon and shifts `w` by at most 0.023, so the same conclusion holds: a
+     precision gap, not a wrong answer. This raises the value of fixing it.)*
+     Both builders' shared validity filter
      requires an `ATG` start, dropping 409 of 4,239 *E. coli* CDS (9.6%) —
      including *tufA* and *hupB*. Measured impact on the shipped table: 16 of the
      300 selected genes change and **no** amino acid's top codon moves, so this is

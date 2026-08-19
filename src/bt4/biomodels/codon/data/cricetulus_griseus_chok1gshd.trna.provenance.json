@@ -1,0 +1,17 @@
+{
+  "build": "tRNAscan-SE predictions from the pinned GtRNAdb FASTA; genes counted per anticodon. Excluded: SeC, Sup, Und, Undet. Rebuild with scripts/build_trna_tables.py --organism cricetulus_griseus_chok1gshd (--verify diffs against the committed bytes).",
+  "dropped": {
+    "SeC": 2,
+    "Sup": 1,
+    "Und": 1
+  },
+  "genome": "Cricetulus griseus (criGri1 / CriGri_1.0, CHO-K1 cell line)",
+  "note": "427 predictions minus 2 SeC (selenocysteine), 1 suppressor and 1 undetermined = 423 tRNA genes over 46 anticodons. ASSEMBLY CAVEAT, stated because it is a real one: GtRNAdb's Chinese hamster set is on CriGri_1.0, while BT4's codon table for this organism is counted on Ensembl's CHOK1GS_HDv1. Both derive from the CHO-K1 lineage, but they are different assemblies, so the tRNA gene copy numbers and the codon counts do not come from the same bytes -- unlike human or mouse, where GtRNAdb and Ensembl are assembly-matched. CriGri_1.0 is also the more fragmented assembly and tRNA loci are repetitive, so treat these copy numbers as the weaker input of the two. Recorded rather than smoothed over: the sidecar names the genome each number actually came from. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant.",
+  "retrieved": "2026-08-19",
+  "sha256": "94328fe87340ca03ee964b3f99d85dc256a77f1d73c7f5293013b50d54d5f783",
+  "source": "GtRNAdb (UCSC Lowe Lab), cricetulus_griseus_chok1gshd tRNA gene set",
+  "source_sha256": "ca60c30fb9c34b528df0a42c0fdef552364300ab02a163086c8f4940ca50a2b7",
+  "source_url": "https://gtrnadb.ucsc.edu/genomes/eukaryota/Cgris1/criGri1-tRNAs.fa",
+  "super_kingdom": "eukaryota",
+  "total_genes": 423
+}

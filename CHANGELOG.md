@@ -7,6 +7,50 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **Three industrial expression hosts: CHO, *B. subtilis* and *K. phaffii*** — taking
+  BT4 from nine selectable organisms to **twelve**. Each ships a genome-wide codon
+  table recounted from a release-pinned Ensembl CDS set (`Cricetulus_griseus_chok1gshd`
+  CHOK1GS_HDv1, Ensembl 116; *B. subtilis* subsp. subtilis str. 168 ASM904v1, Ensembl
+  Bacteria 63; *K. phaffii* GS115 GCA_000027005.1, Ensembl Fungi 63 — a division the
+  builder did not previously reach) **and** a GtRNAdb tRNA table, because a codon table
+  without tRNA data would make tAI silently unavailable exactly where a user asked for
+  it — a shipped invariant, and the one that decided the scope of this change. All six
+  tables reproduce their committed bytes under `--verify`.
+
+  Checked against external ground truth rather than self-consistency: CHO's GC3 lands
+  within 0.6 points of mouse and rat (it is a rodent, counted from a separate assembly);
+  *B. subtilis* separates from *E. coli* by ~11 GC3 points through the identical Ensembl
+  Bacteria path, reproducing their known ~7-point genome-GC difference; both AT-rich
+  hosts take AAA/GAA for Lys/Glu and CHO takes AAG/GAG/CTG, as the literature reports.
+  *B. subtilis*'s tRNA set is **86 genes, exactly the published count** for strain 168
+  (Kunst et al. 1997) — corroboration, not just a pinned number; the *K. phaffii* count
+  is the source's own and its note says so.
+
+  Two limits are recorded in the sidecars rather than smoothed over. **CHO is the one
+  organism whose two inputs are not assembly-matched**: GtRNAdb serves Chinese hamster
+  tRNAs on the more fragmented CriGri_1.0 while the codon table is counted on
+  CHOK1GS_HDv1, so its tRNA copy numbers are the weaker input. And **none of the three
+  ships a highly-expressed reference set**, for three *different* measured reasons —
+  PaxDb v6.1 has no dataset at all for *K. phaffii* (taxon 644223); for CHO it has only
+  a single study (`PXD014877_Mueller_Nature_2020`), not the whole-organism *integrated*
+  set every shipped table uses, and one built from a single study would carry the same
+  `highly_expressed` label while meaning materially less; and for *B. subtilis* the
+  integrated set exists and joins at **4,042/4,052 = 99.8%** via a declared `^BSU` →
+  `BSU_` locus-tag rewrite, which is admissible (derivable from the two pinned files, not
+  a third-party mapping) but needs the builder to support a per-spec identifier rewrite.
+  That is now the next queued task rather than an unexplained absence.
+
+  **The *B. subtilis* start-codon gap was measured for this organism, not inherited.**
+  The shared validity filter requires an `ATG` start and drops **954 of 4,237 CDS
+  (22.5%)** — TTG 553, GTG 387, ATT 8, CTG 5, ATC 1 — more than double the 9.6% it costs
+  *E. coli*, because *B. subtilis* genuinely uses alternative starts. Counting the
+  dropped genes back in (skipping the initiator, which is not a codon *choice*) moves
+  **no** amino acid's most-used codon and shifts relative adaptiveness by at most 0.023,
+  so the filter costs precision rather than correctness — the same verdict as *E. coli*,
+  now established for the organism it actually applies to. Pinned by a test that asserts
+  the drop tally from the sidecar and was verified to fail when the number is wrong.
+
 ### Fixed
 - **BT4's splice risk pooling discarded its entire signal in BT4's own regime, silently.**
   `pool_log_odds` sums `max(0, logit(p) - logit(background))` with `background =

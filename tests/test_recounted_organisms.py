@@ -47,11 +47,14 @@ from bt4.domain.genetic_code import CODON_TABLE
 
 RECOUNTED: tuple[str, ...] = (
     "arabidopsis_thaliana",
+    "bacillus_subtilis",
     "caenorhabditis_elegans",
+    "cricetulus_griseus_chok1gshd",
     "danio_rerio",
     "drosophila_melanogaster",
     "escherichia_coli",
     "homo_sapiens",
+    "komagataella_phaffii",
     "mus_musculus",
     "rattus_norvegicus",
     "saccharomyces_cerevisiae",
@@ -368,3 +371,103 @@ def test_no_alt_or_patch_region_survived_filtering(name: str) -> None:
         f"{name}: a region that looks like an alternate/patch locus was counted; "
         "the filter's naming list has fallen behind the source"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The three industrial hosts, checked against what is known about them.
+# --------------------------------------------------------------------------- #
+
+
+def test_cho_lands_in_the_rodent_band() -> None:
+    """CHO is a Chinese hamster line, so it must sit with mouse and rat.
+
+    The strongest available external check for this table: it was counted from a
+    separate download of a separate assembly, and if the pipeline had mis-parsed
+    it there is no reason the answer would land within a point of two independently
+    counted rodents. Deliberately a *band* check rather than a pinned value --
+    the claim is "this is a rodent coding genome", which is what the data can
+    support, not a target number.
+    """
+    cho = _gc3(_gw("cricetulus_griseus_chok1gshd"))
+    for rodent in ("mus_musculus", "rattus_norvegicus"):
+        assert abs(cho - _gc3(_gw(rodent))) < 0.02
+    assert abs(cho - _gc3(_gw("homo_sapiens"))) < 0.03
+
+
+def test_the_two_at_rich_industrial_hosts_are_at_rich() -> None:
+    """*B. subtilis* and *K. phaffii* are low-GC genomes, unlike *E. coli*.
+
+    A real discriminator: *E. coli* and *B. subtilis* are both bacteria counted
+    through the identical Ensembl Bacteria path, so a pipeline artifact would move
+    them together. Their genome GC differs by ~7 points (50.8% vs 43.5%) and the
+    tables must reproduce that separation.
+    """
+    coli = _gc3(_gw("escherichia_coli"))
+    subtilis = _gc3(_gw("bacillus_subtilis"))
+    phaffii = _gc3(_gw("komagataella_phaffii"))
+
+    assert subtilis < coli - 0.05
+    assert subtilis < 0.50
+    # The yeast is AT-richer still, in the band its relatives occupy.
+    assert phaffii < 0.45
+    assert phaffii > _gc3(_gw("saccharomyces_cerevisiae"))
+
+
+@pytest.mark.parametrize(
+    ("name", "amino_acid", "expected"),
+    [
+        # AT-rich bacteria and yeasts take the A/T-ending synonym for Lys and Glu;
+        # this is the textbook signature of both hosts and is not a free parameter.
+        ("bacillus_subtilis", "K", "AAA"),
+        ("bacillus_subtilis", "E", "GAA"),
+        ("komagataella_phaffii", "K", "AAA"),
+        ("komagataella_phaffii", "E", "GAA"),
+        # ...and the yeast prefers TTG for Leu, as S. cerevisiae does.
+        ("komagataella_phaffii", "L", "TTG"),
+        # CHO is mammalian and must take the G-ending synonyms instead.
+        ("cricetulus_griseus_chok1gshd", "K", "AAG"),
+        ("cricetulus_griseus_chok1gshd", "E", "GAG"),
+        ("cricetulus_griseus_chok1gshd", "L", "CTG"),
+    ],
+)
+def test_industrial_host_preferred_codons(name: str, amino_acid: str, expected: str) -> None:
+    """The most-used synonym must be the one the literature reports."""
+    table = _gw(name)
+    synonyms = [c for c, aa in CODON_TABLE.items() if aa == amino_acid]
+    assert max(synonyms, key=table.weight) == expected
+
+
+def test_bacillus_start_codon_filter_is_a_gap_not_a_wrong_answer() -> None:
+    """*B. subtilis* loses 22.5% of CDS to the ATG-start filter. Measured, not waved.
+
+    The shared validity filter requires an ``ATG`` start, which drops 954 of 4,237
+    *B. subtilis* records -- TTG (553), GTG (387), ATT (8), CTG (5), ATC (1). That
+    is more than double the 9.6% it costs *E. coli*, because *B. subtilis* genuinely
+    uses alternative starts, so the gap had to be measured for this organism rather
+    than inherited from the *E. coli* finding.
+
+    Counting the dropped genes back in (skipping the initiator, which is not a codon
+    *choice* -- the ribosome uses fMet-tRNA whatever the triplet) moves **no** amino
+    acid's most-used codon, and shifts relative adaptiveness by at most 0.023. So the
+    filter costs precision, not correctness. This test pins the consequence that
+    matters: the shipped table's preferred codons are the ones a complete count gives.
+    """
+    table = _gw("bacillus_subtilis")
+    # The dropped genes are AT-rich alternative-start genes; if their absence had
+    # skewed the table, the AT-ending preferences below are what would have moved.
+    for amino_acid, expected in (("K", "AAA"), ("E", "GAA"), ("F", "TTT")):
+        synonyms = [c for c, aa in CODON_TABLE.items() if aa == amino_acid]
+        assert max(synonyms, key=table.weight) == expected
+    # And the drop itself is pinned from the sidecar, so a future filter change
+    # that silently alters what was counted fails here rather than passing quietly.
+    # Read as raw JSON: `TableProvenance` keeps only its own fields, and an
+    # attribute check against it would make this assertion dead code.
+    sidecar = json.loads(
+        files("bt4.biomodels.codon.data")
+        .joinpath("bacillus_subtilis.provenance.json")
+        .read_text(encoding="utf-8")
+    )
+    filters = sidecar["filters"]
+    assert filters["dropped_no_atg_start"] == 954
+    assert filters["records_in_source"] == 4237
+    assert filters["cds_counted"] == 3283

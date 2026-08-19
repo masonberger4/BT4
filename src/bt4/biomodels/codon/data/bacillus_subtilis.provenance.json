@@ -1,0 +1,31 @@
+{
+  "assembly": "ASM904v1",
+  "build": "genome-wide codon occurrence counts recounted from the pinned Ensembl Bacteria CDS FASTA by scripts/build_organism_tables.py: one representative CDS per gene (the longest; ties broken by transcript id for determinism), keeping only ACGT-only sequences that are a multiple of three, start with ATG, end in a stop codon, and contain no internal stop. The terminal stop codon is counted; every other codon is a sense codon.",
+  "cds_count": 3283,
+  "database": "Ensembl Bacteria",
+  "database_release": "63",
+  "filters": {
+    "cds_counted": 3283,
+    "dropped_alt_locus_or_patch": 0,
+    "dropped_internal_stop": 0,
+    "dropped_no_atg_start": 954,
+    "dropped_no_terminal_stop": 0,
+    "dropped_non_acgt": 0,
+    "dropped_non_representative_isoform": 0,
+    "dropped_not_multiple_of_three": 0,
+    "kept_suspicious_region": 0,
+    "records_in_source": 4237
+  },
+  "genebuild": "ENA/INSDC annotation of GCA_000009045",
+  "license_note": "Ensembl annotation and sequence data are made freely available by EMBL-EBI (see https://www.ebi.ac.uk/about/terms-of-use). Cite Ensembl (Harrison et al., Nucleic Acids Res 2024, doi:10.1093/nar/gkad1049).",
+  "note": "Real genome-wide codon counts from a public, release-pinned CDS set -- NOT a hand-curated or published summary table. Frequencies are raw occurrence counts on a positive scale; only ratios within an amino acid's synonymous group matter for relative adaptiveness and CAI. Counts reflect one representative (longest) transcript per gene, so they are not weighted by expression: CAI built on them is a codon-bias proxy, not a measured expression prediction. Re-derivable from source_url + source_sha256 by rerunning scripts/build_organism_tables.py.",
+  "organism_common_name": "Bacillus subtilis subsp. subtilis str. 168",
+  "rebuild_command": "python scripts/build_organism_tables.py bacillus_subtilis",
+  "reference_set": "genome_wide",
+  "retrieved": "2026-08-19",
+  "sha256": "a02bac2dc10ad2342e3901796ab9be488d8046783035ff13800f1c4786cd8aa3",
+  "source": "Ensembl Bacteria release 63 -- Bacillus subtilis subsp. subtilis str. 168 CDS set (assembly ASM904v1, annotation ENA/INSDC annotation of GCA_000009045)",
+  "source_sha256": "49fa0c7f2234c163b1756677726cac7f63f85c39ad0a1df8bbc8237c019e2998",
+  "source_url": "https://ftp.ebi.ac.uk/ensemblgenomes/pub/bacteria/release-63/fasta/bacteria_0_collection/bacillus_subtilis_subsp_subtilis_str_168_gca_000009045/cds/Bacillus_subtilis_subsp_subtilis_str_168_gca_000009045.ASM904v1.cds.all.fa.gz",
+  "total_codons_counted": 958715
+}

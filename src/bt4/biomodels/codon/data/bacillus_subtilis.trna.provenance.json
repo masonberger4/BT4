@@ -1,0 +1,13 @@
+{
+  "build": "tRNAscan-SE predictions from the pinned GtRNAdb FASTA; genes counted per anticodon. Excluded: SeC, Sup, Und, Undet. Rebuild with scripts/build_trna_tables.py --organism bacillus_subtilis (--verify diffs against the committed bytes).",
+  "dropped": {},
+  "genome": "Bacillus subtilis subsp. subtilis str. 168 (baciSubt2); chromosomal",
+  "note": "86 predictions, none excluded, over 33 anticodons. The count is independently corroborated rather than merely self-consistent: 86 tRNA genes is the figure reported for the B. subtilis 168 genome (Kunst et al., Nature 1997, doi:10.1038/36786), so the pinned GtRNAdb set and the published annotation agree exactly. Prokaryotic, so the tAI model applies its sking=1 terms -- including the constant W[ATA] for the lysidine-modified tRNA-Ile2, whose CAT anticodon is counted here together with initiator and elongator Met. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant.",
+  "retrieved": "2026-08-19",
+  "sha256": "c542874fe5b6223cb8b8c7faabb157ae35d21bd72e7ba2779284a4e69343f7e0",
+  "source": "GtRNAdb (UCSC Lowe Lab), bacillus_subtilis tRNA gene set",
+  "source_sha256": "b410ebfcc20ea710fee58ba2fde52ce48d0a4bb0f5f758ae9d93d81b4c664e27",
+  "source_url": "https://gtrnadb.ucsc.edu/genomes/bacteria/Baci_subt_subtilis_168/baciSubt2-tRNAs.fa",
+  "super_kingdom": "bacteria",
+  "total_genes": 86
+}

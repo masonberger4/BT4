@@ -1,0 +1,13 @@
+{
+  "build": "tRNAscan-SE predictions from the pinned GtRNAdb FASTA; genes counted per anticodon. Excluded: SeC, Sup, Und, Undet. Rebuild with scripts/build_trna_tables.py --organism komagataella_phaffii (--verify diffs against the committed bytes).",
+  "dropped": {},
+  "genome": "Komagataella phaffii GS115 (komaPast_GS115)",
+  "note": "123 predictions, none excluded, over 44 anticodons. Assembly-matched to BT4's codon table for this organism: both are the GS115 genome (GCA_000027005.1, De Schutter et al., Nat Biotechnol 2009). GtRNAdb serves it under the superseded name Komagataella pastoris, as Ensembl Fungi does. Unlike the B. subtilis entry, this gene count is the pinned source's own and is NOT corroborated against an independent published tally -- it pins the source against silent change, and is not a second measurement of the same quantity. Source database: GtRNAdb (Chan & Lowe, Nucleic Acids Res 2016, doi:10.1093/nar/gkv1309), predictions by tRNAscan-SE (Chan et al. 2021, doi:10.1093/nar/gkab688). GtRNAdb states no explicit data license: citation-gated academic use, NOT a CC/public-domain grant.",
+  "retrieved": "2026-08-19",
+  "sha256": "9b9eb1ca05f42f3e4508b7c1fe9d8fd12278445aa95cc05084bcf8458f5bf92e",
+  "source": "GtRNAdb (UCSC Lowe Lab), komagataella_phaffii tRNA gene set",
+  "source_sha256": "c81d542a62fda078725b40853c068dbfcdf3a075654087d11b06050a0ee525dd",
+  "source_url": "https://gtrnadb.ucsc.edu/genomes/eukaryota/Koma_past_GS115/komaPast_GS115-tRNAs.fa",
+  "super_kingdom": "eukaryota",
+  "total_genes": 123
+}
