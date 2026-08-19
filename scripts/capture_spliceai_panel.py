@@ -131,19 +131,28 @@ def _upstream_one_hot() -> Any:
     is meant to test.
 
     Raises:
-        RuntimeError: If ``spliceai.utils`` cannot be imported, naming the usual
-            cause.
+        RuntimeError: If ``spliceai.utils`` cannot be imported, leading with what
+            actually failed rather than with a guess at why.
     """
     try:
         from spliceai.utils import one_hot_encode
     except ImportError as exc:  # pragma: no cover - needs the licensed install
+        # Lead with the real error. An earlier version of this message asserted
+        # "pin numpy<2 -- spliceai/utils.py still calls np.fromstring" as though
+        # that were established, then printed an underlying error that contradicted
+        # it (the real cause was a missing `pandas`). A reader who trusts the first
+        # sentence goes and checks a pin that was already correct.
         raise RuntimeError(
-            "cannot import spliceai.utils.one_hot_encode. Install the 'spliceai' "
-            "package (pip install spliceai==1.3.1) and pin 'numpy<2' -- "
-            "spliceai/utils.py still calls np.fromstring, removed in NumPy 2. This "
-            "script will NOT substitute its own encoder: capturing with a "
-            "re-derived encoding would make the gate agree with BT4 by "
-            f"construction. Underlying error: {exc}"
+            f"cannot import spliceai.utils.one_hot_encode: {exc}\n"
+            "It imports pandas, numpy, pyfaidx and keras, so `pip install "
+            "spliceai --no-deps` alone is not enough -- add "
+            "`pandas<2.2 pyfaidx setuptools<81`. (pysam is the one dependency you "
+            "can skip: it serves SpliceAI's VCF CLI, has no Windows wheels, and "
+            "nothing here uses it.) If the failure is inside numpy rather than an "
+            "absent module, pin `numpy<2`: spliceai/utils.py still calls "
+            "np.fromstring, removed in NumPy 2.\n"
+            "This script will NOT substitute its own encoder: capturing with a "
+            "re-derived encoding would make the gate agree with BT4 by construction."
         ) from exc
     return one_hot_encode
 

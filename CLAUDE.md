@@ -391,8 +391,10 @@ aborting with "no feasible codon".
   committed (`biomodels/splice/data/pangolin.attestation.json`), and
   `promote_if_attested` honors it **only under an explicit opt-in**
   (`BT4_SPLICE_USE_ATTESTED=1` / `--use-attested-splice`), so `default()` still
-  returns the PWM baseline. **SpliceAI remains `calibrated=False`** — its gate has
-  not been run. The captured panel itself is never committed: it *is* the licensed
+  returns the PWM baseline. **SpliceAI has now passed its gate too** (2026-08, 18
+  cases on the same panel, max abs deviation exactly 0.0), so both wrapped CNNs
+  reproduce their published models bit-for-bit and both attestations ship. Promotion
+  stays behind the same opt-in. The captured panel itself is never committed: it *is* the licensed
   model output, and only the attestation's eight license-clean scalars plus the
   public weight SHA-256s ship. **Honest scope:** these predict splice-*site
   presence*, and a lower Δ means lower *predicted cryptic-splice risk* — a strong
@@ -834,8 +836,9 @@ control.
   are loaded) so runs stay reproducible-from-manifest. Each reproduces its
   upstream model's per-nucleotide scores **bit-for-bit**. **Pangolin's gate has
   been run and passed** (18 cases, deviation 0.0); its attestation is committed and
-  honored under an explicit opt-in, while **SpliceAI stays `calibrated=False`**
-  until its own gate runs. `default()` keeps returning the PWM baseline either way
+  honored under an explicit opt-in. **SpliceAI's gate has since run and passed as
+  well** — same 18-case panel, deviation 0.0 — so both attestations ship and both are
+  honored under that one opt-in. `default()` keeps returning the PWM baseline either way
   — it needs no per-user weight configuration, so it cannot presume a licensed
   model is installed or wanted. A pass is **regime-scoped**: it was captured on the
   bare-CDS, `N`-padded path, so `score_in_context` and `_FlankedPredictor` clear

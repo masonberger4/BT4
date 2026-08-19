@@ -113,9 +113,13 @@ coding sequence with an honest optimality badge and a CAI/GC trade-off frontier.
 > installed model (BT4 bundles neither code nor weights — Pangolin is GPL-3.0;
 > SpliceAI's code is PolyForm Strict and its weights CC BY-NC 4.0, noncommercial)
 > and hash-pins the weights it loads, with a two-backend agreement harness that
-> turns running both into an uncertainty signal. But they ship
-> **`calibrated=False`** until they pass an integration-fidelity gate, so BT4 still
-> refuses to present them as validated results; the learned expression head is
+> turns running both into an uncertainty signal. **Both have now passed an
+> integration-fidelity gate** — each reproduces its published model bit-for-bit over
+> the same 18-case panel — so a committed attestation ships for each. That is a claim
+> about the *wrapper*, not about the scores: promotion is opt-in
+> (`BT4_SPLICE_USE_ATTESTED=1`), `default()` still returns the honest PWM baseline, and
+> statistical calibration for designed coding sequence remains a separate, unmet gate.
+> The learned expression head is
 > **not shipped yet**. See [`CLAUDE.md`](./CLAUDE.md) §9 for the full plan.
 
 ---

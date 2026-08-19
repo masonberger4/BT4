@@ -1,14 +1,15 @@
-"""Tests for the committed Pangolin attestation and the opt-in promotion seam.
+"""Tests for the committed fidelity attestations and the opt-in promotion seam.
 
-A fidelity attestation now ships in the tree: BT4's Pangolin adapter was shown to
-reproduce upstream's per-position scores **exactly** (max abs deviation 0.0) over
-an 18-case panel, on a maintainer machine holding the GPL weights. This is the
-first wrapped model in BT4 to pass its gate.
+**Both** wrapped CNNs now ship a passing attestation, each reproducing upstream's
+per-position scores **exactly** (max abs deviation 0.0) over the same 18-case panel
+(``content_hash f3589fd1e10ffb73e…``): Pangolin against the GPL weights, SpliceAI
+against the CC BY-NC ones. Same panel means the two are directly comparable rather
+than approximately so.
 
 These tests pin what that does and does not change.
 
-**Does:** with an explicit opt-in, a Pangolin predictor built by BT4's own
-pipeline reports ``calibrated=True``.
+**Does:** with an explicit opt-in, a Pangolin or SpliceAI predictor built by BT4's
+own pipeline reports ``calibrated=True``.
 
 **Does not:** anything by default. The attestation records that BT4's *wrapper* is
 faithful, not that the model's scores are calibrated probabilities for designed
@@ -48,7 +49,10 @@ from bt4.pipeline.splice_audit import _FlankedPredictor
 # The content hash of the committed attestation, reproduced independently from the
 # gate's scalars. Pinning it here means an edit to the file -- even one that still
 # parses -- fails CI rather than silently changing what BT4 claims.
-_EXPECTED_CONTENT_HASH = "5176032cabca1eecc68a9b313a9594378316b562190f0c1f2267fa7fd3164e76"
+_EXPECTED_CONTENT_HASH = {
+    "pangolin": "5176032cabca1eecc68a9b313a9594378316b562190f0c1f2267fa7fd3164e76",
+    "spliceai": "ba49bc0383e4cdec5c4fd9864d49777615376f36c4c7f9343d54c52a3b7ccb9f",
+}
 
 
 # --------------------------------------------------------------------------
@@ -77,11 +81,12 @@ def test_attestation_records_an_exact_reproduction() -> None:
     assert att.tolerance <= MAX_ATTESTATION_TOLERANCE
 
 
-def test_attestation_content_hash_is_pinned() -> None:
+@pytest.mark.parametrize("backend", ["pangolin", "spliceai"])
+def test_attestation_content_hash_is_pinned(backend: str) -> None:
     """The committed attestation's content hash must not drift unnoticed."""
-    att = bundled_attestation("pangolin")
+    att = bundled_attestation(backend)
     assert att is not None
-    assert att.content_hash() == _EXPECTED_CONTENT_HASH
+    assert att.content_hash() == _EXPECTED_CONTENT_HASH[backend]
 
 
 def test_attestation_covers_the_adapter_pinned_weights_exactly() -> None:
@@ -92,9 +97,15 @@ def test_attestation_covers_the_adapter_pinned_weights_exactly() -> None:
     assert len(att.weight_sha256) == 12
 
 
-def test_committed_file_carries_no_raw_scores() -> None:
-    """The licensed per-position outputs must never reach the repository."""
-    raw = json.loads(bundled_attestation_path("pangolin").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("backend", ["pangolin", "spliceai"])
+def test_committed_file_carries_no_raw_scores(backend: str) -> None:
+    """The licensed per-position outputs must never reach the repository.
+
+    SpliceAI's weights are CC BY-NC and Pangolin's GPL; the captured panels are
+    model *outputs* under those terms. Only the eight scalars plus public weight
+    hashes may be committed.
+    """
+    raw = json.loads(bundled_attestation_path(backend).read_text(encoding="utf-8"))
     assert set(raw) == {
         "backend",
         "passed",
@@ -110,14 +121,48 @@ def test_committed_file_carries_no_raw_scores() -> None:
         assert banned not in blob
 
 
-def test_no_spliceai_attestation_ships() -> None:
-    """SpliceAI's gate has not been run, so nothing is claimed for it."""
-    assert bundled_attestation("spliceai") is None
+def test_spliceai_attestation_ships_and_passed() -> None:
+    """SpliceAI's gate has now been run, on the same panel as Pangolin's.
+
+    Its adapter had never been executed against real weights before that run --
+    every earlier test drove a fake predictor -- and it reproduced upstream
+    bit-for-bit on the first attempt.
+    """
+    att = bundled_attestation("spliceai")
+    assert att is not None
+    assert att.backend == "spliceai"
+    assert att.passed is True
+    assert att.n_cases == 18
+    assert att.max_abs_deviation == 0.0
+    assert att.tolerance <= MAX_ATTESTATION_TOLERANCE
 
 
-def test_attestation_records_the_producing_version() -> None:
+def test_spliceai_attestation_covers_all_five_ensemble_members() -> None:
+    """A subset could never promote: `verified_predictor` compares the full map."""
+    from bt4.biomodels.splice.spliceai import PINNED_WEIGHT_SHA256 as SPLICEAI_PINS
+
+    att = bundled_attestation("spliceai")
+    assert att is not None
+    assert dict(att.weight_sha256) == dict(SPLICEAI_PINS)
+    assert len(att.weight_sha256) == 5
+
+
+def test_both_backends_attest_the_same_number_of_cases() -> None:
+    """Same panel, so the two attestations describe the same 18 sequences.
+
+    Not a formality: it is what makes a cross-backend agreement figure a
+    like-for-like comparison rather than two numbers about different inputs.
+    """
+    pangolin = bundled_attestation("pangolin")
+    spliceai = bundled_attestation("spliceai")
+    assert pangolin is not None and spliceai is not None
+    assert pangolin.n_cases == spliceai.n_cases == 18
+
+
+@pytest.mark.parametrize("backend", ["pangolin", "spliceai"])
+def test_attestation_records_the_producing_version(backend: str) -> None:
     """Provenance: the attestation names the BT4 that produced it."""
-    att = bundled_attestation("pangolin")
+    att = bundled_attestation(backend)
     assert att is not None
     assert att.bt4_version == bt4.__version__
 
@@ -156,9 +201,17 @@ def test_env_var_falsy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> No
     assert attested_promotion_enabled() is False
 
 
-def test_spliceai_is_not_promoted_even_when_opted_in() -> None:
-    """No attestation ships for SpliceAI, so the opt-in cannot promote it."""
-    assert promote_if_attested(SpliceAiSplicePredictor(), enabled=True).calibrated is False
+def test_spliceai_is_promoted_when_opted_in() -> None:
+    """SpliceAI now has a passing attestation, so the opt-in reaches it too."""
+    promoted = promote_if_attested(SpliceAiSplicePredictor(), enabled=True)
+    assert promoted.calibrated is True
+    assert isinstance(promoted, SpliceAiSplicePredictor)
+
+
+def test_spliceai_is_not_promoted_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An attestation on disk still changes nothing without the explicit opt-in."""
+    monkeypatch.delenv(USE_ATTESTED_ENV_VAR, raising=False)
+    assert promote_if_attested(SpliceAiSplicePredictor()).calibrated is False
 
 
 def test_baseline_passes_through_unharmed() -> None:

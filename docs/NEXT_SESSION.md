@@ -62,7 +62,7 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | SA refinement + block moves + parallel tempering | DONE | n/a | `optimize/anneal_refine.py` |
 | Folding (ViennaRNA + labeled baseline) | GROUNDWORK | ViennaRNA=yes, baseline=no | `biomodels/folding/` |
 | Splice PWM baseline | GROUNDWORK | no (baseline) | `biomodels/splice/` |
-| Splice CNNs: Pangolin (GPL) / SpliceAI (CC BY-NC) | **Pangolin: fidelity gate PASSED** (exact, 18 cases) · SpliceAI: GROUNDWORK | Pangolin **yes, opt-in** (`BT4_SPLICE_USE_ATTESTED=1`); SpliceAI **no** | `biomodels/splice/{pangolin,spliceai}.py`, `biomodels/splice/attestations.py` |
+| Splice CNNs: Pangolin (GPL) / SpliceAI (CC BY-NC) | **BOTH fidelity gates PASSED** (exact, 18 cases each, same panel `f3589fd1…`) | **yes, opt-in** for both (`BT4_SPLICE_USE_ATTESTED=1`) — integration fidelity only, NOT statistical calibration | `biomodels/splice/{pangolin,spliceai}.py`, `biomodels/splice/attestations.py` |
 | Splice audit (localize-and-flag) + backend agreement | DONE | advisory (`all_calibrated=False`) | `biomodels/splice/audit.py` |
 | Splice fidelity-attestation layer | **DONE and in use** — a committed Pangolin attestation ships | n/a | `biomodels/splice/{attestation,attestations}.py`, `biomodels/splice/data/` |
 | **ASSP cross-check (opt-in, out-of-loop network validator)** | DONE | `network_derived`, not calibrated | `biomodels/splice/assp.py`, `pipeline/splice_crosscheck.py` |
@@ -400,13 +400,21 @@ items 1–3 are in
     designed synonymous CDS BT4 actually emits. `calibrated` is unchanged and `default()`
     still returns the PWM baseline.
 
-    **Still ahead here:** the integration-fidelity gate for **SpliceAI** (which would also
-    give a real two-backend agreement figure on this panel), a panel in BT4's own regime
-    (designed synonymous variants, where the question is specificity not recall), deciding
-    whether the attested-promotion opt-in should become the default, and a Studio checkbox
+    **SpliceAI's fidelity gate has now been run and PASSED too** (2026-08-19): 18 cases
+    on the *same* panel (`content_hash f3589fd1…`), **max abs deviation exactly 0.0**,
+    with the panel's peak scores spanning 0.029–0.925 so the pass is not the vacuous
+    kind a flat panel gives. Its adapter had never executed against real weights before
+    that run and was correct first time. Both attestations now ship, both honored under
+    the one opt-in. **Part A is complete.**
+
+    **Still ahead here:** a genuine **two-backend agreement** figure — both CNNs are now
+    attested, so scoring the same GENCODE panel with each and reporting their agreement
+    is reachable and is §6's first-class uncertainty signal; a panel in BT4's own regime
+    (designed synonymous variants, where the question is specificity not recall); deciding
+    whether the attested-promotion opt-in should become the default; and a Studio checkbox
     for it.
 
-    **SpliceAI's tooling is now complete — only the licensed weights step is left.**
+    **The SpliceAI tooling proved out on first contact with real weights.**
     `scripts/capture_spliceai_panel.py` ships alongside the Pangolin one (same
     independence guard, statically enforced), and `run_splice_fidelity_gate.py`
     dispatches on the capture payload's own `backend` field, so a Pangolin capture can
@@ -416,10 +424,11 @@ items 1–3 are in
     layout or wrong base order in BT4's `_one_hot_rows` a gate *failure* rather than an
     artifact reproduced on both sides. It has **no fallback encoder** on purpose, and a
     test asserts it defines none: the obvious "fix" for the NumPy 2 `np.fromstring`
-    breakage would silently destroy the independence. Remaining human step: the CC BY-NC
-    weights and a TF 2.15 environment (runbook A1 has the Keras-3 pin). The workflow is
-    `make_splice_panel.py` → `capture_{pangolin,spliceai}_panel.py` (neither imports
-    `bt4`) → `run_splice_fidelity_gate.py`.
+    breakage would silently destroy the independence — and on the real run the refusal
+    fired for a *different* missing dependency and still refused correctly. The workflow
+    is `make_splice_panel.py` → `capture_{pangolin,spliceai}_panel.py` (neither imports
+    `bt4`) → `run_splice_fidelity_gate.py`; see the Splice CNN environment gotchas below
+    for the `--no-deps` install that makes it run without pysam.
 
 11. **[BLOCKED-data · human] Promote RiboNN to `calibrated=True`** — **the machinery
     is now built; only the data step is left.** Landed: `within_group` (the strict bar)
@@ -561,14 +570,24 @@ Three more, learned from reading upstream rather than from a crash:
 Point `$BT4_PANGOLIN_MODEL_DIR` / `$BT4_SPLICEAI_MODEL_DIR` at the weights. Neither
 variable appeared in any doc before this note.
 
-- **`pip install spliceai` fails on Windows, and it does not matter.** It depends on
-  **pysam**, which has no Windows wheels and cannot build (its `setup.py` shells out to
-  a configure script). Use **`pip install spliceai==1.3.1 --no-deps`**: pysam serves
-  SpliceAI's own VCF command line, and BT4 never uses it. The adapter resolves the
-  weights with `importlib.util.find_spec` — which locates the module *without executing
-  it* — and loads the `.h5` files with Keras directly. Verified on Windows:
-  `SpliceAiSplicePredictor().available()` is `True`, and `from spliceai.utils import
-  one_hot_encode` (which the capture script needs) imports fine, with no pysam present.
+- **`pip install spliceai` fails on Windows, and it does not matter — but `--no-deps`
+  alone is not enough.** It depends on **pysam**, which has no Windows wheels and cannot
+  build (its `setup.py` shells out to a configure script). pysam serves SpliceAI's own
+  VCF command line and BT4 never uses it: the adapter resolves the weights with
+  `importlib.util.find_spec` — which locates the module *without executing it* — and
+  loads the `.h5` files with Keras directly. Install both lines:
+
+  ```
+  pip install spliceai==1.3.1 --no-deps
+  pip install "pandas<2.2" pyfaidx "setuptools<81"
+  ```
+
+  The second is **required for the capture step**, not polish. `spliceai/utils.py`
+  imports `pandas`, `numpy`, `pyfaidx` and `keras`, and `--no-deps` skips all of them.
+  Miss it and the failure is *late and confusing*: `available()` still reports `True`
+  (it needs only Keras and the weight files) while `capture_spliceai_panel.py` dies at
+  `from spliceai.utils import one_hot_encode`. Measured with those three installed and
+  **pysam still absent**: the capture and the gate both run to completion.
 - **`pip install pangolin` is a different package entirely** (a probabilistic
   programming language). Pangolin is GitHub-only: `pip install <checkout>`.
 - **TensorFlow 2.16+ cannot load SpliceAI's weights**, because `tensorflow.keras` is

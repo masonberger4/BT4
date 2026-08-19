@@ -7,6 +7,40 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **SpliceAI passed its integration-fidelity gate — `max_abs_deviation` exactly 0.0 over
+  18 cases — so BOTH wrapped CNNs now reproduce their published models bit-for-bit and
+  both attestations ship.** Part A is complete.
+  - Run against the CC BY-NC weights, all five of which matched
+    `PINNED_WEIGHT_SHA256`, on the **same panel as Pangolin's**
+    (`content_hash f3589fd1e10ffb73e…`) — so the two are directly comparable rather than
+    approximately so, which is what a real cross-backend agreement figure needs.
+  - **The pass is not the vacuous kind.** Peak site probability across the panel spans
+    **0.029–0.925** (mean 0.442), so a transposed one-hot, a swapped acceptor/donor
+    channel, or a wrong ensemble would have shown up. The runner reports the spread and
+    says so itself rather than leaving it to be asserted.
+  - BT4's SpliceAI adapter had **never been executed against real weights** — every
+    prior test drove a fake predictor — and it was correct on the first run.
+  - Promotion is unchanged: still opt-in via `BT4_SPLICE_USE_ATTESTED=1`, `default()`
+    still returns the PWM baseline, and a real-flank score still clears `calibrated`.
+    An attestation is a claim about the **wrapper**, not about the scores; statistical
+    calibration for designed coding sequence remains a separate, unmet gate.
+
+### Fixed
+- **`--no-deps` alone does not make the SpliceAI capture work, and the docs said it
+  did.** `spliceai/utils.py` imports `pandas`, `numpy`, `pyfaidx` and `keras`, all of
+  which `--no-deps` skips. The failure is late and misleading: `available()` still
+  reports `True` (it needs only Keras and the weight files) while the capture dies
+  importing `one_hot_encode`. Both docs now give the second `pip install` line, verified
+  with **pysam still absent**.
+- **The capture script's refusal named a cause it had not established.** It led with
+  "pin `numpy<2` — `spliceai/utils.py` still calls `np.fromstring`" and then printed an
+  underlying error that contradicted it (the real cause was a missing `pandas`). It now
+  leads with what actually failed, names the three dependencies `--no-deps` skips, and
+  offers the numpy story as one possibility rather than the diagnosis. The refusal
+  itself was correct throughout — it declined to substitute its own encoder, which is
+  the property that keeps the gate capable of failing.
+
 ### Changed
 - **The splice-CNN install route is documented from a real Windows setup**, in a new
   "Splice CNN environment gotchas" section of `NEXT_SESSION.md` mirroring the RiboNN
