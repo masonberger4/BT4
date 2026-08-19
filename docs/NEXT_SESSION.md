@@ -407,12 +407,23 @@ items 1–3 are in
     that run and was correct first time. Both attestations now ship, both honored under
     the one opt-in. **Part A is complete.**
 
-    **Still ahead here:** a genuine **two-backend agreement** figure — both CNNs are now
-    attested, so scoring the same GENCODE panel with each and reporting their agreement
-    is reachable and is §6's first-class uncertainty signal; a panel in BT4's own regime
-    (designed synonymous variants, where the question is specificity not recall); deciding
-    whether the attested-promotion opt-in should become the default; and a Studio checkbox
-    for it.
+    **The two-backend agreement has now been measured** (`bt4 splice-agreement`, both
+    CNNs over panel20): Jaccard **0.855**, and of 333 annotated sites both find 300, only
+    Pangolin 15, only SpliceAI 6, **neither 12**. Running both is *not* redundant — 21
+    sites (6.3%) are found by exactly one model, which is what an audit should surface —
+    but the 12 both miss are a **correlated blind spot**, and that is the standing limit
+    on reading agreement as an uncertainty signal: it bounds independent error, not shared
+    error. Like-for-like on the shared task (`--combined-track on`), Pangolin **0.983** vs
+    SpliceAI **0.965**; the top-k gap (0.033) reproduces the published one (0.040) even
+    though both absolute levels are inflated by an easy panel. All in
+    [`REVIEW_splice_calibration.md`](REVIEW_splice_calibration.md).
+
+    **Still ahead here:** a panel in BT4's own regime (designed synonymous variants, where
+    the question is **specificity** not recall — every measurement so far is recall on
+    natural sites); resolving the **7 positions both models call that the panel does not
+    annotate** (non-MANE isoform sites, or shared false positives — opposite implications,
+    and this panel cannot separate them); deciding whether the attested-promotion opt-in
+    should become the default; and a Studio checkbox for it.
 
     **The SpliceAI tooling proved out on first contact with real weights.**
     `scripts/capture_spliceai_panel.py` ships alongside the Pangolin one (same
