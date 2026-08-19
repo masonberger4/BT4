@@ -1283,6 +1283,32 @@ class StudioWindow(QtWidgets.QMainWindow):
             "stays advisory either way."
         )
         controls.addWidget(self.splice_cnn_check)
+
+        self.splice_attested_check = QtWidgets.QCheckBox("honor fidelity attestation")
+        self.splice_attested_check.setAccessibleName(
+            "Honor a committed splice fidelity attestation"
+        )
+        attested = api.attested_backends_available()
+        if attested:
+            self.splice_attested_check.setToolTip(
+                "Promote an attested backend to calibrated=True for this run "
+                f"(attested and installed: {', '.join(attested)}).\n\n"
+                "An attestation proves BT4's WRAPPER reproduces the published model "
+                "bit-for-bit -- integration fidelity. It does NOT show the scores are "
+                "calibrated probabilities for coding sequence; that is a separate, "
+                "still-unmet gate, and these models are measured weakest on exonic "
+                "variants (median prAUC 0.419 vs 0.773 intronic), which is BT4's "
+                "entire regime."
+            )
+        else:
+            self.splice_attested_check.setEnabled(False)
+            self.splice_attested_check.setToolTip(
+                "No installed backend carries a committed fidelity attestation, so "
+                "this would do nothing. Pangolin ships one; it needs the GPL pangolin "
+                "package and its weights installed (see "
+                "docs/DESIGN_splice_cnn_calibration.md)."
+            )
+        controls.addWidget(self.splice_attested_check)
         controls.addStretch(1)
         layout.addLayout(controls)
 
@@ -1792,6 +1818,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.cand_n_spin,
             self.cand_repeat_spin,
             self.splice_cnn_check,
+            self.splice_attested_check,
             self.ribonn_check,
             self.ribonn_species_combo,
             self.utr5_edit,
@@ -2282,6 +2309,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             n=self.cand_n_spin.value(),
             repeat_variants=self.cand_repeat_spin.value(),
             include_cnns=self.splice_cnn_check.isChecked(),
+            use_attested=self.splice_attested_check.isChecked(),
             predictor=predictor,
         )
         thread = self._wire_thread(
@@ -3153,7 +3181,11 @@ class StudioWindow(QtWidgets.QMainWindow):
         self.candidates_table.resizeColumnsToContents()
 
         backends = ", ".join(audit.backends) if audit.backends else "none"
-        calib = "calibrated" if audit.all_calibrated else "UNCALIBRATED (advisory)"
+        calib = (
+            "fidelity-attested (NOT a calibration claim)"
+            if audit.all_calibrated
+            else "UNCALIBRATED (advisory)"
+        )
         agree = audit.agreement
         parts = [
             f"Splice audit &mdash; backends: <b>{backends}</b> &middot; {calib}."
@@ -3172,6 +3204,17 @@ class StudioWindow(QtWidgets.QMainWindow):
             f"{audit.threshold:g}); they do <b>not</b> assert a calibrated splice "
             "risk and nothing was edited."
         )
+        if audit.all_calibrated:
+            # `calibrated=True` here means the wrapper reproduces the published model,
+            # not that its numbers are calibrated probabilities. Saying so is the whole
+            # point of surfacing the opt-in in a GUI rather than only an env var.
+            parts.append(
+                "An attestation proves BT4's <b>wrapper</b> is faithful to the "
+                "published model &mdash; not that its scores are calibrated "
+                "probabilities for coding sequence. These models are measured weakest "
+                "on exonic variants (median prAUC 0.419 vs 0.773 intronic), which is "
+                "BT4's entire regime."
+            )
         self.splice_banner.setText("<br>".join(parts))
 
     # ---- export -----------------------------------------------------------

@@ -49,6 +49,7 @@ from bt4.biomodels.splice import (
     read_splice_panel,
     read_variant_panel,
     variant_panel_from_rows,
+    verify_splice_gate,
 )
 from bt4.biomodels.splice import (
     MIN_MOTIF_CONSISTENCY as MIN_SPLICE_MOTIF_CONSISTENCY,
@@ -85,6 +86,7 @@ from bt4.io import (
 )
 from bt4.pipeline import (
     APPLICATION_PRESETS,
+    CNN_ANCHOR_OFFSETS,
     PACKAGING_LIMITS,
     SPLICE_BASELINES,
     AlignmentDiagnostic,
@@ -109,6 +111,7 @@ from bt4.pipeline import (
     ValidationReport,
     apply_preset,
     assemble_and_rank_candidates,
+    attested_backends_available,
     audit_candidate_set,
     audit_construct,
     available_presets,
@@ -135,6 +138,7 @@ from bt4.pipeline import (
 __all__ = [
     "AMINO_ACIDS",
     "APPLICATION_PRESETS",
+    "CNN_ANCHOR_OFFSETS",
     "DEFAULT_SITE_PROBABILITY",
     "GENOME_WIDE",
     "HIGHLY_EXPRESSED",
@@ -183,6 +187,7 @@ __all__ = [
     "Violation",
     "apply_preset",
     "assemble_and_rank_candidates",
+    "attested_backends_available",
     "attested_splice_promotion_enabled",
     "audit_candidate_set",
     "audit_construct",
@@ -233,6 +238,7 @@ __all__ = [
     "validate",
     "validate_protein",
     "variant_panel_from_rows",
+    "verify_splice_gate",
     "write_genbank",
     "write_table",
 ]

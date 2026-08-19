@@ -32,6 +32,7 @@ from bt4.biomodels.splice import ConsensusPwmSplicePredictor, SpliceResult
 from bt4.biomodels.splice.panel import SplicePanel, SpliceWindow, panel_from_windows
 from bt4.cli.__main__ import main
 from bt4.pipeline.splice_gate import (
+    CNN_ANCHOR_OFFSETS,
     SPLICE_BASELINES,
     SpliceGateSettings,
     baseline_predictions,
@@ -213,7 +214,8 @@ def test_a_misaligned_backend_is_diagnosed_not_scored() -> None:
     misaligned = _shifted(_oracle(panel), 2)
     comparison = run_splice_panel_gate(panel, "pwm", results=misaligned)
     assert all(s.pr_auc_skill < 0.01 for s in comparison.head.strata)
-    assert comparison.alignment.modal_offset == 2
+    assert comparison.alignment.aligned is False
+    assert comparison.alignment.recommended_offsets == {"donor": 2, "acceptor": 2}
     assert "anchors DISAGREE" in comparison.alignment.note()
     assert any("DISAGREE" in note for note in comparison.notes)
 
@@ -224,14 +226,14 @@ def test_declaring_the_offset_recovers_the_perfect_score() -> None:
     misaligned = _shifted(_oracle(panel), 2)
     comparison = run_splice_panel_gate(panel, "pwm", results=misaligned, anchor_offset=2)
     assert all(s.pr_auc_skill == pytest.approx(1.0) for s in comparison.head.strata)
-    assert comparison.alignment.modal_offset == 0
+    assert comparison.alignment.aligned is True
     assert "anchors agree" in comparison.alignment.note()
 
 
 def test_an_aligned_backend_reports_a_clean_diagnostic() -> None:
     panel = _hard_panel()
     comparison = run_splice_panel_gate(panel, "pwm", results=_oracle(panel))
-    assert comparison.alignment.modal_offset == 0
+    assert comparison.alignment.aligned is True
     assert comparison.alignment.fraction_at_zero == 1.0
     assert comparison.alignment.n_sites == panel.n_sites
 
@@ -556,10 +558,11 @@ def test_the_alignment_note_recommends_an_absolute_offset(applied: int) -> None:
     diagnostic = run_splice_panel_gate(
         panel, "pwm", results=misaligned, anchor_offset=applied
     ).alignment
-    assert diagnostic.recommended_offset == 3
-    assert diagnostic.modal_offset == 3 - applied
+    assert diagnostic.recommended_offsets == {"donor": 3, "acceptor": 3}
+    for kind in diagnostic.kinds:
+        assert kind.modal_offset == 3 - applied
     if applied != 3:
-        assert "anchor_offset=+3" in diagnostic.note()
+        assert "declare +3" in diagnostic.note()
 
 
 def test_the_agreeing_note_states_the_offset_it_agreed_at() -> None:
@@ -568,7 +571,7 @@ def test_the_agreeing_note_states_the_offset_it_agreed_at() -> None:
     diagnostic = run_splice_panel_gate(
         panel, "pwm", results=_shifted(_oracle(panel), 2), anchor_offset=2
     ).alignment
-    assert "anchor_offset=+2" in diagnostic.note()
+    assert "at +2 -- agrees" in diagnostic.note()
     assert "anchors agree" in diagnostic.note()
 
 
@@ -772,6 +775,7 @@ def test_a_silent_backend_is_not_credited_with_perfect_alignment() -> None:
     ]
     diagnostic = run_splice_panel_gate(panel, "pwm", results=silent).alignment
     assert diagnostic.n_flat == diagnostic.n_sites
+    assert diagnostic.aligned is False
     assert "FLAT" in diagnostic.note()
     assert "anchors agree" not in diagnostic.note()
 
@@ -779,3 +783,277 @@ def test_a_silent_backend_is_not_credited_with_perfect_alignment() -> None:
     working = run_splice_panel_gate(panel, "pwm", results=_oracle(panel)).alignment
     assert working.n_flat == 0
     assert "anchors agree" in working.note()
+
+
+# --------------------------------------------------------------------------
+# The real backends need OPPOSITE offsets for donors and acceptors
+
+
+def _exonic_anchored(panel: SplicePanel) -> list[SpliceResult]:
+    """A perfect backend anchored the way SpliceAI and Pangolin actually are.
+
+    Both score a donor on the **last exonic** base (BT4 position - 1) and an acceptor on
+    the **first exonic** base (BT4 position + 1). Established from SpliceAI's
+    training-label construction, Pangolin's CLI, and direct measurement against the
+    hash-verified weights.
+    """
+    results = []
+    for window in panel.windows:
+        n = len(window.sequence)
+        donor = [0.0] * n
+        acceptor = [0.0] * n
+        for position in window.donors:
+            if position - 1 >= 0:
+                donor[position - 1] = 1.0
+        for position in window.acceptors:
+            if position + 1 < n:
+                acceptor[position + 1] = 1.0
+        results.append(
+            SpliceResult(
+                donor=tuple(donor),
+                acceptor=tuple(acceptor),
+                model_name="exonic-anchored",
+                calibrated=False,
+            )
+        )
+    return results
+
+
+def test_the_published_offsets_align_both_strata() -> None:
+    """``CNN_ANCHOR_OFFSETS`` is what a real backend needs, and it is not a scalar."""
+    panel = _hard_panel()
+    comparison = run_splice_panel_gate(
+        panel, "pwm", results=_exonic_anchored(panel), anchor_offset=CNN_ANCHOR_OFFSETS
+    )
+    assert {s.name: s.pr_auc for s in comparison.head.strata} == {
+        "donor": pytest.approx(1.0),
+        "acceptor": pytest.approx(1.0),
+    }
+    assert comparison.alignment.aligned is True
+
+
+@pytest.mark.parametrize("scalar", [0, -1, 1])
+def test_no_single_scalar_can_align_a_mixed_panel(scalar: int) -> None:
+    """The defect this fixes: one value cannot serve two opposite conventions.
+
+    Under the old pooled diagnostic, ``-1`` and ``+1`` each aligned exactly half the
+    sites -- and the modal tie-break resolved the resulting ``{0: N, +/-2: N}`` split to
+    ``0``, reporting **"anchors agree"** at 50% alignment while endorsing a setting that
+    left an entire stratum scoring ~0. A perfect model read as hopeless, with the one
+    diagnostic meant to catch that actively confirming the wrong value.
+    """
+    panel = _hard_panel()
+    comparison = run_splice_panel_gate(
+        panel, "pwm", results=_exonic_anchored(panel), anchor_offset=scalar
+    )
+    scores = {s.name: s.pr_auc for s in comparison.head.strata}
+    assert min(scores.values()) < 0.01  # at least one stratum is always wrecked
+    assert comparison.alignment.aligned is False
+    assert "DISAGREE" in comparison.alignment.note()
+
+
+@pytest.mark.parametrize("scalar", [0, -1, 1, 3])
+def test_the_diagnostic_recommends_the_right_offset_per_kind(scalar: int) -> None:
+    """And it converges on the truth from any starting point."""
+    panel = _hard_panel()
+    diagnostic = run_splice_panel_gate(
+        panel, "pwm", results=_exonic_anchored(panel), anchor_offset=scalar
+    ).alignment
+    assert diagnostic.recommended_offsets == {"donor": -1, "acceptor": 1}
+
+
+def test_a_kind_separated_panel_works_with_a_scalar() -> None:
+    """The documented workaround, and why a scalar is still allowed.
+
+    ``read_splice_panel`` accepts a window with only donors or only acceptors, so a
+    kind-separated run is a legitimate way to gate a real backend -- and the gate reports
+    per stratum anyway.
+    """
+    panel = _hard_panel()
+    donors_only = panel_from_windows(
+        [
+            SpliceWindow(w.window_id, w.group, w.sequence, donors=w.donors)
+            for w in panel.windows
+        ],
+        negative_construction=_NEG,
+    )
+    comparison = run_splice_panel_gate(
+        donors_only, "pwm", results=_exonic_anchored(panel), anchor_offset=-1
+    )
+    assert comparison.strata == ("donor",)
+    assert comparison.head.strata[0].pr_auc == pytest.approx(1.0)
+    assert comparison.alignment.aligned is True
+
+
+def test_a_combined_track_shifts_each_kind_before_the_union() -> None:
+    """Pangolin's track drops the kind, so the shift must happen per site.
+
+    Its combined ``P(splice)`` head emits donors and acceptors on one track, both
+    exonically anchored in opposite directions. Shifting the *track* cannot fix that;
+    shifting each site's label before the union can.
+    """
+    panel = _hard_panel()
+    combined = [
+        SpliceResult(
+            donor=tuple(max(d, a) for d, a in zip(r.donor, r.acceptor, strict=True)),
+            acceptor=tuple(0.0 for _ in r.acceptor),
+            model_name="pangolin-like",
+            calibrated=False,
+        )
+        for r in _exonic_anchored(panel)
+    ]
+    comparison = run_splice_panel_gate(
+        panel, "pwm", results=combined, anchor_offset=CNN_ANCHOR_OFFSETS
+    )
+    assert comparison.strata == ("splice",)
+    assert comparison.head.strata[0].pr_auc == pytest.approx(1.0)
+
+
+def test_an_unknown_site_kind_in_the_mapping_is_refused() -> None:
+    """A typo'd key would silently leave that stratum misaligned."""
+    with pytest.raises(ValueError, match="unknown site kind"):
+        run_splice_panel_gate(
+            _hard_panel(), "pwm", anchor_offset={"donors": -1}
+        )
+
+
+# --------------------------------------------------------------------------
+# Second review round: what the per-kind anchor rewrite itself broke
+
+
+def test_declaring_an_anchor_does_not_cripple_the_controls() -> None:
+    """The severest defect of the session, and the one all four lenses found.
+
+    Case building moved each site's *label* into the backend's frame, but the
+    sequence-derived baselines were still read at the *case's* index -- the backend's
+    anchor, not the panel's. So declaring an offset knocked ``gt_ag`` and ``pwm`` one base
+    off their own anchors: measured, the ``pwm`` control fell from 0.853 skill to 0.0001
+    while the head stayed perfect, making ``beats_every_baseline`` near-automatic for
+    exactly the real backends that need an offset.
+
+    The controls anchor on the panel, so they must be read there whatever the head does.
+    """
+    panel = _hard_panel()
+
+    def perfect(shift: int) -> list[SpliceResult]:
+        out = []
+        for window in panel.windows:
+            donor = [0.0] * len(window.sequence)
+            acceptor = [0.0] * len(window.sequence)
+            for position in window.donors:
+                donor[position + shift] = 1.0
+            for position in window.acceptors:
+                acceptor[position + shift] = 1.0
+            out.append(
+                SpliceResult(
+                    donor=tuple(donor),
+                    acceptor=tuple(acceptor),
+                    model_name="perfect",
+                    calibrated=False,
+                )
+            )
+        return out
+
+    reference = None
+    for shift in (0, -1, 2):
+        comparison = run_splice_panel_gate(
+            panel, "pwm", results=perfect(shift), anchor_offset=shift, combined_track=False
+        )
+        controls = {
+            name: round(report.strata[0].pr_auc_skill, 6)
+            for name, report in comparison.baselines
+            if name in ("pwm", "gt_ag")
+        }
+        assert all(s.pr_auc == pytest.approx(1.0) for s in comparison.head.strata)
+        if reference is None:
+            reference = controls
+        # The controls are anchor-invariant: identical whatever the head declared.
+        assert controls == reference, shift
+        assert controls["pwm"] > 0.5
+
+
+def test_an_edge_site_stays_a_forced_miss_rather_than_vanishing() -> None:
+    """Dropping it would lower prevalence and RAISE every metric.
+
+    Under the old track-shifting formulation a site the backend cannot reach stayed
+    ``label=1`` with ``predicted=0.0`` -- a forced miss that depressed the score. The
+    label-shifting rewrite dropped it from the positive class entirely, so a backend that
+    structurally cannot find an annotated site was *rewarded* for it. Wrong direction, and
+    the harder one to notice.
+    """
+    from bt4.pipeline.splice_gate import _build_cases, _resolve_offsets
+
+    sequence = "GT" + "".join("ACTC"[i % 4] for i in range(60)) + "CAGGTAAGT" + "A" * 40
+    interior = sequence.index("CAGGTAAGT") + 3
+    panel = panel_from_windows(
+        [
+            SpliceWindow("edge", "chr1", sequence, donors=(0, interior)),
+            SpliceWindow("plain", "chr3", sequence, donors=(interior,)),
+        ],
+        negative_construction=_NEG,
+    )
+    results = score_splice_panel(panel, "pwm")
+    for offset in (0, -1, -3):
+        cases, _ = _build_cases(panel, results, False, _resolve_offsets(offset))
+        assert sum(c.label for c in cases) == panel.n_sites, offset
+
+
+def test_alignment_needs_a_majority_not_a_lone_peak() -> None:
+    """One site with a peak must not outvote a kind that is otherwise silent."""
+    panel = _hard_panel()
+    results = _oracle(panel)
+    # Silence every donor but the first: 1 peak, the rest flat.
+    muted = []
+    for index, (window, result) in enumerate(zip(panel.windows, results, strict=True)):
+        donor = list(result.donor)
+        keep = window.donors[0] if index == 0 else None
+        for position in window.donors:
+            if position != keep:
+                donor[position] = 0.0
+        muted.append(
+            SpliceResult(
+                donor=tuple(donor),
+                acceptor=result.acceptor,
+                model_name="mostly-silent",
+                calibrated=False,
+            )
+        )
+    diagnostic = run_splice_panel_gate(panel, "pwm", results=muted).alignment
+    donors = next(k for k in diagnostic.kinds if k.kind == "donor")
+    assert donors.n_flat > 0
+    assert donors.fraction_at_zero < 0.5
+    assert donors.aligned is False
+    assert diagnostic.aligned is False
+
+
+def test_there_is_no_inert_splice_offset_key() -> None:
+    """It scored identically whatever it was set to, while the note claimed otherwise.
+
+    ``_positive_indices`` and the probe both key by *site* kind, which is only ever
+    donor/acceptor, so a ``"splice"`` entry never reached label placement -- yet the
+    diagnostic read it back as the offset in force and recommended a correction derived
+    from that fiction, so the advertised round-trip destroyed a correctly aligned run.
+    """
+    assert "splice" not in CNN_ANCHOR_OFFSETS
+    with pytest.raises(ValueError, match="no 'splice' key"):
+        run_splice_panel_gate(_hard_panel(), "pwm", anchor_offset={"splice": 2})
+
+
+def test_a_combined_track_reports_its_anchors_per_site_kind() -> None:
+    """The stratum is one track; the two kinds were still shifted differently."""
+    panel = _hard_panel()
+    combined = [
+        SpliceResult(
+            donor=tuple(max(d, a) for d, a in zip(r.donor, r.acceptor, strict=True)),
+            acceptor=tuple(0.0 for _ in r.acceptor),
+            model_name="pangolin-like",
+            calibrated=False,
+        )
+        for r in _exonic_anchored(panel)
+    ]
+    diagnostic = run_splice_panel_gate(
+        panel, "pwm", results=combined, anchor_offset=CNN_ANCHOR_OFFSETS
+    ).alignment
+    assert {k.kind for k in diagnostic.kinds} == {"donor", "acceptor"}
+    assert diagnostic.recommended_offsets == {"donor": -1, "acceptor": 1}
+    assert diagnostic.aligned is True

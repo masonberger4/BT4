@@ -8,6 +8,15 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+
+- **`bt4 variant-gate`** — runs the splice gate on a measured variant panel. The variant
+  half was API-only, so following the runbook meant writing Python; it is now a command.
+  It lists the panel's score columns when none is chosen (masked and unmasked answer
+  different questions), warns when genes sit on chromosomes both models trained on, and
+  prints the published **0.419 exonic / 0.773 intronic** anchor beside the run's own
+  numbers — because reproducing that gap is what the benchmark is for, and a run that
+  does not should be read as a panel-build problem before a model one.
+
 - **The variant half of the splice gate is reachable from data.**
   `SpliceVariantCase` shipped with no way to construct one, which left the exonic /
   intronic task — the one that matters most for BT4, since it designs coding sequence —
@@ -33,7 +42,6 @@ its first tagged release.
     no model installed, and confirm BT4 reproduces the published 0.419/0.773 split. If it
     does not, the defect is in BT4.
 
-### Added
 - **`scripts/make_gencode_splice_panel.py` — the site-prediction panel, built rather than
   hand-assembled.** Turns a pinned GENCODE v44 + GRCh38 into the format
   `bt4.api.read_splice_panel` reads, with the position convention correct by construction.
@@ -55,96 +63,6 @@ its first tagged release.
     GTF convention, strand handling, reverse-complementing and index mapping is evidence
     rather than assertion.
 
-### Changed
-- **The runbook's B1 now carries verified acquisition recipes for both panels** — pinned
-  URLs with md5s, which GTF variant and why, exact column names, and the
-  `for_zenodo` → `data` rename `splicebench2023`'s notebooks require.
-  - **Recorded: 53% of `splicebench2023` is not held out.** BRCA1 (chr17), FAS (chr10) and
-    WT1 (chr11) are on chromosomes both models trained on; only the chr3 genes are held
-    out. That includes BRCA1, otherwise the closest public thing to BT4's regime.
-  - **Recorded: SpliceAI's held-out split is second-hand.** Pangolin's is in its own
-    paper; SpliceAI's Cell paper is paywalled, so chr1/3/5/7/9 comes from OpenSpliceAI
-    (eLife 2025), a reimplementation that rebuilt its data pipeline.
-
-### Fixed
-- **A second round of adversarial review found five more ways the splice gate's verdict
-  could be won without winning.** All measured, all in the Part B gate.
-  - **Dropping the `pwm` control let BT4's own default certify itself.**
-    `SPLICE_BASELINES` says the controls are "kept permanently: a control that
-    disappears once it is inconvenient was never a control" — and nothing enforced it.
-    Running the PWM backend with `baselines=("permutation","gt_ag","constant")` reported
-    `promotable=True`, one keyword away from the module's headline property. Three
-    review lenses found this independently. A subset run is still allowed; it just
-    cannot recommend anything.
-  - **An uncontested stratum counted as a beaten one.** With `baselines=()` no comparison
-    ran, `beats_every_baseline` kept its initial `True`, and `best_baseline` reported
-    `-inf` as though it were a control's skill.
-  - **A GENCODE/Ensembl-named training panel reported itself held out.** The check
-    matched only `chr`-prefixed names, so a panel drawn *entirely* from the models'
-    training chromosomes but named `2`, `4`, `X` reported `held_out=True` — the naming a
-    builder following the runbook's own GENCODE recipe is most likely to produce. Names
-    now normalize across conventions, and an **unrecognisable** group (a RefSeq
-    accession, a scaffold) is reported as *unknown* rather than silently clean.
-  - **Float dust defeated combined-track detection.** `_is_combined` tested exact
-    `== 0.0`, so an acceptor channel carrying `1e-12` was scored with a donor/acceptor
-    split — the exact artifact the collapse prevents, and silently.
-  - **Sites too close to a window edge were scored as silent forced misses.** A donor at
-    position 0 carries a real `GT`, so the motif check passes and the panel is accepted —
-    but no backend has flanking sequence there, so the PWM returns exactly `0.0`. That is
-    a `label=1` case the model structurally cannot get right, depressing every metric
-    through no fault of its own. `SplicePanel.edge_sites()` now reports them and the
-    runner notes the count, because nothing is wrong with the panel's *labels* and the
-    cure is a wider window rather than a dropped site.
-  - **A silent backend was credited with perfect alignment.** The alignment probe's
-    tie-break resolved a flat window to offset 0, so a backend emitting no signal read as
-    "anchors agree" — a positive claim from an absence of evidence, in the one diagnostic
-    whose job is to separate "misaligned" from "scoring near zero".
-
-### Changed
-- **Corrected a false claim BT4 made about its own metric.** `pr_auc_skill` was
-  documented as "the only PR figure comparable across panels of differing prevalence".
-  It is not. Rescaling average precision's floor to 0 does not remove its prevalence
-  dependence: measured at **fixed model quality**, skill falls 0.589 → 0.152 as negatives
-  go from 1k to 30k while ROC-AUC holds at 0.91. The metric is unchanged and still worth
-  reporting — its floor and ceiling really are fixed — but the comparability claim was
-  wrong, and a declared `negative_construction` is the only thing that makes two panels'
-  numbers mean the same thing. A test now pins the prevalence-dependence so the claim
-  cannot drift back.
-- `SpliceSiteCase.group` no longer claims cases "are never split across folds"; this gate
-  has no folds. It now says what the group actually does.
-
-### Fixed
-- **One calibrated window certified a whole run.** On the caller-supplied-scores path
-  `backend_calibrated` was an `any()` over per-window results, so a single
-  `SpliceResult` carrying `calibrated=True` reported the entire run as calibrated. It is
-  now `all()`, guarded by `bool(scored)` because `all(())` is `True`. A calibration flag
-  is the last place to take the generous reading (§10.6).
-- **`promotable` was reachable without anyone setting a bar.** The gate ships permissive
-  defaults on purpose — a threshold this module blessed would be one a weak backend
-  could be pointed at — but that left `passed` trivially true for a bare call, making
-  "the pre-registered conditions held" vacuous. `promotable` now also requires
-  `thresholds_declared`, and a bare call says so in its notes. The defaults are
-  unchanged; what changed is that they can no longer be mistaken for a verdict.
-- **The `pwm` control went blind to every acceptor site when the strata collapsed.**
-  `_tracks` collapses donor and acceptor into one `"splice"` stratum for a
-  combined-track backend, which is right for the *head* — Pangolin's acceptor track is
-  identically zero, so its donor track carries everything. But the **baselines** are
-  scored through the same function, and BT4's PWM baseline is a real two-track
-  predictor. Taking its donor track alone made half the positives unreachable for the
-  control: measured, **0.344 skill instead of 0.654** on a mixed panel, so a
-  Pangolin-class head was easier to beat than it should have been — in exactly the mode
-  Pangolin runs in, and against the very claim the module is built on. The collapse now
-  **unions** the two tracks, which is a no-op for a genuinely combined backend and
-  restores the control otherwise. Found by adversarial review.
-- **The alignment diagnostic reported a residual offset as if it were absolute.** The
-  probe runs on the already-aligned track, so its modal offset is the shift *remaining*
-  after `anchor_offset` is applied. The note printed that number as the value to
-  declare, so a user who had already passed `+1` against a true `+3` was told to pass
-  `+2` — further from the truth, in a message they had every reason to trust. It now
-  reports `recommended_offset` (applied + residual) and names the offset currently in
-  force, and the agreeing message states which anchor it agreed at.
-
-### Added
 - **SpliceAI's integration-fidelity tooling, completing Part A's scripts.** Only the
   licensed weights step is left for that backend.
   - **`scripts/capture_spliceai_panel.py`** — the sibling of the Pangolin capture, with
@@ -240,7 +158,6 @@ its first tagged release.
   before investing in a capture, plus a public `weights_dir()` on both adapters.
 
 
-### Added
 - **`docs/DESIGN_ribonn_calibration.md`** — the step-by-step runbook for `NEXT_SESSION.md`
   item 11, mirroring the splice side's `DESIGN_splice_cnn_calibration.md`. It carries the
   operational half that the research doc deliberately left out: the Windows (`cmd.exe`) /
@@ -282,7 +199,549 @@ its first tagged release.
     **no measurements** (that paper measured one sequence, in *E. coli*), making them a
     sensitivity resource and never a validation panel.
 
+- **The construct-context gap is now evidence-backed, not just architectural.**
+  - **N-padding the splice CNNs is an artifact generator, not a neutral default.**
+    OpenSpliceAI documents that SpliceAI predicts donors and acceptors at N-padded
+    boundaries "with an extremely high signal that disappears when the sequence is
+    padded with the actual genomic sequence" -- so BT4 hallucinates sites at exactly
+    the two positions a designer cares about. Its re-benchmark shows accuracy rises
+    steeply only through ~400 nt of context, so **+/-400 nt of real flank beats
+    +/-5 kb of N**.
+  - **Every documented cassette-splicing failure has the acceptor in the vector**:
+    Cheng 2022 (13/17 genes at their own retained exon-exon junction, 17/17 at a V5
+    tag, acceptors from the mPGK-PuroR linker / SV40 / Neo-KanR), Kowarz 2022
+    (codon optimization *created* donors; acceptor was adenoviral pIX past the
+    poly(A)), De Ravin 2022 (a cHS4-insulator acceptor drove clonal expansion in a
+    clinical trial; fixed by a 2-bp AG->TG change).
+  - **oORF pairing is now the highest value-per-cost item in the roadmap.** An
+    out-of-frame AUG in the user's 5'UTR whose in-frame stop lands *inside* the CDS
+    represses significantly more than a non-overlapping uORF (Johnstone 2016,
+    P = 1.23e-3) -- and the stop position is a function of BT4's synonymous choices,
+    so BT4 can move it. Deterministic, no ML, no calibration gate, and no shipping
+    optimizer does it.
+  - **`RampTerm` implements a falsified mechanism.** It rewards *lower* codon
+    adaptiveness over the first ~35 codons; Goodman, Church & Kosuri (*Science* 342,
+    >14,000 reporters) found "reduced RNA structure and not codon rarity itself is
+    responsible." The 5' effect is real; the lever is wrong.
+  - **The highly-expressed reference premise is falsified in *E. coli***: Welch 2009
+    found the favourable codons were those read by tRNAs most charged under
+    starvation, *explicitly not* the codons abundant in highly expressed genes.
+    Keeping highly-expressed as the default stays defensible, but no tooltip may
+    imply it makes CAI predictive.
+  - **Radrizzani 2024 (*Nat Rev Genet*) is good news for BT4's direction**: human
+    synonymous-site selection is not translational selection but avoidance of
+    spurious transcripts, mis-splicing and cryptic splice sites, plus a
+    high-GC / low-CpG "self" signature -- which promotes things BT4 already ships to
+    first class while demoting CAI.
+  - **Prior art recorded so BT4 does not overclaim**: TIsigner already takes
+    `-u/--UTR` with mammalian accessibility windows, and DNA Chisel (MIT) already
+    evaluates constraints over an entire plasmid record. Context-as-constraint-scope
+    is not novel; context-as-optimization-substrate is.
+- **Vendor manufacturability rules BT4 lacks, exactly as published**: windowed GC
+  **range** (max - min across 50 bp windows <= 50 points, Twist DOC-001081 REV4), a
+  **Tm-based repeat trigger** (any repeat with Tm >= 60 C regardless of length --
+  length-only rules miss GC-rich short repeats), and **per-base homopolymer limits**
+  (IDT: A/T >= 10, G/C >= 6). Report a profile, not pass/fail, and do not hard-code
+  a threshold BT4 cannot cite.
+- **An expected-effect-size table** the app and CLI should render beside every
+  result, with each range cited and the vendor-authorship caveat attached.
+- **A "what NOT to do" section** in the survey -- fourteen plausible-sounding moves
+  the evidence refuses, including not building a single global MFE objective, not
+  asserting ensemble-free-energy design is NP-hard (it is explicitly open), not
+  flipping a model to `calibrated=True` because its *input* improved, and not
+  transmitting a user's vector backbone anywhere.
+- **A measured product review, and a re-pointed queue**
+  (`docs/REVIEW_2026-08_expression_and_context.md`). BT4 was audited against what
+  it is *supposed* to be — a codon optimizer for **protein expression**, aware of
+  the **5′UTR** and the **vector backbone**, honouring user-specified
+  manufacturability rules, in a **simple honest UI**. Every number in the review
+  was produced by running the code in this tree, not read from a docstring, and
+  §10 carries the reproduction commands. **No source file changed; this is
+  documentation and a queue re-point.** Headline findings:
+  - **Verdict.** BT4 is an unusually well-engineered, unusually honest **CAI
+    optimizer with manufacturability constraints** — not yet an expression
+    optimizer, because **the optimizer only ever sees the CDS**. Folding is scored
+    on `CDS[0:48]` with no leader; the splice CNNs are scored on the CDS floating
+    in 5,000 literal `N` bases; RiboNN can take UTRs but sits where it is
+    structurally forbidden from influencing delivery. `OptimizeConfig` has 40
+    fields and not one is sequence outside the CDS.
+  - **Four defects, measured.** (1) `run_frontier` — the path **BT4 Studio's
+    Optimize button runs** — only *reports* GLOBAL rules, so setting *Max repeat
+    length* returns a green `proven_optimal` badge on a sequence with a 58-nt
+    repeat and 96 violations. (2) `run_validate` / `POST /validate` silently drop
+    every GLOBAL constraint, reporting zero violations on a sequence with a 31-nt
+    exact repeat; no test covers it. (3) `folding_dg` is computed whole-sequence
+    but labelled `5' dG` (optimized `-39.0`, reported `-138.0` on a 156-nt CDS) —
+    reported ≠ computed, invariant #2. (4) `avoid_internal_start` is infeasible on
+    82–100% of 400–700 aa proteins (Met is single-codon; `MAAMG` reproduces it),
+    and `InfeasibleError` names every *active* constraint rather than the culprit;
+    the `relax()` promised by §4.2 does not exist and `OptimalityStatus.RELAXED` is
+    defined but never used.
+  - **The default operating point is out of family.** BT4's own
+    `scripts/compare_tools.py` puts nine shipping tools at CAI 0.63–0.83 / GC
+    42–54% and BT4 alone at **CAI 1.000 / GC 62.4%**. Relatedly, **no GC-content
+    constraint exists at all**: the soft term is separable and saturates at weight
+    2 without reaching its target, and the hard count budget cannot control
+    clustering (74% worst 50-nt window at 50% total GC). A windowed-GC rule is
+    listed in CLAUDE.md §6 and was never built, though `bt4 tracks` already
+    computes the window.
+  - **The engine is strong; nothing leads the user to it.** CpG 47 → 0 costs 0.077
+    CAI and keeps a proven-optimal certificate, and a nine-flag AAV/LVV profile
+    produces a clean 700-aa design (CAI 0.882, GC 53.0%, 50-nt window 42–64%, CpG
+    5, zero hard violations) in 20.7 s — a combination no user will ever find.
+    Hence named application presets.
+- **Constitutional wording corrected to match the code** (§10.6 applied to BT4's
+  own framing): §1 now claims "optimized for **expression-relevant objectives**"
+  rather than "for real expression outcome", and states the CDS-in-isolation scope
+  explicitly; the `io/` architecture diagram and the BT4 Studio export bullet no
+  longer list **GenBank**, which is a design target that was never built (the
+  README was already accurate on both counts).
+
+- **Highly-expressed CAI reference sets — and they are now the default.** A codon
+  table's `w = f/f_max` only means something relative to a set of genes, and BT4's
+  tables answered the wrong question: they were counted genome-wide, marking the
+  codon that is most *common* (a quantity set largely by mutation and GC bias)
+  rather than the codon translation *prefers*. `w` as Sharp & Li (1987) defined it
+  comes from a reference set of **highly expressed** genes. BT4 now ships both,
+  and every table, result, CLI line, app row, and manifest says which one it is.
+  - **`scripts/build_highly_expressed_tables.py`** counts each organism's **300
+    most abundant proteins**, ranked by **PaxDb v6.1** whole-organism *integrated*
+    proteomics (CC BY 4.0 — a weighted consensus over many published studies, in
+    ppm) and joined to the **same release-pinned Ensembl CDS** the genome-wide
+    tables use, under the **same** filtering rules — so the two tables differ only
+    in *which genes* they count, never in how a gene is read.
+  - **The join uses no third-party mapping layer.** PaxDb protein IDs resolve
+    against the pinned release's own peptide FASTA; an identifier that resolves to
+    two genes is dropped as ambiguous and *counted separately* from one the
+    annotation simply lacks. All three sources (abundances, peptide FASTA, CDS)
+    are SHA-256-pinned, and `--verify` rebuilds and diffs the committed bytes and
+    sidecars. Each sidecar also carries a digest of the ranked 300-gene roster, so
+    a third party can prove they reproduced the same reference set.
+  - **Organelle-encoded genes are excluded.** Mitochondria and plastids translate
+    with a different genetic code and their own tRNA pool, and are never a BT4
+    design target, so their codon usage is not evidence about the nuclear
+    translation a design will meet. Both numbers are stamped —
+    `genes_excluded_organelle_encoded` (what this filter removed) and
+    `organelle_records_in_cds_source` (how many were in the annotation at all) —
+    because most organelle CDS are dropped as invalid under the standard code
+    before ever reaching the filter.
+  - **N = 300 is evidence, not taste.** It is the smallest size on a tested grid
+    (50…2000) at which *every* bundled organism observes all 64 codons, so no
+    shipped table needed smoothing — an invented number in a reference table is
+    exactly what BT4 refuses to ship. Below it, yeast alone leaves `CGA`/`CGG`
+    unobserved; far above it the reference set dilutes back into the genome-wide
+    answer (at N=2000 yeast and mouse agree with genome-wide at every amino acid).
+  - **What changed in the output.** The most-used codon moves for 11 amino acids
+    in *C. elegans*, 8 in *E. coli* (`TTT`→`TTC`, `CGC`→`CGT`, `GGC`→`GGT`,
+    `ATT`→`ATC`, `CAT`→`CAC`, `GTG`→`GTT`, `AGC`→`TCT`, `TAT`→`TAC` — the classic
+    *E. coli* optimal codons), 7 in zebrafish, 5 in yeast, and 2 in human
+    (`AGA`→`CGC` for Arg, `AGC`→`TCC` for Ser, plus the preferred stop moving
+    `TGA`→`TAA`). Two golden snapshots moved accordingly; both are regenerated and
+    the reason is recorded beside them.
+  - **External ground truth, not just self-consistency** (§8): the tables
+    reproduce the classic *E. coli* and *S. cerevisiae* optimal codons, and codon
+    bias is **stronger** in the highly-expressed set than genome-wide in all eight
+    organisms — largest in yeast (+0.18) and *Drosophila* (+0.17), smallest in rat
+    (+0.03) and human (+0.05), the ordering dos Reis et al. (2004) predict from
+    translational selection being weak in large vertebrate genomes.
+  - ***A. thaliana* deliberately has none.** PaxDb identifies its proteins by
+    UniProt accession, which the pinned Ensembl Plants annotation does not carry,
+    so a join would need an unpinned external mapping. BT4 ships no table rather
+    than one built on a guess; the genome-wide table stays its only, honestly
+    labeled, option — and asking for `highly_expressed` there **raises** instead of
+    silently substituting the other table.
+  - **Surfaces:** `--reference-set` on `bt4 optimize`, `library`, `validate` and
+    `tracks` (there is no `bt4 frontier` subcommand; the frontier is reached via
+    `api.frontier`); `bt4 organisms` now prints each organism's default and
+    available sets; a **Reference set** picker in BT4 Studio that repopulates from the engine
+    per organism (and disables itself, with a reason, when only one exists);
+    `reference_set` on the service's optimize request and in `/organisms`;
+    `OptimizeConfig.reference_set`; and `api.available_reference_sets` /
+    `api.default_reference_set`.
+  - **Honest scope, unchanged.** A highly-expressed reference set makes CAI a
+    better-founded proxy, not a validated expression predictor — Welch et al.
+    (PLoS ONE 2009) found an *E. coli* variant built by maximizing exactly this
+    quantity expressed at a fraction of alternatives. CAI stays one axis of the
+    objective vector (§10.7).
+
+- **REBASE-derived restriction-enzyme catalog (17 → 584 enzymes)**
+  (`bt4.constraints.restriction`, `scripts/build_enzyme_catalog.py`) — the
+  catalog was seventeen hand-typed pairs described only as "textbook-correct",
+  with no source, version, or way to check them. It is now **derived from a
+  version-pinned REBASE release** and held as content-hashed package data, the
+  same discipline the recounted codon tables get (CLAUDE.md §8):
+  - **Selection is documented and auditable:** commercially available Type II
+    enzymes (REBASE `ET`/`CR`) with a single fully-specified IUPAC recognition
+    site of 4–12 bases. The provenance sidecar records the REBASE version, URL,
+    the source file's own SHA-256, the stage-by-stage selection tally, and the
+    shipped TSV's digest — so a third party re-derives and re-verifies it
+    (`python scripts/build_enzyme_catalog.py --verify`).
+  - **Type IIS enzymes included** — BsaI, BsmBI, BbsI, SapI, Esp3I, AarI, the
+    Golden Gate workhorses. REBASE lists an asymmetric site once per strand; the
+    builder *verifies* the second entry is the reverse complement of the first
+    rather than assuming it, and takes one (BT4 bans both strands anyway).
+  - **Verified against the values it replaces:** all 17 previously shipped
+    enzymes resolve to byte-identical sites, cross-validating old and new.
+  - **Isoschizomers kept** (`KpnI` and `Acc65I` both → `GGTACC`) so a user can
+    name the enzyme they actually own.
+  - New public `resolve_enzyme()` (case-insensitive, and on a miss offers the
+    closest names instead of dumping the catalog) and `enzyme_provenance()`, re-exported
+    through `bt4.api`. `ENZYMES` is now read-only shipped data.
+  - **BT4 Studio** gains a searchable enzyme field: a completer that matches the
+    *last* comma-separated token and substitutes it back, leaving earlier entries
+    intact — a stock completer matches the whole line and breaks after the first
+    enzyme.
+  - **Honest scope, stated in the data:** BT4 models the recognition *sequence*
+    only — not cut position, star activity, methylation sensitivity, or buffer.
+    Some real entries are highly degenerate (`MspJI` is `CNNR`); banning one in a
+    CDS can be genuinely unsatisfiable, and BT4 raises `InfeasibleError` naming
+    `restriction_site` rather than returning a sequence that still contains it.
+    A regression test pins that either/or across degenerate and ordinary sites.
+- **Six new organisms, recounted from release-pinned public CDS sets** — mouse,
+  rat, zebrafish, *Drosophila*, *C. elegans*, and *Arabidopsis*, taking BT4 from
+  three selectable organisms to nine (Phase 5 organism breadth, CLAUDE.md §8/§9).
+  This closes a real gap rather than padding a list: all six already shipped
+  authentic GtRNAdb **tRNA** tables, but tAI is only offered for an organism you
+  can *select*, and selection needs a codon-usage table — so six of the eight
+  bundled tRNA tables were **unreachable**. A regression test
+  (`test_every_trna_table_has_a_selectable_organism`) keeps that from recurring.
+  - **Every number is a real count, never a curated summary.** New
+    `scripts/build_organism_tables.py` downloads a **release-pinned** Ensembl /
+    Ensembl Plants CDS FASTA (release 116 / plants 63 — pinned, not `current`,
+    which moves), filters to complete unambiguous in-frame coding sequences
+    (ACGT-only, length 3N, ATG start, terminal stop, no internal stop), takes
+    **one representative CDS per gene** (the longest; ties broken by transcript id
+    so the pick is deterministic) so codon usage is not weighted by how finely a
+    gene happens to be annotated, and counts codons with BT4's own
+    `count_codons`. The terminal stop is counted, since BT4 chooses the stop it
+    appends.
+  - **Re-derivable by a third party.** Each provenance sidecar now carries the
+    source URL, the **downloaded file's own SHA-256**, assembly, **genebuild**
+    (the gene annotation the CDS models come from — *not* the same thing as the
+    assembly: Arabidopsis CDS are Araport11 models on the TAIR10 assembly, and the
+    fly/worm models are FlyBase/WormBase; recording only the assembly would
+    misattribute the very sequences that were counted), database release,
+    total codons counted, the full per-filter drop tally, and the rebuild command
+    — alongside the existing content hash of the TSV itself. `--verify` rebuilds
+    into a temp directory and diffs against the committed bytes; all six verify
+    byte-identically.
+  - **Refuses rather than fabricates.** The builder aborts if a CDS set yields no
+    valid sequences, or if any of the 64 codons goes unobserved — it will not
+    smooth an invented number into a shipped table.
+  - **Checked against external ground truth (§8), not just self-consistency.**
+    The new tables reproduce independently-published facts: GC3 orders
+    *Drosophila* (0.63) > zebrafish (0.54) > *Arabidopsis* (0.42) > *C. elegans*
+    (0.40); mouse (0.573) and rat (0.578), counted from separate CDS sets, land
+    within 1.5 points of human (0.587); preferred Leu is CTG in the GC3-rich
+    genomes and CTT in the AT-rich ones; preferred stop is TGA in the GC-richer
+    genomes and TAA in the AT-rich ones. Gene counts match published
+    protein-coding counts (e.g. *C. elegans* 19,928; mouse 21,571).
+- `write_table` gained `build` / `note` / `extra` parameters so a recount can
+  describe what it actually did and attach a re-derivation trail. Reserved
+  provenance keys cannot be shadowed by `extra`, so a sidecar can never disagree
+  with itself.
+- **BT4 Studio surfaces the engine-ready backends, gains library mode, and gets
+  its Phase-4 polish** (`bt4.app`) — the two models that already existed behind
+  `bt4.api` but had no UI are now wired in, plus the sampler and the accessibility
+  work called for in CLAUDE.md §6.6. All of it is pure plumbing over the stable
+  API (no engine change, no calibration claim):
+  - **RiboNN in the Candidates tab.** An opt-in *Expression head* group (toggle,
+    species, and the fixed 5'/3' UTR context the model requires) routes a
+    `RiboNNExpressionModel` into `api.candidates`. The toggle is enabled **only**
+    when `available_expression_backends()` reports the user's own checkout and
+    weights actually resolve, so it is never a dead control, and it explains what
+    is missing otherwise. Missing/non-DNA UTRs are refused *before* the run starts
+    rather than raising mid-flight. RiboNN stays `calibrated=False`, so the banner
+    still reads **discovery order, not a ranking** and the solver's pick stays
+    delivered (§10.6).
+  - **Validate with ASSP.** The one control that leaves the machine. It asks for
+    consent first (naming the service and what is sent), runs
+    `api.splice_crosscheck` on a background thread, and renders the report led by
+    its tags — *network-derived, UNCALIBRATED, advisory, **not** part of the run
+    manifest and never exported* — with the localized sites in a table. An outage
+    degrades to a labeled "unavailable" banner and never fails a run (§10.15). The
+    panel is cleared whenever the delivered sequence changes, so one sequence's
+    splice sites can never be shown beside another's, and an export is
+    byte-identical whether or not a cross-check ran (regression-tested).
+  - **Library (sampled) tab.** `api.library` with members / temperature / seed
+    controls, a per-member table, the selected member's sequence with its
+    violation highlights, and a multi-record FASTA export whose every record is
+    named `sampled`. The banner leads with **sampled, not optimized** — the
+    `SAMPLED` certificate colours the badge directly, so it cannot drift from the
+    claim the engine made — and reports measured diversity (distinct count, mean
+    pairwise difference).
+  - **Phase-4 polish.** A File/Run/View/Help menu bar with standard shortcuts
+    makes every action keyboard-reachable; **View → System / Light / Dark**
+    switches theme at runtime (restyling the stylesheet, both plots, the badges,
+    and the sequence viewers' violation bands from the still-live results, via a
+    new `SequenceViewer.set_dark`); tab order covers every new control and each
+    carries an accessible name plus an explanatory tooltip.
+  - **One source of truth for run gating.** All four flows (optimize, rank+audit,
+    cross-check, library) share a `_wire_thread` helper and a `_update_run_buttons`
+    gate driven by explicit running-flags rather than thread references — so a
+    missed reference clear can no longer strand a control (the previous
+    optimize-then-rank stuck-button class of bug is now structurally impossible).
+  - New shared `_EngineWorker` base in `bt4.app.worker` (signal trio + the
+    never-raise contract) with `CrossCheckWorker` and `LibraryWorker` alongside
+    the existing two.
+
+  Found by an adversarial review of the above and fixed in the same change (each
+  with a regression test that fails without its fix):
+  - **A late cross-check could be attributed to the wrong sequence.** A report
+    describes exactly one sequence and carries it, so `_on_crosscheck_finished`
+    now compares `report.dna` to the live delivered DNA and *discards* a report
+    whose design changed while it ran, instead of rendering it. The panel-clearing
+    rule covered only the other ordering.
+  - **Menu shortcuts bypassed the single-flow gate.** `Ctrl+R` during an in-flight
+    cross-check started a second engine flow, because only the buttons were gated.
+    The Run actions are now gated alongside them, and each `_start_*` refuses via a
+    shared `_busy()` check — so the invariant lives in the code path, not only in a
+    greyed-out control.
+  - **A second library draw stranded the first draw's sequence on screen.**
+    Repopulating the table in place leaves the selection intact, so re-selecting
+    row 0 emitted nothing; the member viewer is now repainted explicitly.
+  - **Untrusted service text could rewrite the honesty banner.** ASSP's own error
+    text was interpolated unescaped into a RichText label — markup that could hide
+    the very "network-derived / UNCALIBRATED / advisory" labels marking it. All
+    externally-derived text is now HTML-escaped.
+  - **Closing mid-run destroyed a running `QThread`** (pre-existing, but this change
+    triples the number of flows that can be in flight). `closeEvent` now cancels
+    what is cancelable and gives each live thread a bounded chance to finish.
+- **Public expression-backend registry** (`bt4.biomodels.expression.available_backends`
+  / `resolve_backend`, re-exported as `bt4.api.available_expression_backends` /
+  `resolve_expression_backend`) — the mirror of the splice resolver, so a frontend
+  selects an expression head by name through the stable API instead of importing
+  `biomodels` across a layer (§3, §10.9). `available_backends()` never raises and
+  lists `"ribonn"` only when it can genuinely run; resolution is lazy (no torch
+  import, no weight load) and confers **no** calibration.
+- **Opt-in, out-of-loop ASSP splice cross-check** (`bt4.api.splice_crosscheck` /
+  `bt4.pipeline.run_splice_crosscheck`, `bt4.biomodels.splice.AsspSplicePredictor`)
+  — a **network** validator that runs the online ASSP service (Alternative Splice
+  Site Predictor, Wang & Marín 2006) over an already-delivered sequence behind the
+  existing `SplicePredictor` contract, closing the last non-human-gated gap in the
+  splice subsystem (CLAUDE.md §6, §10.15). BT3's fatal splice bug was scraping this
+  exact service **in the optimizer's inner loop as its only splice path**; BT4
+  inverts every property of that mistake, structurally:
+  - **Opt-in and out-of-the-inner-loop.** Requested explicitly by name and gated
+    behind the `bt4[assp]` extra (httpx, lazily imported); it runs only as a final
+    audit / validation pass on the delivered sequence, never per optimizer move, and
+    is **never** returned by `splice.default()` or `available_splice_backends()`.
+  - **Never blocking.** Rate-limited with exponential backoff and cached by
+    sequence hash; if the service is unreachable or returns a garbled body the raw
+    predictor raises an `AsspError`, but `run_splice_crosscheck` catches it and
+    reports "unavailable" — a cross-check outage can never fail an optimization. The
+    same graceful path covers a wrapped CNN's missing deps.
+  - **Network-derived and non-reproducible.** `network_derived` is `True` and
+    `calibrated` is `False`; ASSP numbers are excluded from the
+    reproducible-from-manifest guarantee and reported as a separate advisory section
+    (the CLI prints them to **stderr**, never into the stdout FASTA/JSON artifact or
+    a `Result` manifest).
+  - **Wired through the CLI** — `bt4 validate --splice-backend assp` and `bt4
+    optimize --check-splice assp` (both flags also accept `pwm` / `pangolin` /
+    `spliceai` for an offline or installed-CNN cross-check).
+  - **CI never makes a live call.** The adapter is driven from committed **offline
+    fixtures** (`tests/fixtures/assp/`, `FixtureAsspTransport`, selected via
+    `$BT4_ASSP_FIXTURE_DIR`). Honest caveat: the live wire format is *unverified
+    against the service* (unreachable during development), so the fixtures are
+    *synthetic ASSP-format reports*, not real captures — the same "no bundled panel
+    ships" posture as the wrapped CNNs.
+
+- **BT4 Studio "Candidates & splice audit" tab** — step 5 (final) of the
+  expression/splice design flow, surfacing `api.candidates` → `api.splice_audit`
+  in the desktop app. A background `CandidatesWorker` (mirroring the known-good
+  `OptimizeWorker` `QThread` lifecycle) runs both on a worker thread and hands the
+  window the candidate set + splice audit in one signal. The tab renders the
+  ranked, honestly-labeled candidate table (delivered pick starred; per-member
+  source / CAI / GC / expression+units / calibration / hard-violation / **distinct**
+  splice-site counts) with two advisory banners: an *uncalibrated* expression head
+  is shown as **discovery order, not a ranking** (solver's pick starred, scores
+  annotating only; a calibrated head switches to ranked-by-expression), and the
+  splice banner leads with **UNCALIBRATED (advisory)** whenever `all_calibrated` is
+  `False`, reporting cross-backend agreement and stating the flags localize sites
+  heuristically and edit nothing. Every metric is recomputed per candidate from its
+  own DNA (invariant #2); an opt-in toggle routes the installed SpliceAI/Pangolin
+  CNNs into the audit. The results area is now a `QTabWidget` (Design | Candidates &
+  splice audit); the Design tab is unchanged. No Cancel control on this tab (the
+  assemble→audit flow is not point-cancelable), and the cross-flow Optimize/Rank
+  gating clears the worker-thread reference so neither button can deadlock.
+- **Localize-and-flag splice audit** (`bt4.api.splice_audit` /
+  `bt4.biomodels.splice.audit_splice`) — step 4 of the expression/splice design
+  flow (`docs/DESIGN_expression_splice_flow.md` Stage C). An **out-of-loop,
+  advisory** audit that runs the available `SplicePredictor` backends over a step-3
+  candidate set to **localize** residual cryptic splice sites (one flag per
+  contiguous above-threshold run, at its peak — non-maximal suppression) and attach
+  the whole-panel **backend agreement** (pooled rank + sign) as the authoritative
+  cross-backend confidence signal — built from the Delta-splicing values the audit
+  already computed (a new shared `agreement_from_deltas` helper), so each backend
+  scores every sequence **once**, never twice (§7). **It never edits** the sequences — a targeted synonymous auto-edit at flagged loci is a
+  deliberately deferred, calibrated-gated future step. Honesty (CLAUDE.md §6/§10.6):
+  every shipped backend is `calibrated=False` today, so `all_calibrated` is `False`
+  and every `SpliceFlag` carries its **emitting backend's** `calibrated` flag; the
+  site `threshold` is a **heuristic display knob** (not a validated cutoff) and the
+  PWM baseline's per-position `score` is an uncalibrated **arbitrary-units**
+  pseudo-score. Per-flag `added_risk_vs_reference` is **positive = worse** and
+  strictly *intra-backend*, kept distinct from the panel-level `delta_splicing`
+  (larger = better). Cross-backend `also_flagged_by` is a **raw positional
+  co-occurrence** (±`match_window` nt, sized to the backends' anchor offsets),
+  explicitly **not** a kind-level agreement (Pangolin reports one combined
+  `P(splice)` and so can never disagree on kind — its flags are labelled `"splice"`,
+  never donor-specific). New `biomodels/splice/audit.py` (raw-sequence core, imports
+  only `domain` + the splice backends) + `pipeline/splice_audit.py` (the
+  `CandidateSet` adapter + `available_splice_backends()`, which adds the wrapped
+  SpliceAI/Pangolin CNNs when installed). Deterministic (#7). API-level surface (the
+  BT4 Studio annotation UI is step 5).
+- **Candidate-set assembly + expression rerank** (`bt4.api.candidates` /
+  `assemble_and_rank_candidates`) — step 3 of the expression/splice design flow
+  (`docs/DESIGN_expression_splice_flow.md`). Assembles the finalist set an
+  expression head ranks: the **Pareto frontier** plus, when a GLOBAL rule is active
+  *and* the delivered exact-DP seed actually violates it, a small **deterministic
+  library of repeat-refined variants** (distinct refinement seeds over the delivered
+  seed). The set is de-duplicated and scored by an `ExpressionPredictor` — in **one
+  batched call** when the backend implements the new `BatchExpressionPredictor`
+  contract (`score_many`, e.g. RiboNN), else per sequence — and delivered under the
+  same **calibrated-gating** honesty rule as `rerank_by_expression`: an uncalibrated
+  head (the default placeholder, and the shipped RiboNN adapter) only *annotates* —
+  the set stays in **discovery order** (`order_basis="discovery"`) with the
+  solver-delivered sequence `chosen` — while a calibrated head reorders by predicted
+  expression (`order_basis="expression_rank"`, total order `(score desc, index asc)`)
+  and re-picks the top (CLAUDE.md §10.5/§10.6). Hardened for correctness/honesty: the
+  **delivered (`chosen`) sequence is invariant to `n`** (uncalibrated, the
+  solver-delivered sequence is pinned first in discovery order; calibrated, the
+  head's top pick is the top of the top-n keep — the cap is applied *after* scoring
+  so a calibrated reranker never loses its best candidate);
+  every member is a full `Result` (round-trips, metrics recomputed, certificate,
+  residual GLOBAL violations disclosed); variants are labelled `repeat_refined` (the
+  *process*, not a guaranteed fix); and de-dup/cap counts, the batch-path flag, and
+  the predictor identity (folded into the manifest, invariant #9) are all reported.
+  New `BatchExpressionPredictor` Protocol in `bt4.biomodels.expression`; `_refine`
+  gains an optional `seed` (default unchanged). API-level surface (UI wiring is
+  step 5). No calibration claim — ranking is a reporting no-op until a head is
+  calibrated.
+- **Strong splice-consensus motif constraint** (`bt4.constraints.SpliceSiteMotifConstraint`,
+  `avoid_splice_sites`) — step 2 of the expression/splice design flow
+  (`docs/DESIGN_expression_splice_flow.md`). A new **LOCAL, exact-in-the-trellis**
+  hard constraint that forbids the *strong* splice-consensus **donor** (`GTRAGT`,
+  the intronic +1..+6 core) and **acceptor** (`YYYYYYNYAGG`, a polypyrimidine tract
+  + `NYAG|G`) motifs on the mRNA **sense strand only** (splicing is strand-specific,
+  so — unlike restriction/repeat motifs — there is **no** reverse-complement
+  banning). It is an honest **structural heuristic**, not a splice model: it reduces
+  only the most *obvious* cryptic-splice risk and makes no calibrated claim; the
+  wrapped SpliceAI/Pangolin CNNs do the real audit out of loop (CLAUDE.md §6,
+  §10.6). It **never** bans the ubiquitous bare `GT`/`AG` (governing rule 3). The
+  default patterns (Shapiro & Senapathy 1987; Zhang 1998; human/mammalian
+  major-spliceosome only) are deliberately specific (~1/2048 donor, ~1/8192
+  acceptor) so the hard veto rarely over-constrains a design, and are configurable
+  via `donor_motifs`/`acceptor_motifs`. `ok_suffix⇔validate` and `context_len`
+  sufficiency (5 donor / 10 acceptor) are property-tested (invariant #3). Wired
+  through `OptimizeConfig`, the `bt4` CLI (`--avoid-splice-sites`), the `service`
+  schema, and BT4 Studio (a checkbox with an explanatory tooltip); off by default.
+- **Batched RiboNN scoring** (`RiboNNExpressionModel.score_many` /
+  `.delta_logte_many`) — the first step of the expression/splice design flow
+  (`docs/DESIGN_expression_splice_flow.md`). RiboNN's cost is dominated by fixed
+  *per-invocation* overhead (weight hashing + model load + its DataLoader worker
+  spawn), so scoring a whole candidate set one sequence at a time paid that cost
+  N times. The new public batch methods route the entire set through the existing
+  batched `_predict_te` path (one temporary TSV, one `predict` invocation — RiboNN's
+  `top_k`-model ensemble runs inside that single call), so scoring a Pareto frontier
+  costs roughly the wall-clock of scoring a single sequence.
+  `delta_logte_many` additionally scores the shared **reference once** (appended to
+  the batch), not once per design. Both preserve per-input validation (valid DNA,
+  length-3N ending in a stop codon, non-empty `utr5`/`utr3`) and the `tx_id`
+  realignment; results come back **in input order**. `score_sequence` /
+  `delta_logte` now delegate to the batch methods (single source of truth). A
+  `num_workers=0` DataLoader path was investigated and **deliberately left out**:
+  RiboNN's `predict_using_nested_cross_validation_models` exposes no worker-count
+  parameter, so requesting 0 workers would mean patching RiboNN internals (against
+  the "wrap, never reimplement" contract), and batching already amortizes the
+  one-time worker spawn across the set. `calibrated` stays **`False`** — no
+  calibration claim. Tested without torch / pandas / the RiboNN checkout (batch
+  ordering, ensemble averaging per `tx_id`, reference-scored-once, and the
+  empty-UTR / bad-CDS guards still firing).
+- **Wrapped RiboNN expression backend** (`bt4.biomodels.expression.RiboNNExpressionModel`)
+  — the Phase-4 learned expression head behind the `ExpressionPredictor` contract
+  (CLAUDE.md §6/§9). It runs the published **RiboNN** translation-efficiency CNN
+  (Zheng, Persyn, Wang et al., *Nat Biotechnol* 2025; Sanofi / Cenik Lab)
+  inference-only as an out-of-loop frontier reranker. **License:** RiboNN's code
+  and weights are each **Sanofi non-commercial** (academic/non-commercial only) —
+  compatible with BT4's open-source non-commercial scope and, like SpliceAI's
+  CC BY-NC weights, **never bundled**: the adapter drives the user's own RiboNN
+  clone (lazily importing the repo's `src`, pointed at via `$BT4_RIBONN_DIR`) and
+  their Zenodo weights. Every weight it loads is verified against a bundled
+  180-entry SHA-256 manifest (`data/ribonn_sha256.json`, 90 human + 90 mouse —
+  public content hashes only) **before** `torch.load`. The score is in RiboNN's
+  native **CLR-residual TE** units (never exponentiated); `delta_logte(designed,
+  reference)` gives the UTR-fixed, CDS-attributable Δ (negative = a CDS change
+  predicted to *reduce* expression), analogous to Pangolin's `delta_splicing`.
+  Ships **`calibrated=False`** (`default()` still returns `NullExpressionModel`):
+  faithful reproduction is not calibration for BT4's CDS-variant regime, so
+  promotion requires a passing `verify_expression_gate` on a regime-matched panel
+  (human-only, data-gated). New `bt4[expression-ribonn]` extra (torch + pandas),
+  lazily imported so `import bt4` stays light.
+- **Model-agnostic expression acceptance-gate harness**
+  (`bt4.biomodels.expression.gate`) — the honest gate a learned expression head
+  must pass to earn `calibrated=True` (CLAUDE.md §6/§8/§10.6, Phase 4). For a
+  log-TE regression head it reports **Spearman** (primary), **Pearson**, **R²**,
+  and **split-conformal coverage** at a target level (default 90%), evaluated on a
+  **group-disjoint split** (homology cluster / chromosome) so no group leaks
+  across calibration and test — the distribution-shift-aware check that a head
+  validated only on natural-gene TE has *not* earned calibration for BT4's
+  CDS-variant regime. `passed` requires both the Spearman threshold **and**
+  conformal coverage near target (point accuracy *and* honest uncertainty). The
+  gate never flips anything: thresholds are inputs set at gate time, and the
+  neutral `NullExpressionModel` provably cannot pass (its zero-variance scores
+  give Spearman 0). New `ExpressionEvalCase` / `ExpressionGateReport` and a
+  `run_expression_gate(predictor, samples)` wrapper. Fully dependency-free and
+  tested without torch or any real model, mirroring how the splice
+  fidelity/attestation machinery shipped before a calibrated backend.
+- **Shared dependency-free statistics** (`bt4.biomodels._stats`) — `pearson`,
+  `spearman` (moved from `splice.agreement`, which now re-exports them), plus
+  `r2_score`, `conformal_quantile` (finite-sample split-conformal), and
+  `empirical_coverage`. Single well-tested home for the estimators the splice
+  agreement report and the expression gate both use.
+- **License-clean splice fidelity-attestation layer**
+  (`bt4.biomodels.splice.attestation`) — the honest promotion path for the wrapped
+  Pangolin / SpliceAI backends (CLAUDE.md §6, §10). A `FidelityAttestation` records
+  **only** a passing integration-fidelity gate's derived scalars (`passed`,
+  `max_abs_deviation`, `n_cases`, `tolerance`) plus the public pinned weight
+  SHA-256s and the tool version — **never** a `FidelityCase` raw per-position score
+  (those are the license-encumbered model outputs). The shape is enforced
+  structurally (`_ALLOWED_FIELDS` + an honesty test asserting no raw-score field is
+  serializable), and `from_dict` refuses any unexpected key. `attest_backend`
+  refuses to record a failing or too-loose gate; `verified_predictor(predictor,
+  attestation)` is the single seam that flips a backend to `calibrated=True`, and
+  only when the attestation passed, clears the `MAX_ATTESTATION_TOLERANCE` floor,
+  and its weight SHAs exactly match the adapter's `PINNED_WEIGHT_SHA256` (a
+  refusal, never a silent downgrade). A deterministic, timestamp-free
+  `content_hash` makes an attestation a provenance-manifest stamp. This layers the
+  committed-record / private-execution / user-opt-in / baseline-fallback options;
+  no attestation ships, so `default()` still returns the honest PWM baseline. Both
+  Pangolin (GPL) and SpliceAI (CC BY-NC) are eligible to certify under BT4's
+  open-source, non-commercial scope.
+
 ### Changed
+
+- **The runbook's B1 now carries verified acquisition recipes for both panels** — pinned
+  URLs with md5s, which GTF variant and why, exact column names, and the
+  `for_zenodo` → `data` rename `splicebench2023`'s notebooks require.
+  - **Recorded: 53% of `splicebench2023` is not held out.** BRCA1 (chr17), FAS (chr10) and
+    WT1 (chr11) are on chromosomes both models trained on; only the chr3 genes are held
+    out. That includes BRCA1, otherwise the closest public thing to BT4's regime.
+  - **Recorded: SpliceAI's held-out split is second-hand.** Pangolin's is in its own
+    paper; SpliceAI's Cell paper is paywalled, so chr1/3/5/7/9 comes from OpenSpliceAI
+    (eLife 2025), a reimplementation that rebuilt its data pipeline.
+
+- **Corrected a false claim BT4 made about its own metric.** `pr_auc_skill` was
+  documented as "the only PR figure comparable across panels of differing prevalence".
+  It is not. Rescaling average precision's floor to 0 does not remove its prevalence
+  dependence: measured at **fixed model quality**, skill falls 0.589 → 0.152 as negatives
+  go from 1k to 30k while ROC-AUC holds at 0.91. The metric is unchanged and still worth
+  reporting — its floor and ceiling really are fixed — but the comparability claim was
+  wrong, and a declared `negative_construction` is the only thing that makes two panels'
+  numbers mean the same thing. A test now pins the prevalence-dependence so the claim
+  cannot drift back.
+- `SpliceSiteCase.group` no longer claims cases "are never split across folds"; this gate
+  has no folds. It now says what the group actually does.
+
 - `docs/NEXT_SESSION.md` item 11 now records that the calibration **machinery** has
   landed and only the data step remains; `CLAUDE.md`'s Phase 4 paragraph says the same,
   and both restate that RiboNN is still `calibrated=False` — the apparatus is not a claim.
@@ -481,7 +940,6 @@ its first tagged release.
     views are two consumers of that **one** invocation and code path, so they cannot
     drift; a test pins that the averaged view is exactly the mean of the resolved one.
 
-### Changed
 - **The RiboNN adapter now forwards `batch_size` and `num_workers`, and a claim that
   it could not has been corrected in three places.** `ribonn.py`'s own comment,
   `CLAUDE.md` and `docs/DESIGN_expression_splice_flow.md` all stated that
@@ -558,106 +1016,190 @@ its first tagged release.
     dependent structure, which needs a real cap distance) moves into the context
     work instead.
 
-### Added
-- **The construct-context gap is now evidence-backed, not just architectural.**
-  - **N-padding the splice CNNs is an artifact generator, not a neutral default.**
-    OpenSpliceAI documents that SpliceAI predicts donors and acceptors at N-padded
-    boundaries "with an extremely high signal that disappears when the sequence is
-    padded with the actual genomic sequence" -- so BT4 hallucinates sites at exactly
-    the two positions a designer cares about. Its re-benchmark shows accuracy rises
-    steeply only through ~400 nt of context, so **+/-400 nt of real flank beats
-    +/-5 kb of N**.
-  - **Every documented cassette-splicing failure has the acceptor in the vector**:
-    Cheng 2022 (13/17 genes at their own retained exon-exon junction, 17/17 at a V5
-    tag, acceptors from the mPGK-PuroR linker / SV40 / Neo-KanR), Kowarz 2022
-    (codon optimization *created* donors; acceptor was adenoviral pIX past the
-    poly(A)), De Ravin 2022 (a cHS4-insulator acceptor drove clonal expansion in a
-    clinical trial; fixed by a 2-bp AG->TG change).
-  - **oORF pairing is now the highest value-per-cost item in the roadmap.** An
-    out-of-frame AUG in the user's 5'UTR whose in-frame stop lands *inside* the CDS
-    represses significantly more than a non-overlapping uORF (Johnstone 2016,
-    P = 1.23e-3) -- and the stop position is a function of BT4's synonymous choices,
-    so BT4 can move it. Deterministic, no ML, no calibration gate, and no shipping
-    optimizer does it.
-  - **`RampTerm` implements a falsified mechanism.** It rewards *lower* codon
-    adaptiveness over the first ~35 codons; Goodman, Church & Kosuri (*Science* 342,
-    >14,000 reporters) found "reduced RNA structure and not codon rarity itself is
-    responsible." The 5' effect is real; the lever is wrong.
-  - **The highly-expressed reference premise is falsified in *E. coli***: Welch 2009
-    found the favourable codons were those read by tRNAs most charged under
-    starvation, *explicitly not* the codons abundant in highly expressed genes.
-    Keeping highly-expressed as the default stays defensible, but no tooltip may
-    imply it makes CAI predictive.
-  - **Radrizzani 2024 (*Nat Rev Genet*) is good news for BT4's direction**: human
-    synonymous-site selection is not translational selection but avoidance of
-    spurious transcripts, mis-splicing and cryptic splice sites, plus a
-    high-GC / low-CpG "self" signature -- which promotes things BT4 already ships to
-    first class while demoting CAI.
-  - **Prior art recorded so BT4 does not overclaim**: TIsigner already takes
-    `-u/--UTR` with mammalian accessibility windows, and DNA Chisel (MIT) already
-    evaluates constraints over an entire plasmid record. Context-as-constraint-scope
-    is not novel; context-as-optimization-substrate is.
-- **Vendor manufacturability rules BT4 lacks, exactly as published**: windowed GC
-  **range** (max - min across 50 bp windows <= 50 points, Twist DOC-001081 REV4), a
-  **Tm-based repeat trigger** (any repeat with Tm >= 60 C regardless of length --
-  length-only rules miss GC-rich short repeats), and **per-base homopolymer limits**
-  (IDT: A/T >= 10, G/C >= 6). Report a profile, not pass/fail, and do not hard-code
-  a threshold BT4 cannot cite.
-- **An expected-effect-size table** the app and CLI should render beside every
-  result, with each range cited and the vendor-authorship caveat attached.
-- **A "what NOT to do" section** in the survey -- fourteen plausible-sounding moves
-  the evidence refuses, including not building a single global MFE objective, not
-  asserting ensemble-free-energy design is NP-hard (it is explicitly open), not
-  flipping a model to `calibrated=True` because its *input* improved, and not
-  transmitting a user's vector backbone anywhere.
-- **A measured product review, and a re-pointed queue**
-  (`docs/REVIEW_2026-08_expression_and_context.md`). BT4 was audited against what
-  it is *supposed* to be — a codon optimizer for **protein expression**, aware of
-  the **5′UTR** and the **vector backbone**, honouring user-specified
-  manufacturability rules, in a **simple honest UI**. Every number in the review
-  was produced by running the code in this tree, not read from a docstring, and
-  §10 carries the reproduction commands. **No source file changed; this is
-  documentation and a queue re-point.** Headline findings:
-  - **Verdict.** BT4 is an unusually well-engineered, unusually honest **CAI
-    optimizer with manufacturability constraints** — not yet an expression
-    optimizer, because **the optimizer only ever sees the CDS**. Folding is scored
-    on `CDS[0:48]` with no leader; the splice CNNs are scored on the CDS floating
-    in 5,000 literal `N` bases; RiboNN can take UTRs but sits where it is
-    structurally forbidden from influencing delivery. `OptimizeConfig` has 40
-    fields and not one is sequence outside the CDS.
-  - **Four defects, measured.** (1) `run_frontier` — the path **BT4 Studio's
-    Optimize button runs** — only *reports* GLOBAL rules, so setting *Max repeat
-    length* returns a green `proven_optimal` badge on a sequence with a 58-nt
-    repeat and 96 violations. (2) `run_validate` / `POST /validate` silently drop
-    every GLOBAL constraint, reporting zero violations on a sequence with a 31-nt
-    exact repeat; no test covers it. (3) `folding_dg` is computed whole-sequence
-    but labelled `5' dG` (optimized `-39.0`, reported `-138.0` on a 156-nt CDS) —
-    reported ≠ computed, invariant #2. (4) `avoid_internal_start` is infeasible on
-    82–100% of 400–700 aa proteins (Met is single-codon; `MAAMG` reproduces it),
-    and `InfeasibleError` names every *active* constraint rather than the culprit;
-    the `relax()` promised by §4.2 does not exist and `OptimalityStatus.RELAXED` is
-    defined but never used.
-  - **The default operating point is out of family.** BT4's own
-    `scripts/compare_tools.py` puts nine shipping tools at CAI 0.63–0.83 / GC
-    42–54% and BT4 alone at **CAI 1.000 / GC 62.4%**. Relatedly, **no GC-content
-    constraint exists at all**: the soft term is separable and saturates at weight
-    2 without reaching its target, and the hard count budget cannot control
-    clustering (74% worst 50-nt window at 50% total GC). A windowed-GC rule is
-    listed in CLAUDE.md §6 and was never built, though `bt4 tracks` already
-    computes the window.
-  - **The engine is strong; nothing leads the user to it.** CpG 47 → 0 costs 0.077
-    CAI and keeps a proven-optimal certificate, and a nine-flag AAV/LVV profile
-    produces a clean 700-aa design (CAI 0.882, GC 53.0%, 50-nt window 42–64%, CpG
-    5, zero hard violations) in 20.7 s — a combination no user will ever find.
-    Hence named application presets.
-- **Constitutional wording corrected to match the code** (§10.6 applied to BT4's
-  own framing): §1 now claims "optimized for **expression-relevant objectives**"
-  rather than "for real expression outcome", and states the CDS-in-isolation scope
-  explicitly; the `io/` architecture diagram and the BT4 Studio export bullet no
-  longer list **GenBank**, which is a design target that was never built (the
-  README was already accurate on both counts).
+- **Results now report their CAI reference set.** `result.audit` carries
+  `codon_reference_set`, the CLI prints it beside the CAI, and BT4 Studio shows it
+  as its own metrics row — a CAI of 1.0 against highly-expressed counts and one
+  against genome-wide counts are different claims about the same sequence, and the
+  label travels with the number rather than living in a control the user may have
+  changed since the run. The genome-wide sidecars gained a matching
+  `reference_set` stamp, and a mis-filed sidecar (one claiming a reference set
+  other than the table it sits beside) is now a load error rather than a silent
+  mislabel.
+- **`available_organisms()` now recognizes an organism table by shape, not by a
+  suffix blocklist.** It accepts exactly `<organism>.tsv`; every other TSV in the
+  data directory belongs to another axis of the same organism. The old rule
+  excluded `.trna.tsv` by name and so failed *open* — the new reference-set tables
+  would have appeared as organisms called `homo_sapiens.highly_expressed`.
+- **All nine organism tables are now recounted from release-pinned public CDS
+  sets.** Human, *E. coli* and *S. cerevisiae* were the last hand-typed
+  "representative published values" with `cds_count: null` — which made BT4's
+  **default organism** its least checkable table. They now go through the same
+  `scripts/build_organism_tables.py` pipeline as the other six, so every bundled
+  number is a real codon count with a source URL, the source file's own SHA-256,
+  assembly, genebuild, and a per-filter drop tally (CLAUDE.md §8).
+  - **The delivered sequences did not change.** Across a four-protein panel × the
+    three rebuilt organisms, the optimized DNA is **byte-identical** and CAI moves
+    by at most +0.0003. CAI normalizes within each synonymous group, and the
+    most-preferred codon per amino acid is unchanged in all three — so the
+    published values were qualitatively right, and this is a provenance upgrade
+    rather than a change in behavior. Textbook biases still hold (*E. coli* CTG
+    for Leu, yeast AGA for Arg), now as counted facts rather than asserted ones.
+  - **Alternate haplotypes and patch scaffolds are excluded.** Ensembl ships
+    alternate haplotypes and patch scaffolds alongside the primary assembly, each
+    with its own gene IDs — so per-gene de-duplication does not collapse them and
+    they enter a table as duplicate copies of genes already counted. Two species
+    are affected: **human** (11,513 records — seven alternate MHC/HLA haplotypes,
+    the chr19 KIR and LRC haplotypes, and the patch scaffolds) and **zebrafish**
+    (6,029 records on `ALT_CTG*` contigs, which were **15.6% of that species'
+    genes**; 98% of the symbolled ones duplicate a primary-chromosome gene).
+    Both counts are stamped. Genuine unplaced contigs are kept, and the region
+    label match covers `primary_assembly:`, which rat and *Drosophila* use — a
+    naive "chromosomes only" rule would have discarded every record for those two.
+  - **A blocklist alone was not enough, so the build now audits itself.** An
+    earlier pattern that looked complete missed human's `HG*_NOVEL_TEST` patches
+    (12 genes, 9 of them second copies of chr11 olfactory receptors) and every
+    zebrafish `ALT_CTG*` contig. The builder now separately counts anything it
+    *kept* whose region name still looks alternate/patch-like and stamps it as
+    `kept_suspicious_region`; a test requires it to be zero for every organism.
+    The next unknown naming variant fails in CI instead of quietly inflating a
+    shipped table. Removing the duplicates changed **no** amino acid's preferred
+    codon in any organism, so delivered sequences are unaffected.
+  - `test_every_bundled_organism_is_recounted` now fails if any future organism
+    reintroduces an undocumented table.
+
+- **Python 3.10 is now supported** (was 3.11+). `requires-python` is lowered to
+  `>=3.10`, the 3.10 classifier is added, ruff/mypy target 3.10, and CI's quality
+  matrix now runs 3.10 alongside 3.11–3.13. The pure core uses no 3.11-only
+  features, so this is a compatibility widening with no behavior change. It notably
+  lets the wrapped **RiboNN** expression backend be installed into the same
+  environment as its own dependency stack, whose pinned `torch==1.13.1` ships only
+  CPython ≤3.10 wheels.
 
 ### Fixed
+
+- **A second adversarial review, over the ~1,200 lines written since the first, found ten
+  more defects — including two the per-kind anchor rewrite introduced.**
+  - **Declaring an anchor crippled every sequence-derived control.** Case building moved
+    each site's *label* into the backend's frame, but `gt_ag` and `pwm` were still read at
+    the case's own index — the backend's anchor, not the panel's. Measured: with the head
+    identically perfect, the `pwm` control fell from **0.853 skill to 0.0001** and `gt_ag`
+    to exactly 0, making `beats_every_baseline` near-automatic for precisely the real
+    backends that need an offset. All four review lenses found it independently. The
+    controls now invert the shift, unioning both kinds for a combined stratum.
+  - **The `"splice"` offset key was inert but reported as applied.** `{"splice": -5}`
+    scored identically to `{"splice": 0}` while the diagnostic claimed each value was in
+    force and recommended a correction derived from that fiction — so the advertised
+    round-trip destroyed a correctly aligned run. Offsets are now keyed by *site* kind
+    throughout and the key is refused.
+  - **A shifted-out-of-window site silently left the positive class**, lowering prevalence
+    and *raising* every metric — rewarding a backend that structurally cannot find an
+    annotated site. It is clamped back to the nearest scoreable index, preserving the
+    forced miss the old formulation produced.
+  - **`aligned` could be carried by a single peak.** `n_flat < n_sites` let one site
+    outvote any number of silent ones; a kind where 7 of 8 produced nothing reported as
+    aligned at 12% agreement. It now needs a majority.
+  - **The GENCODE builder's motif tolerance discarded small genes.**
+    `len(bad) > len(same) * 0.1` reads as 10% slack, but a k-intron gene contributes only
+    2k sites, so the allowance was 0.2k — below **1** for any gene with four introns or
+    fewer. One legitimate GC-AG intron discarded every site of the gene, the opposite of
+    absorbing the minor spliceosome it was meant for.
+  - **A window running off a contig end was written silently.** Python slices truncate,
+    and minus-strand indices are measured from `w_end`, so every one shifted. The window
+    is now shrunk to what the assembly has and the indices recomputed; a truncation that
+    cuts into the transcript is skipped and counted.
+  - Neighbouring sites with no room for their own dinucleotide at a window edge are
+    dropped rather than written into a panel BT4's own reader would refuse.
+  - **A ragged row crashed the splicebench converter.** `csv.DictReader` fills a short
+    row's missing fields with `None`, so `_boolean(None)` raised `AttributeError` instead
+    of counting the row unparseable — and a 972-column published supplement can easily
+    have one. Null score spellings (`NA`, `NaN`, `None`, `-`, `.`) are now all matched.
+  - A whitespace-only key defeated the `variant_id` fallback (truthiness was tested before
+    stripping), emitting an empty id that made the **whole** panel unreadable.
+  - A genuine score of `0.0` was replaced by a falsy fallback, and `describe()` published
+    a measured-looking prevalence of `0.0` for an empty region.
+- **`anchor_offset` was a single scalar, and no scalar is correct for a real backend.**
+  Research into SpliceAI's and Pangolin's source established that **both anchor on the
+  exonic boundary base**, one base *before* BT4's donor position and one base *after* its
+  acceptor position — opposite directions. Measured with a perfect exonically-anchored
+  backend: at `-1` donors score AP 1.000 and acceptors 0.006; at `+1` the reverse.
+  - **And the alignment diagnostic endorsed the broken setting.** Under either value half
+    the sites aligned and half landed two bases off, and the modal tie-break resolved
+    that `{0: N, ±2: N}` split to `0` — printing **"anchors agree" at 50% alignment**
+    while a perfect model read as hopeless on half the panel. The one check meant to
+    catch misalignment was confirming the wrong value.
+  - `anchor_offset` now accepts a **per-kind mapping**, `CNN_ANCHOR_OFFSETS` records the
+    verified values, and the diagnostic is **per site kind** so the false-agreement state
+    is unrepresentable. Case building shifts each site's label by *its own kind's* offset
+    before any union, which is the only formulation that can handle Pangolin's combined
+    track (its union drops the kind).
+  - `bt4 splice-gate` gains `--cnn-anchors`, `--donor-offset` and `--acceptor-offset`.
+    A scalar remains valid: a kind-separated panel is a legitimate way to run a real
+    backend, and `read_splice_panel` already accepts donors-only or acceptors-only
+    windows.
+
+- **A second round of adversarial review found five more ways the splice gate's verdict
+  could be won without winning.** All measured, all in the Part B gate.
+  - **Dropping the `pwm` control let BT4's own default certify itself.**
+    `SPLICE_BASELINES` says the controls are "kept permanently: a control that
+    disappears once it is inconvenient was never a control" — and nothing enforced it.
+    Running the PWM backend with `baselines=("permutation","gt_ag","constant")` reported
+    `promotable=True`, one keyword away from the module's headline property. Three
+    review lenses found this independently. A subset run is still allowed; it just
+    cannot recommend anything.
+  - **An uncontested stratum counted as a beaten one.** With `baselines=()` no comparison
+    ran, `beats_every_baseline` kept its initial `True`, and `best_baseline` reported
+    `-inf` as though it were a control's skill.
+  - **A GENCODE/Ensembl-named training panel reported itself held out.** The check
+    matched only `chr`-prefixed names, so a panel drawn *entirely* from the models'
+    training chromosomes but named `2`, `4`, `X` reported `held_out=True` — the naming a
+    builder following the runbook's own GENCODE recipe is most likely to produce. Names
+    now normalize across conventions, and an **unrecognisable** group (a RefSeq
+    accession, a scaffold) is reported as *unknown* rather than silently clean.
+  - **Float dust defeated combined-track detection.** `_is_combined` tested exact
+    `== 0.0`, so an acceptor channel carrying `1e-12` was scored with a donor/acceptor
+    split — the exact artifact the collapse prevents, and silently.
+  - **Sites too close to a window edge were scored as silent forced misses.** A donor at
+    position 0 carries a real `GT`, so the motif check passes and the panel is accepted —
+    but no backend has flanking sequence there, so the PWM returns exactly `0.0`. That is
+    a `label=1` case the model structurally cannot get right, depressing every metric
+    through no fault of its own. `SplicePanel.edge_sites()` now reports them and the
+    runner notes the count, because nothing is wrong with the panel's *labels* and the
+    cure is a wider window rather than a dropped site.
+  - **A silent backend was credited with perfect alignment.** The alignment probe's
+    tie-break resolved a flat window to offset 0, so a backend emitting no signal read as
+    "anchors agree" — a positive claim from an absence of evidence, in the one diagnostic
+    whose job is to separate "misaligned" from "scoring near zero".
+
+- **One calibrated window certified a whole run.** On the caller-supplied-scores path
+  `backend_calibrated` was an `any()` over per-window results, so a single
+  `SpliceResult` carrying `calibrated=True` reported the entire run as calibrated. It is
+  now `all()`, guarded by `bool(scored)` because `all(())` is `True`. A calibration flag
+  is the last place to take the generous reading (§10.6).
+- **`promotable` was reachable without anyone setting a bar.** The gate ships permissive
+  defaults on purpose — a threshold this module blessed would be one a weak backend
+  could be pointed at — but that left `passed` trivially true for a bare call, making
+  "the pre-registered conditions held" vacuous. `promotable` now also requires
+  `thresholds_declared`, and a bare call says so in its notes. The defaults are
+  unchanged; what changed is that they can no longer be mistaken for a verdict.
+- **The `pwm` control went blind to every acceptor site when the strata collapsed.**
+  `_tracks` collapses donor and acceptor into one `"splice"` stratum for a
+  combined-track backend, which is right for the *head* — Pangolin's acceptor track is
+  identically zero, so its donor track carries everything. But the **baselines** are
+  scored through the same function, and BT4's PWM baseline is a real two-track
+  predictor. Taking its donor track alone made half the positives unreachable for the
+  control: measured, **0.344 skill instead of 0.654** on a mixed panel, so a
+  Pangolin-class head was easier to beat than it should have been — in exactly the mode
+  Pangolin runs in, and against the very claim the module is built on. The collapse now
+  **unions** the two tracks, which is a no-op for a genuinely combined backend and
+  restores the control otherwise. Found by adversarial review.
+- **The alignment diagnostic reported a residual offset as if it were absolute.** The
+  probe runs on the already-aligned track, so its modal offset is the shift *remaining*
+  after `anchor_offset` is applied. The note printed that number as the value to
+  declare, so a user who had already passed `+1` against a true `+3` was told to pass
+  `+2` — further from the truth, in a message they had every reason to trust. It now
+  reports `recommended_offset` (applied + residual) and names the offset currently in
+  force, and the agreeing message states which anchor it agreed at.
+
 - **Three confirmed-open findings from the completed verification workflow.** The
   exhaustive multi-lens review (seven lenses × three refuters per finding) was
   re-run to completion after its first pass hit a usage limit; its honest tally
@@ -693,75 +1235,6 @@ its first tagged release.
   Every new test was verified to **fail under the exact mutation it guards** —
   the lesson from the vacuous test above.
 
-### Added
-- **Highly-expressed CAI reference sets — and they are now the default.** A codon
-  table's `w = f/f_max` only means something relative to a set of genes, and BT4's
-  tables answered the wrong question: they were counted genome-wide, marking the
-  codon that is most *common* (a quantity set largely by mutation and GC bias)
-  rather than the codon translation *prefers*. `w` as Sharp & Li (1987) defined it
-  comes from a reference set of **highly expressed** genes. BT4 now ships both,
-  and every table, result, CLI line, app row, and manifest says which one it is.
-  - **`scripts/build_highly_expressed_tables.py`** counts each organism's **300
-    most abundant proteins**, ranked by **PaxDb v6.1** whole-organism *integrated*
-    proteomics (CC BY 4.0 — a weighted consensus over many published studies, in
-    ppm) and joined to the **same release-pinned Ensembl CDS** the genome-wide
-    tables use, under the **same** filtering rules — so the two tables differ only
-    in *which genes* they count, never in how a gene is read.
-  - **The join uses no third-party mapping layer.** PaxDb protein IDs resolve
-    against the pinned release's own peptide FASTA; an identifier that resolves to
-    two genes is dropped as ambiguous and *counted separately* from one the
-    annotation simply lacks. All three sources (abundances, peptide FASTA, CDS)
-    are SHA-256-pinned, and `--verify` rebuilds and diffs the committed bytes and
-    sidecars. Each sidecar also carries a digest of the ranked 300-gene roster, so
-    a third party can prove they reproduced the same reference set.
-  - **Organelle-encoded genes are excluded.** Mitochondria and plastids translate
-    with a different genetic code and their own tRNA pool, and are never a BT4
-    design target, so their codon usage is not evidence about the nuclear
-    translation a design will meet. Both numbers are stamped —
-    `genes_excluded_organelle_encoded` (what this filter removed) and
-    `organelle_records_in_cds_source` (how many were in the annotation at all) —
-    because most organelle CDS are dropped as invalid under the standard code
-    before ever reaching the filter.
-  - **N = 300 is evidence, not taste.** It is the smallest size on a tested grid
-    (50…2000) at which *every* bundled organism observes all 64 codons, so no
-    shipped table needed smoothing — an invented number in a reference table is
-    exactly what BT4 refuses to ship. Below it, yeast alone leaves `CGA`/`CGG`
-    unobserved; far above it the reference set dilutes back into the genome-wide
-    answer (at N=2000 yeast and mouse agree with genome-wide at every amino acid).
-  - **What changed in the output.** The most-used codon moves for 11 amino acids
-    in *C. elegans*, 8 in *E. coli* (`TTT`→`TTC`, `CGC`→`CGT`, `GGC`→`GGT`,
-    `ATT`→`ATC`, `CAT`→`CAC`, `GTG`→`GTT`, `AGC`→`TCT`, `TAT`→`TAC` — the classic
-    *E. coli* optimal codons), 7 in zebrafish, 5 in yeast, and 2 in human
-    (`AGA`→`CGC` for Arg, `AGC`→`TCC` for Ser, plus the preferred stop moving
-    `TGA`→`TAA`). Two golden snapshots moved accordingly; both are regenerated and
-    the reason is recorded beside them.
-  - **External ground truth, not just self-consistency** (§8): the tables
-    reproduce the classic *E. coli* and *S. cerevisiae* optimal codons, and codon
-    bias is **stronger** in the highly-expressed set than genome-wide in all eight
-    organisms — largest in yeast (+0.18) and *Drosophila* (+0.17), smallest in rat
-    (+0.03) and human (+0.05), the ordering dos Reis et al. (2004) predict from
-    translational selection being weak in large vertebrate genomes.
-  - ***A. thaliana* deliberately has none.** PaxDb identifies its proteins by
-    UniProt accession, which the pinned Ensembl Plants annotation does not carry,
-    so a join would need an unpinned external mapping. BT4 ships no table rather
-    than one built on a guess; the genome-wide table stays its only, honestly
-    labeled, option — and asking for `highly_expressed` there **raises** instead of
-    silently substituting the other table.
-  - **Surfaces:** `--reference-set` on `bt4 optimize`, `library`, `validate` and
-    `tracks` (there is no `bt4 frontier` subcommand; the frontier is reached via
-    `api.frontier`); `bt4 organisms` now prints each organism's default and
-    available sets; a **Reference set** picker in BT4 Studio that repopulates from the engine
-    per organism (and disables itself, with a reason, when only one exists);
-    `reference_set` on the service's optimize request and in `/organisms`;
-    `OptimizeConfig.reference_set`; and `api.available_reference_sets` /
-    `api.default_reference_set`.
-  - **Honest scope, unchanged.** A highly-expressed reference set makes CAI a
-    better-founded proxy, not a validated expression predictor — Welch et al.
-    (PLoS ONE 2009) found an *E. coli* variant built by maximizing exactly this
-    quantity expressed at a fraction of alternatives. CAI stays one axis of the
-    objective vector (§10.7).
-
-### Fixed
 - **Second review round: seven more lenses, seven more defects.** A follow-up
   seven-lens pass (data, plumbing, claims, test quality via source mutation,
   honesty invariants, behavior-change blast radius, packaging/CI) ran over the
@@ -875,59 +1348,6 @@ its first tagged release.
   because nothing in the suite invoked `--help`. Fixed, and every command's
   `--help` is now a parametrized regression test.
 
-### Changed
-- **Results now report their CAI reference set.** `result.audit` carries
-  `codon_reference_set`, the CLI prints it beside the CAI, and BT4 Studio shows it
-  as its own metrics row — a CAI of 1.0 against highly-expressed counts and one
-  against genome-wide counts are different claims about the same sequence, and the
-  label travels with the number rather than living in a control the user may have
-  changed since the run. The genome-wide sidecars gained a matching
-  `reference_set` stamp, and a mis-filed sidecar (one claiming a reference set
-  other than the table it sits beside) is now a load error rather than a silent
-  mislabel.
-- **`available_organisms()` now recognizes an organism table by shape, not by a
-  suffix blocklist.** It accepts exactly `<organism>.tsv`; every other TSV in the
-  data directory belongs to another axis of the same organism. The old rule
-  excluded `.trna.tsv` by name and so failed *open* — the new reference-set tables
-  would have appeared as organisms called `homo_sapiens.highly_expressed`.
-- **All nine organism tables are now recounted from release-pinned public CDS
-  sets.** Human, *E. coli* and *S. cerevisiae* were the last hand-typed
-  "representative published values" with `cds_count: null` — which made BT4's
-  **default organism** its least checkable table. They now go through the same
-  `scripts/build_organism_tables.py` pipeline as the other six, so every bundled
-  number is a real codon count with a source URL, the source file's own SHA-256,
-  assembly, genebuild, and a per-filter drop tally (CLAUDE.md §8).
-  - **The delivered sequences did not change.** Across a four-protein panel × the
-    three rebuilt organisms, the optimized DNA is **byte-identical** and CAI moves
-    by at most +0.0003. CAI normalizes within each synonymous group, and the
-    most-preferred codon per amino acid is unchanged in all three — so the
-    published values were qualitatively right, and this is a provenance upgrade
-    rather than a change in behavior. Textbook biases still hold (*E. coli* CTG
-    for Leu, yeast AGA for Arg), now as counted facts rather than asserted ones.
-  - **Alternate haplotypes and patch scaffolds are excluded.** Ensembl ships
-    alternate haplotypes and patch scaffolds alongside the primary assembly, each
-    with its own gene IDs — so per-gene de-duplication does not collapse them and
-    they enter a table as duplicate copies of genes already counted. Two species
-    are affected: **human** (11,513 records — seven alternate MHC/HLA haplotypes,
-    the chr19 KIR and LRC haplotypes, and the patch scaffolds) and **zebrafish**
-    (6,029 records on `ALT_CTG*` contigs, which were **15.6% of that species'
-    genes**; 98% of the symbolled ones duplicate a primary-chromosome gene).
-    Both counts are stamped. Genuine unplaced contigs are kept, and the region
-    label match covers `primary_assembly:`, which rat and *Drosophila* use — a
-    naive "chromosomes only" rule would have discarded every record for those two.
-  - **A blocklist alone was not enough, so the build now audits itself.** An
-    earlier pattern that looked complete missed human's `HG*_NOVEL_TEST` patches
-    (12 genes, 9 of them second copies of chr11 olfactory receptors) and every
-    zebrafish `ALT_CTG*` contig. The builder now separately counts anything it
-    *kept* whose region name still looks alternate/patch-like and stamps it as
-    `kept_suspicious_region`; a test requires it to be zero for every organism.
-    The next unknown naming variant fails in CI instead of quietly inflating a
-    shipped table. Removing the duplicates changed **no** amino acid's preferred
-    codon in any organism, so delivered sequences are unaffected.
-  - `test_every_bundled_organism_is_recounted` now fails if any future organism
-    reintroduces an undocumented table.
-
-### Fixed
 - **Unknown-enzyme suggestions no longer read as equivalent substitutes.** The
   near-miss list is a fuzzy match on the *name* with no notion of recognition
   sequence, so a suggestion usually cuts something entirely different (`NotI` is
@@ -978,190 +1398,6 @@ its first tagged release.
     on its own; the digest is the pin, and the sidecar now says so rather than
     implying a stable link.
 
-### Added
-- **REBASE-derived restriction-enzyme catalog (17 → 584 enzymes)**
-  (`bt4.constraints.restriction`, `scripts/build_enzyme_catalog.py`) — the
-  catalog was seventeen hand-typed pairs described only as "textbook-correct",
-  with no source, version, or way to check them. It is now **derived from a
-  version-pinned REBASE release** and held as content-hashed package data, the
-  same discipline the recounted codon tables get (CLAUDE.md §8):
-  - **Selection is documented and auditable:** commercially available Type II
-    enzymes (REBASE `ET`/`CR`) with a single fully-specified IUPAC recognition
-    site of 4–12 bases. The provenance sidecar records the REBASE version, URL,
-    the source file's own SHA-256, the stage-by-stage selection tally, and the
-    shipped TSV's digest — so a third party re-derives and re-verifies it
-    (`python scripts/build_enzyme_catalog.py --verify`).
-  - **Type IIS enzymes included** — BsaI, BsmBI, BbsI, SapI, Esp3I, AarI, the
-    Golden Gate workhorses. REBASE lists an asymmetric site once per strand; the
-    builder *verifies* the second entry is the reverse complement of the first
-    rather than assuming it, and takes one (BT4 bans both strands anyway).
-  - **Verified against the values it replaces:** all 17 previously shipped
-    enzymes resolve to byte-identical sites, cross-validating old and new.
-  - **Isoschizomers kept** (`KpnI` and `Acc65I` both → `GGTACC`) so a user can
-    name the enzyme they actually own.
-  - New public `resolve_enzyme()` (case-insensitive, and on a miss offers the
-    closest names instead of dumping the catalog) and `enzyme_provenance()`, re-exported
-    through `bt4.api`. `ENZYMES` is now read-only shipped data.
-  - **BT4 Studio** gains a searchable enzyme field: a completer that matches the
-    *last* comma-separated token and substitutes it back, leaving earlier entries
-    intact — a stock completer matches the whole line and breaks after the first
-    enzyme.
-  - **Honest scope, stated in the data:** BT4 models the recognition *sequence*
-    only — not cut position, star activity, methylation sensitivity, or buffer.
-    Some real entries are highly degenerate (`MspJI` is `CNNR`); banning one in a
-    CDS can be genuinely unsatisfiable, and BT4 raises `InfeasibleError` naming
-    `restriction_site` rather than returning a sequence that still contains it.
-    A regression test pins that either/or across degenerate and ordinary sites.
-- **Six new organisms, recounted from release-pinned public CDS sets** — mouse,
-  rat, zebrafish, *Drosophila*, *C. elegans*, and *Arabidopsis*, taking BT4 from
-  three selectable organisms to nine (Phase 5 organism breadth, CLAUDE.md §8/§9).
-  This closes a real gap rather than padding a list: all six already shipped
-  authentic GtRNAdb **tRNA** tables, but tAI is only offered for an organism you
-  can *select*, and selection needs a codon-usage table — so six of the eight
-  bundled tRNA tables were **unreachable**. A regression test
-  (`test_every_trna_table_has_a_selectable_organism`) keeps that from recurring.
-  - **Every number is a real count, never a curated summary.** New
-    `scripts/build_organism_tables.py` downloads a **release-pinned** Ensembl /
-    Ensembl Plants CDS FASTA (release 116 / plants 63 — pinned, not `current`,
-    which moves), filters to complete unambiguous in-frame coding sequences
-    (ACGT-only, length 3N, ATG start, terminal stop, no internal stop), takes
-    **one representative CDS per gene** (the longest; ties broken by transcript id
-    so the pick is deterministic) so codon usage is not weighted by how finely a
-    gene happens to be annotated, and counts codons with BT4's own
-    `count_codons`. The terminal stop is counted, since BT4 chooses the stop it
-    appends.
-  - **Re-derivable by a third party.** Each provenance sidecar now carries the
-    source URL, the **downloaded file's own SHA-256**, assembly, **genebuild**
-    (the gene annotation the CDS models come from — *not* the same thing as the
-    assembly: Arabidopsis CDS are Araport11 models on the TAIR10 assembly, and the
-    fly/worm models are FlyBase/WormBase; recording only the assembly would
-    misattribute the very sequences that were counted), database release,
-    total codons counted, the full per-filter drop tally, and the rebuild command
-    — alongside the existing content hash of the TSV itself. `--verify` rebuilds
-    into a temp directory and diffs against the committed bytes; all six verify
-    byte-identically.
-  - **Refuses rather than fabricates.** The builder aborts if a CDS set yields no
-    valid sequences, or if any of the 64 codons goes unobserved — it will not
-    smooth an invented number into a shipped table.
-  - **Checked against external ground truth (§8), not just self-consistency.**
-    The new tables reproduce independently-published facts: GC3 orders
-    *Drosophila* (0.63) > zebrafish (0.54) > *Arabidopsis* (0.42) > *C. elegans*
-    (0.40); mouse (0.573) and rat (0.578), counted from separate CDS sets, land
-    within 1.5 points of human (0.587); preferred Leu is CTG in the GC3-rich
-    genomes and CTT in the AT-rich ones; preferred stop is TGA in the GC-richer
-    genomes and TAA in the AT-rich ones. Gene counts match published
-    protein-coding counts (e.g. *C. elegans* 19,928; mouse 21,571).
-- `write_table` gained `build` / `note` / `extra` parameters so a recount can
-  describe what it actually did and attach a re-derivation trail. Reserved
-  provenance keys cannot be shadowed by `extra`, so a sidecar can never disagree
-  with itself.
-- **BT4 Studio surfaces the engine-ready backends, gains library mode, and gets
-  its Phase-4 polish** (`bt4.app`) — the two models that already existed behind
-  `bt4.api` but had no UI are now wired in, plus the sampler and the accessibility
-  work called for in CLAUDE.md §6.6. All of it is pure plumbing over the stable
-  API (no engine change, no calibration claim):
-  - **RiboNN in the Candidates tab.** An opt-in *Expression head* group (toggle,
-    species, and the fixed 5'/3' UTR context the model requires) routes a
-    `RiboNNExpressionModel` into `api.candidates`. The toggle is enabled **only**
-    when `available_expression_backends()` reports the user's own checkout and
-    weights actually resolve, so it is never a dead control, and it explains what
-    is missing otherwise. Missing/non-DNA UTRs are refused *before* the run starts
-    rather than raising mid-flight. RiboNN stays `calibrated=False`, so the banner
-    still reads **discovery order, not a ranking** and the solver's pick stays
-    delivered (§10.6).
-  - **Validate with ASSP.** The one control that leaves the machine. It asks for
-    consent first (naming the service and what is sent), runs
-    `api.splice_crosscheck` on a background thread, and renders the report led by
-    its tags — *network-derived, UNCALIBRATED, advisory, **not** part of the run
-    manifest and never exported* — with the localized sites in a table. An outage
-    degrades to a labeled "unavailable" banner and never fails a run (§10.15). The
-    panel is cleared whenever the delivered sequence changes, so one sequence's
-    splice sites can never be shown beside another's, and an export is
-    byte-identical whether or not a cross-check ran (regression-tested).
-  - **Library (sampled) tab.** `api.library` with members / temperature / seed
-    controls, a per-member table, the selected member's sequence with its
-    violation highlights, and a multi-record FASTA export whose every record is
-    named `sampled`. The banner leads with **sampled, not optimized** — the
-    `SAMPLED` certificate colours the badge directly, so it cannot drift from the
-    claim the engine made — and reports measured diversity (distinct count, mean
-    pairwise difference).
-  - **Phase-4 polish.** A File/Run/View/Help menu bar with standard shortcuts
-    makes every action keyboard-reachable; **View → System / Light / Dark**
-    switches theme at runtime (restyling the stylesheet, both plots, the badges,
-    and the sequence viewers' violation bands from the still-live results, via a
-    new `SequenceViewer.set_dark`); tab order covers every new control and each
-    carries an accessible name plus an explanatory tooltip.
-  - **One source of truth for run gating.** All four flows (optimize, rank+audit,
-    cross-check, library) share a `_wire_thread` helper and a `_update_run_buttons`
-    gate driven by explicit running-flags rather than thread references — so a
-    missed reference clear can no longer strand a control (the previous
-    optimize-then-rank stuck-button class of bug is now structurally impossible).
-  - New shared `_EngineWorker` base in `bt4.app.worker` (signal trio + the
-    never-raise contract) with `CrossCheckWorker` and `LibraryWorker` alongside
-    the existing two.
-
-  Found by an adversarial review of the above and fixed in the same change (each
-  with a regression test that fails without its fix):
-  - **A late cross-check could be attributed to the wrong sequence.** A report
-    describes exactly one sequence and carries it, so `_on_crosscheck_finished`
-    now compares `report.dna` to the live delivered DNA and *discards* a report
-    whose design changed while it ran, instead of rendering it. The panel-clearing
-    rule covered only the other ordering.
-  - **Menu shortcuts bypassed the single-flow gate.** `Ctrl+R` during an in-flight
-    cross-check started a second engine flow, because only the buttons were gated.
-    The Run actions are now gated alongside them, and each `_start_*` refuses via a
-    shared `_busy()` check — so the invariant lives in the code path, not only in a
-    greyed-out control.
-  - **A second library draw stranded the first draw's sequence on screen.**
-    Repopulating the table in place leaves the selection intact, so re-selecting
-    row 0 emitted nothing; the member viewer is now repainted explicitly.
-  - **Untrusted service text could rewrite the honesty banner.** ASSP's own error
-    text was interpolated unescaped into a RichText label — markup that could hide
-    the very "network-derived / UNCALIBRATED / advisory" labels marking it. All
-    externally-derived text is now HTML-escaped.
-  - **Closing mid-run destroyed a running `QThread`** (pre-existing, but this change
-    triples the number of flows that can be in flight). `closeEvent` now cancels
-    what is cancelable and gives each live thread a bounded chance to finish.
-- **Public expression-backend registry** (`bt4.biomodels.expression.available_backends`
-  / `resolve_backend`, re-exported as `bt4.api.available_expression_backends` /
-  `resolve_expression_backend`) — the mirror of the splice resolver, so a frontend
-  selects an expression head by name through the stable API instead of importing
-  `biomodels` across a layer (§3, §10.9). `available_backends()` never raises and
-  lists `"ribonn"` only when it can genuinely run; resolution is lazy (no torch
-  import, no weight load) and confers **no** calibration.
-- **Opt-in, out-of-loop ASSP splice cross-check** (`bt4.api.splice_crosscheck` /
-  `bt4.pipeline.run_splice_crosscheck`, `bt4.biomodels.splice.AsspSplicePredictor`)
-  — a **network** validator that runs the online ASSP service (Alternative Splice
-  Site Predictor, Wang & Marín 2006) over an already-delivered sequence behind the
-  existing `SplicePredictor` contract, closing the last non-human-gated gap in the
-  splice subsystem (CLAUDE.md §6, §10.15). BT3's fatal splice bug was scraping this
-  exact service **in the optimizer's inner loop as its only splice path**; BT4
-  inverts every property of that mistake, structurally:
-  - **Opt-in and out-of-the-inner-loop.** Requested explicitly by name and gated
-    behind the `bt4[assp]` extra (httpx, lazily imported); it runs only as a final
-    audit / validation pass on the delivered sequence, never per optimizer move, and
-    is **never** returned by `splice.default()` or `available_splice_backends()`.
-  - **Never blocking.** Rate-limited with exponential backoff and cached by
-    sequence hash; if the service is unreachable or returns a garbled body the raw
-    predictor raises an `AsspError`, but `run_splice_crosscheck` catches it and
-    reports "unavailable" — a cross-check outage can never fail an optimization. The
-    same graceful path covers a wrapped CNN's missing deps.
-  - **Network-derived and non-reproducible.** `network_derived` is `True` and
-    `calibrated` is `False`; ASSP numbers are excluded from the
-    reproducible-from-manifest guarantee and reported as a separate advisory section
-    (the CLI prints them to **stderr**, never into the stdout FASTA/JSON artifact or
-    a `Result` manifest).
-  - **Wired through the CLI** — `bt4 validate --splice-backend assp` and `bt4
-    optimize --check-splice assp` (both flags also accept `pwm` / `pangolin` /
-    `spliceai` for an offline or installed-CNN cross-check).
-  - **CI never makes a live call.** The adapter is driven from committed **offline
-    fixtures** (`tests/fixtures/assp/`, `FixtureAsspTransport`, selected via
-    `$BT4_ASSP_FIXTURE_DIR`). Honest caveat: the live wire format is *unverified
-    against the service* (unreachable during development), so the fixtures are
-    *synthetic ASSP-format reports*, not real captures — the same "no bundled panel
-    ships" posture as the wrapped CNNs.
-
-### Fixed
 - **`MinMaxTerm` is now scale-invariant — `minmax_weight` finally means the same
   thing on every organism.** Its `delta` was a raw frequency *difference*
   (`f(codon) - f_avg(aa)`), so its magnitude tracked the codon table's units: mean
@@ -1199,188 +1435,6 @@ its first tagged release.
   data loader (pandas reads an all-empty UTR column as `NaN` and its `.str`
   preprocessing fails); the adapter now refuses up front with a clear message, since
   the UTRs carry most of RiboNN's signal and an empty-UTR score is not meaningful.
-
-### Changed
-- **Python 3.10 is now supported** (was 3.11+). `requires-python` is lowered to
-  `>=3.10`, the 3.10 classifier is added, ruff/mypy target 3.10, and CI's quality
-  matrix now runs 3.10 alongside 3.11–3.13. The pure core uses no 3.11-only
-  features, so this is a compatibility widening with no behavior change. It notably
-  lets the wrapped **RiboNN** expression backend be installed into the same
-  environment as its own dependency stack, whose pinned `torch==1.13.1` ships only
-  CPython ≤3.10 wheels.
-
-### Added
-- **BT4 Studio "Candidates & splice audit" tab** — step 5 (final) of the
-  expression/splice design flow, surfacing `api.candidates` → `api.splice_audit`
-  in the desktop app. A background `CandidatesWorker` (mirroring the known-good
-  `OptimizeWorker` `QThread` lifecycle) runs both on a worker thread and hands the
-  window the candidate set + splice audit in one signal. The tab renders the
-  ranked, honestly-labeled candidate table (delivered pick starred; per-member
-  source / CAI / GC / expression+units / calibration / hard-violation / **distinct**
-  splice-site counts) with two advisory banners: an *uncalibrated* expression head
-  is shown as **discovery order, not a ranking** (solver's pick starred, scores
-  annotating only; a calibrated head switches to ranked-by-expression), and the
-  splice banner leads with **UNCALIBRATED (advisory)** whenever `all_calibrated` is
-  `False`, reporting cross-backend agreement and stating the flags localize sites
-  heuristically and edit nothing. Every metric is recomputed per candidate from its
-  own DNA (invariant #2); an opt-in toggle routes the installed SpliceAI/Pangolin
-  CNNs into the audit. The results area is now a `QTabWidget` (Design | Candidates &
-  splice audit); the Design tab is unchanged. No Cancel control on this tab (the
-  assemble→audit flow is not point-cancelable), and the cross-flow Optimize/Rank
-  gating clears the worker-thread reference so neither button can deadlock.
-- **Localize-and-flag splice audit** (`bt4.api.splice_audit` /
-  `bt4.biomodels.splice.audit_splice`) — step 4 of the expression/splice design
-  flow (`docs/DESIGN_expression_splice_flow.md` Stage C). An **out-of-loop,
-  advisory** audit that runs the available `SplicePredictor` backends over a step-3
-  candidate set to **localize** residual cryptic splice sites (one flag per
-  contiguous above-threshold run, at its peak — non-maximal suppression) and attach
-  the whole-panel **backend agreement** (pooled rank + sign) as the authoritative
-  cross-backend confidence signal — built from the Delta-splicing values the audit
-  already computed (a new shared `agreement_from_deltas` helper), so each backend
-  scores every sequence **once**, never twice (§7). **It never edits** the sequences — a targeted synonymous auto-edit at flagged loci is a
-  deliberately deferred, calibrated-gated future step. Honesty (CLAUDE.md §6/§10.6):
-  every shipped backend is `calibrated=False` today, so `all_calibrated` is `False`
-  and every `SpliceFlag` carries its **emitting backend's** `calibrated` flag; the
-  site `threshold` is a **heuristic display knob** (not a validated cutoff) and the
-  PWM baseline's per-position `score` is an uncalibrated **arbitrary-units**
-  pseudo-score. Per-flag `added_risk_vs_reference` is **positive = worse** and
-  strictly *intra-backend*, kept distinct from the panel-level `delta_splicing`
-  (larger = better). Cross-backend `also_flagged_by` is a **raw positional
-  co-occurrence** (±`match_window` nt, sized to the backends' anchor offsets),
-  explicitly **not** a kind-level agreement (Pangolin reports one combined
-  `P(splice)` and so can never disagree on kind — its flags are labelled `"splice"`,
-  never donor-specific). New `biomodels/splice/audit.py` (raw-sequence core, imports
-  only `domain` + the splice backends) + `pipeline/splice_audit.py` (the
-  `CandidateSet` adapter + `available_splice_backends()`, which adds the wrapped
-  SpliceAI/Pangolin CNNs when installed). Deterministic (#7). API-level surface (the
-  BT4 Studio annotation UI is step 5).
-- **Candidate-set assembly + expression rerank** (`bt4.api.candidates` /
-  `assemble_and_rank_candidates`) — step 3 of the expression/splice design flow
-  (`docs/DESIGN_expression_splice_flow.md`). Assembles the finalist set an
-  expression head ranks: the **Pareto frontier** plus, when a GLOBAL rule is active
-  *and* the delivered exact-DP seed actually violates it, a small **deterministic
-  library of repeat-refined variants** (distinct refinement seeds over the delivered
-  seed). The set is de-duplicated and scored by an `ExpressionPredictor` — in **one
-  batched call** when the backend implements the new `BatchExpressionPredictor`
-  contract (`score_many`, e.g. RiboNN), else per sequence — and delivered under the
-  same **calibrated-gating** honesty rule as `rerank_by_expression`: an uncalibrated
-  head (the default placeholder, and the shipped RiboNN adapter) only *annotates* —
-  the set stays in **discovery order** (`order_basis="discovery"`) with the
-  solver-delivered sequence `chosen` — while a calibrated head reorders by predicted
-  expression (`order_basis="expression_rank"`, total order `(score desc, index asc)`)
-  and re-picks the top (CLAUDE.md §10.5/§10.6). Hardened for correctness/honesty: the
-  **delivered (`chosen`) sequence is invariant to `n`** (uncalibrated, the
-  solver-delivered sequence is pinned first in discovery order; calibrated, the
-  head's top pick is the top of the top-n keep — the cap is applied *after* scoring
-  so a calibrated reranker never loses its best candidate);
-  every member is a full `Result` (round-trips, metrics recomputed, certificate,
-  residual GLOBAL violations disclosed); variants are labelled `repeat_refined` (the
-  *process*, not a guaranteed fix); and de-dup/cap counts, the batch-path flag, and
-  the predictor identity (folded into the manifest, invariant #9) are all reported.
-  New `BatchExpressionPredictor` Protocol in `bt4.biomodels.expression`; `_refine`
-  gains an optional `seed` (default unchanged). API-level surface (UI wiring is
-  step 5). No calibration claim — ranking is a reporting no-op until a head is
-  calibrated.
-- **Strong splice-consensus motif constraint** (`bt4.constraints.SpliceSiteMotifConstraint`,
-  `avoid_splice_sites`) — step 2 of the expression/splice design flow
-  (`docs/DESIGN_expression_splice_flow.md`). A new **LOCAL, exact-in-the-trellis**
-  hard constraint that forbids the *strong* splice-consensus **donor** (`GTRAGT`,
-  the intronic +1..+6 core) and **acceptor** (`YYYYYYNYAGG`, a polypyrimidine tract
-  + `NYAG|G`) motifs on the mRNA **sense strand only** (splicing is strand-specific,
-  so — unlike restriction/repeat motifs — there is **no** reverse-complement
-  banning). It is an honest **structural heuristic**, not a splice model: it reduces
-  only the most *obvious* cryptic-splice risk and makes no calibrated claim; the
-  wrapped SpliceAI/Pangolin CNNs do the real audit out of loop (CLAUDE.md §6,
-  §10.6). It **never** bans the ubiquitous bare `GT`/`AG` (governing rule 3). The
-  default patterns (Shapiro & Senapathy 1987; Zhang 1998; human/mammalian
-  major-spliceosome only) are deliberately specific (~1/2048 donor, ~1/8192
-  acceptor) so the hard veto rarely over-constrains a design, and are configurable
-  via `donor_motifs`/`acceptor_motifs`. `ok_suffix⇔validate` and `context_len`
-  sufficiency (5 donor / 10 acceptor) are property-tested (invariant #3). Wired
-  through `OptimizeConfig`, the `bt4` CLI (`--avoid-splice-sites`), the `service`
-  schema, and BT4 Studio (a checkbox with an explanatory tooltip); off by default.
-- **Batched RiboNN scoring** (`RiboNNExpressionModel.score_many` /
-  `.delta_logte_many`) — the first step of the expression/splice design flow
-  (`docs/DESIGN_expression_splice_flow.md`). RiboNN's cost is dominated by fixed
-  *per-invocation* overhead (weight hashing + model load + its DataLoader worker
-  spawn), so scoring a whole candidate set one sequence at a time paid that cost
-  N times. The new public batch methods route the entire set through the existing
-  batched `_predict_te` path (one temporary TSV, one `predict` invocation — RiboNN's
-  `top_k`-model ensemble runs inside that single call), so scoring a Pareto frontier
-  costs roughly the wall-clock of scoring a single sequence.
-  `delta_logte_many` additionally scores the shared **reference once** (appended to
-  the batch), not once per design. Both preserve per-input validation (valid DNA,
-  length-3N ending in a stop codon, non-empty `utr5`/`utr3`) and the `tx_id`
-  realignment; results come back **in input order**. `score_sequence` /
-  `delta_logte` now delegate to the batch methods (single source of truth). A
-  `num_workers=0` DataLoader path was investigated and **deliberately left out**:
-  RiboNN's `predict_using_nested_cross_validation_models` exposes no worker-count
-  parameter, so requesting 0 workers would mean patching RiboNN internals (against
-  the "wrap, never reimplement" contract), and batching already amortizes the
-  one-time worker spawn across the set. `calibrated` stays **`False`** — no
-  calibration claim. Tested without torch / pandas / the RiboNN checkout (batch
-  ordering, ensemble averaging per `tx_id`, reference-scored-once, and the
-  empty-UTR / bad-CDS guards still firing).
-- **Wrapped RiboNN expression backend** (`bt4.biomodels.expression.RiboNNExpressionModel`)
-  — the Phase-4 learned expression head behind the `ExpressionPredictor` contract
-  (CLAUDE.md §6/§9). It runs the published **RiboNN** translation-efficiency CNN
-  (Zheng, Persyn, Wang et al., *Nat Biotechnol* 2025; Sanofi / Cenik Lab)
-  inference-only as an out-of-loop frontier reranker. **License:** RiboNN's code
-  and weights are each **Sanofi non-commercial** (academic/non-commercial only) —
-  compatible with BT4's open-source non-commercial scope and, like SpliceAI's
-  CC BY-NC weights, **never bundled**: the adapter drives the user's own RiboNN
-  clone (lazily importing the repo's `src`, pointed at via `$BT4_RIBONN_DIR`) and
-  their Zenodo weights. Every weight it loads is verified against a bundled
-  180-entry SHA-256 manifest (`data/ribonn_sha256.json`, 90 human + 90 mouse —
-  public content hashes only) **before** `torch.load`. The score is in RiboNN's
-  native **CLR-residual TE** units (never exponentiated); `delta_logte(designed,
-  reference)` gives the UTR-fixed, CDS-attributable Δ (negative = a CDS change
-  predicted to *reduce* expression), analogous to Pangolin's `delta_splicing`.
-  Ships **`calibrated=False`** (`default()` still returns `NullExpressionModel`):
-  faithful reproduction is not calibration for BT4's CDS-variant regime, so
-  promotion requires a passing `verify_expression_gate` on a regime-matched panel
-  (human-only, data-gated). New `bt4[expression-ribonn]` extra (torch + pandas),
-  lazily imported so `import bt4` stays light.
-- **Model-agnostic expression acceptance-gate harness**
-  (`bt4.biomodels.expression.gate`) — the honest gate a learned expression head
-  must pass to earn `calibrated=True` (CLAUDE.md §6/§8/§10.6, Phase 4). For a
-  log-TE regression head it reports **Spearman** (primary), **Pearson**, **R²**,
-  and **split-conformal coverage** at a target level (default 90%), evaluated on a
-  **group-disjoint split** (homology cluster / chromosome) so no group leaks
-  across calibration and test — the distribution-shift-aware check that a head
-  validated only on natural-gene TE has *not* earned calibration for BT4's
-  CDS-variant regime. `passed` requires both the Spearman threshold **and**
-  conformal coverage near target (point accuracy *and* honest uncertainty). The
-  gate never flips anything: thresholds are inputs set at gate time, and the
-  neutral `NullExpressionModel` provably cannot pass (its zero-variance scores
-  give Spearman 0). New `ExpressionEvalCase` / `ExpressionGateReport` and a
-  `run_expression_gate(predictor, samples)` wrapper. Fully dependency-free and
-  tested without torch or any real model, mirroring how the splice
-  fidelity/attestation machinery shipped before a calibrated backend.
-- **Shared dependency-free statistics** (`bt4.biomodels._stats`) — `pearson`,
-  `spearman` (moved from `splice.agreement`, which now re-exports them), plus
-  `r2_score`, `conformal_quantile` (finite-sample split-conformal), and
-  `empirical_coverage`. Single well-tested home for the estimators the splice
-  agreement report and the expression gate both use.
-- **License-clean splice fidelity-attestation layer**
-  (`bt4.biomodels.splice.attestation`) — the honest promotion path for the wrapped
-  Pangolin / SpliceAI backends (CLAUDE.md §6, §10). A `FidelityAttestation` records
-  **only** a passing integration-fidelity gate's derived scalars (`passed`,
-  `max_abs_deviation`, `n_cases`, `tolerance`) plus the public pinned weight
-  SHA-256s and the tool version — **never** a `FidelityCase` raw per-position score
-  (those are the license-encumbered model outputs). The shape is enforced
-  structurally (`_ALLOWED_FIELDS` + an honesty test asserting no raw-score field is
-  serializable), and `from_dict` refuses any unexpected key. `attest_backend`
-  refuses to record a failing or too-loose gate; `verified_predictor(predictor,
-  attestation)` is the single seam that flips a backend to `calibrated=True`, and
-  only when the attestation passed, clears the `MAX_ATTESTATION_TOLERANCE` floor,
-  and its weight SHAs exactly match the adapter's `PINNED_WEIGHT_SHA256` (a
-  refusal, never a silent downgrade). A deterministic, timestamp-free
-  `content_hash` makes an attestation a provenance-manifest stamp. This layers the
-  committed-record / private-execution / user-opt-in / baseline-fallback options;
-  no attestation ships, so `default()` still returns the honest PWM baseline. Both
-  Pangolin (GPL) and SpliceAI (CC BY-NC) are eligible to certify under BT4's
-  open-source, non-commercial scope.
 
 ## [0.4.0] - 2026-08-04
 

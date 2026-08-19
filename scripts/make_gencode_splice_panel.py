@@ -224,6 +224,11 @@ def _fetch(genome: object, chrom: str, start: int, end: int) -> str:
     Accepts a ``pyfastx.Fasta`` (what a real run uses) or any mapping of name to
     sequence string, which is what the tests use so the arithmetic is checkable without
     a 3 GB download.
+
+    **The caller must check the returned length.** Python slices past a contig's end
+    truncate silently, and a short window makes every minus-strand index wrong (they are
+    measured from ``w_end``) while quietly stripping the flank from a plus-strand one.
+    Real genes sit near contig ends, so this is reached on a real run.
     """
     if isinstance(genome, dict):
         return genome[chrom][start - 1 : end].upper()
@@ -263,7 +268,14 @@ def build_windows(
     for sites in by_chrom.values():
         sites.sort()
 
-    counts = {"n_gap": 0, "n_antisense": 0, "n_no_sites": 0, "n_motif": 0}
+    counts = {
+        "n_gap": 0,
+        "n_antisense": 0,
+        "n_no_sites": 0,
+        "n_motif": 0,
+        "n_truncated": 0,
+        "n_unscoreable": 0,
+    }
     windows: list[PanelWindow] = []
     for transcript_id in sorted(transcripts):
         if limit is not None and len(windows) >= limit:
@@ -276,6 +288,14 @@ def build_windows(
         w_start, w_end = max(1, span_start - flank), span_end + flank
 
         plus = _fetch(genome, record.chrom, w_start, w_end)
+        if len(plus) != w_end - w_start + 1:
+            # The window ran off the contig and was silently truncated. Shrink it to what
+            # the assembly actually has, rather than writing a window whose minus-strand
+            # indices are all wrong.
+            w_end = w_start + len(plus) - 1
+            if w_end < span_end:
+                counts["n_truncated"] += 1
+                continue
         if "N" in plus:
             # BT4's format forbids N, and an unscoreable position masquerading as a real
             # negative is precisely what it forbids it for.
@@ -298,6 +318,20 @@ def build_windows(
             counts["n_no_sites"] += 1
             continue
 
+        # Drop sites with no room for their own dinucleotide inside this window. They
+        # are real sites of a *neighbouring* transcript that happen to land on the
+        # boundary; keeping them writes a panel BT4's own reader refuses.
+        limit = len(stored)
+        keep = [
+            (i, kind)
+            for i, kind in same
+            if (kind == "donor" and 0 <= i <= limit - 2) or (kind == "acceptor" and i >= 1)
+        ]
+        counts["n_unscoreable"] += len(same) - len(keep)
+        same = keep
+        if not same:
+            counts["n_no_sites"] += 1
+            continue
         donors = tuple(sorted({i for i, kind in same if kind == "donor"}))
         acceptors = tuple(sorted({i for i, kind in same if kind == "acceptor"}))
         # Self-check before writing, so a bad transcript aborts at the transcript rather
@@ -306,7 +340,12 @@ def build_windows(
         # spliceosome (GC-AG, U12 AT-AC), not a bug.
         bad = [i for i in donors if stored[i : i + 2] != "GT"]
         bad += [i for i in acceptors if stored[i - 1 : i + 1] != "AG"]
-        if len(bad) > len(same) * 0.1:
+        # A tolerance, not a ratio. `len(bad) > len(same) * 0.1` sounds like "10% slack"
+        # but a k-intron gene contributes only 2k sites, so the allowance is 0.2k -- below
+        # 1 for every gene with four introns or fewer. One legitimate GC-AG intron then
+        # discarded every site of the gene, which is the opposite of absorbing the minor
+        # spliceosome the 10% was meant to absorb.
+        if len(bad) > max(1, len(same) // 10):
             counts["n_motif"] += 1
             continue
 
@@ -391,7 +430,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  windows {len(windows)}   sites {n_sites}")
     print(f"  skipped: {counts['n_gap']} with assembly gaps, "
           f"{counts['n_antisense']} overlapping antisense sites, "
-          f"{counts['n_no_sites']} with no sites, {counts['n_motif']} failing the motif check")
+          f"{counts['n_no_sites']} with no sites, {counts['n_motif']} failing the motif "
+          f"check, {counts['n_truncated']} running off a contig end")
+    if counts["n_unscoreable"]:
+        print(f"  dropped {counts['n_unscoreable']} neighbouring site(s) with no room for "
+              "their dinucleotide at a window edge")
     print("\nVerify it before use:")
     print("  python -c \"from bt4.api import read_splice_panel; import json; "
           f"print(json.dumps(read_splice_panel(r'{args.out}', "

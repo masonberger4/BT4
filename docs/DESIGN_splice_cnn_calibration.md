@@ -845,6 +845,43 @@ Promotion needs three conditions at once, reported separately so a failure says 
 the gate's own thresholds, beating every baseline in every stratum, and the panel being
 **held out** — a panel overlapping chr 2/4/6/8/10–22/X/Y can never be `promotable`.
 
+#### The anchor convention — resolved from upstream source *(and it is not BT4's)*
+
+**Both SpliceAI and Pangolin score a site on the exonic boundary base.** BT4's panel
+anchors on the intronic dinucleotide. The gap is one base **in opposite directions for
+the two kinds**:
+
+| Site kind | BT4 panel position | Where the CNN's score sits | offset to declare |
+|---|---|---|---|
+| **donor** | G of `GT` = first **intronic** base | last **exonic** base | **`-1`** |
+| **acceptor** | G of `AG` = last **intronic** base | first **exonic** base | **`+1`** |
+
+The two backends agree with each other; donor and acceptor disagree *within* each.
+Established three ways: SpliceAI's training-label construction (`Y0[c-tx_start] = 2` at
+exon **ends** for donors, `= 1` at exon **starts** for acceptors), Pangolin's CLI using
+gffutils' first/last exonic base as the sites, and direct measurement against the
+hash-verified weights (34 sites, unanimous, both strands).
+
+Use `--cnn-anchors`, which is exactly `{"donor": -1, "acceptor": +1}`:
+
+```
+bt4 splice-gate panel.tsv --backend pangolin --cnn-anchors ^
+  --negative-construction "all other positions in MANE Select gene-body windows"
+```
+
+> **Why this had to change the code.** `anchor_offset` was a single scalar, and no scalar
+> is correct for a mixed panel. Measured, with a perfect exonically-anchored backend:
+> at `-1` donors score AP 1.000 and acceptors 0.006; at `+1` the reverse. Worse, the
+> alignment diagnostic *endorsed* both: half the sites aligned and half landed two bases
+> off, and the modal tie-break resolved that split to `0`, printing **"anchors agree"**
+> at 50% alignment. A perfect model read as hopeless on half the panel with the one check
+> meant to catch it confirming the wrong value. The diagnostic is now **per site kind**,
+> which makes that state unrepresentable, and `anchor_offset` accepts a per-kind mapping.
+
+**Do not** "fix" this by rebuilding the panel on the exonic convention:
+`read_splice_panel` refuses that below its 90% motif floor, and its refusal text names
+this exact convention. That refusal is correct and should stay.
+
 ### B4 — Run it and compare against published anchors
 
 ```

@@ -249,15 +249,21 @@ class SpliceVariantPanel:
                 "rows would answer a question about a smaller panel than the one "
                 "reported; drop those rows deliberately, or use a complete column"
             )
-        return [
-            SpliceVariantCase(
-                predicted=row.score(score_column) or 0.0,
-                label=row.label,
-                region=row.region,
-                group=row.group,
+        # Taken as-is. `row.score(...) or 0.0` would silently replace a GENUINE 0.0 --
+        # which is a real score for a tool reporting no predicted effect, and the single
+        # most common value in a variant panel. Coverage is guaranteed by the refusal
+        # above, so the lookup cannot be None here.
+        cases = []
+        for row in self.rows:
+            score = row.score(score_column)
+            if score is None:  # pragma: no cover - the gap check above rules this out
+                raise ValueError(f"row {row.variant_id!r} lost its {score_column!r} score")
+            cases.append(
+                SpliceVariantCase(
+                    predicted=score, label=row.label, region=row.region, group=row.group
+                )
             )
-            for row in self.rows
-        ]
+        return cases
 
     def content_hash(self) -> str:
         """Return a stable SHA-256 over the panel's *content* (not its formatting).
@@ -300,9 +306,13 @@ class SpliceVariantPanel:
                 for group in self.groups
             },
             "region_sizes": {region: len(rows) for region, rows in by_region.items()},
+            # Only regions that HAVE rows. A `0.0` for an empty stratum reads as a
+            # measured prevalence in the same dict, in the same units, as a real one --
+            # and this is the module whose whole job is keeping labels honest.
             "region_prevalence": {
-                region: (sum(r.label for r in rows) / len(rows)) if rows else 0.0
+                region: sum(r.label for r in rows) / len(rows)
                 for region, rows in by_region.items()
+                if rows
             },
             "score_columns": list(self.score_columns),
             "training_chromosome_overlap": list(self.training_overlap),

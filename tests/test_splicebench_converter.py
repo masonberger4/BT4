@@ -199,3 +199,69 @@ def test_an_unreadable_label_is_counted_not_guessed(
     _, counts = converter.convert(directory)
     assert counts["skipped_unparseable"] == 1
     assert counts["FAS"] == 3
+
+
+# --------------------------------------------------------------------------
+# Second review round
+
+
+def test_a_ragged_row_is_counted_not_crashed_on(
+    converter: ModuleType, tmp_path: Path
+) -> None:
+    """``csv.DictReader`` fills a short row's missing fields with ``None``.
+
+    A 972-column published supplement can easily have one, and ``_boolean(None)`` used to
+    raise ``AttributeError`` mid-conversion instead of the row being counted unparseable.
+    """
+    directory = _write_archive(tmp_path, converter)
+    path = directory / "fas_ex6_snvs_scored.txt"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines.append("truncated_row\tFAS")  # far fewer fields than the header
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    _, counts = converter.convert(directory)
+    assert counts["skipped_unparseable"] == 1
+    assert counts["FAS"] == 4
+
+
+def test_a_whitespace_only_key_falls_back_instead_of_emitting_an_empty_id(
+    converter: ModuleType, tmp_path: Path
+) -> None:
+    """Truthiness was tested before stripping, so '   ' defeated the fallback.
+
+    The row was written with an empty ``variant_id``, which makes the **whole** converted
+    panel unreadable rather than just that row.
+    """
+    from bt4.api import read_variant_panel
+
+    directory = _write_archive(tmp_path, converter)
+    path = directory / "wt1_ex9_scored.txt"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    fields = lines[1].split("\t")
+    fields[0] = "   "
+    lines[1] = "\t".join(fields)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    rows, _ = converter.convert(directory)
+    assert all(row["variant_id"].strip() for row in rows)
+    out = tmp_path / "v.tsv"
+    converter.write_panel(rows, out)
+    assert len(read_variant_panel(out, negative_construction="x")) == len(rows)
+
+
+@pytest.mark.parametrize("null", ["NA", " na ", "NaN", "None", "-", ".", ""])
+def test_every_null_spelling_reads_as_missing_not_as_a_number(
+    converter: ModuleType, tmp_path: Path, null: str
+) -> None:
+    """A missing score that parsed as a number would corrupt the gate silently."""
+    directory = _write_archive(tmp_path, converter)
+    path = directory / "fas_ex6_snvs_scored.txt"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    fields = lines[1].split("\t")
+    fields[4] = null  # DS_maxm
+    lines[1] = "\t".join(fields)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    rows, _ = converter.convert(directory)
+    blanked = [r for r in rows if r["group"] == "FAS" and r["spliceai_masked"] == ""]
+    assert len(blanked) == 1, null

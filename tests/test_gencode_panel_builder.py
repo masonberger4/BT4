@@ -260,3 +260,98 @@ def test_the_default_chromosomes_are_the_held_out_ones(builder: ModuleType) -> N
 def test_the_default_flank_gives_the_cnns_their_context(builder: ModuleType) -> None:
     """Both wrapped CNNs consume ~10 kb, so every interior site wants 5,000 nt a side."""
     assert builder.DEFAULT_FLANK == 5_000
+
+
+# --------------------------------------------------------------------------
+# Second review round
+
+
+def test_one_non_canonical_intron_does_not_discard_a_small_gene(
+    builder: ModuleType,
+) -> None:
+    """``len(bad) > len(same) * 0.1`` sounded like 10% slack and was not.
+
+    A k-intron gene contributes only 2k sites, so the allowance was 0.2k -- below **1**
+    for every gene with four introns or fewer. One legitimate GC-AG intron then discarded
+    every site of the gene, the exact opposite of absorbing the minor spliceosome the
+    tolerance exists for.
+    """
+    exon = "".join("ACTC"[i % 4] for i in range(30))
+    canonical = "GT" + "".join("ACTC"[i % 4] for i in range(36)) + "AG"
+    minor = "GC" + "".join("ACTC"[i % 4] for i in range(36)) + "AG"  # a real GC-AG intron
+    chrom = exon + canonical + exon + minor + exon
+    transcripts = {
+        "T": builder.Transcript("T", "SMALL", "chr1", "+", [(1, 30), (71, 100), (141, 170)])
+    }
+    windows, counts = builder.build_windows(transcripts, {"chr1": chrom}, flank=0)
+    assert counts["n_motif"] == 0
+    assert len(windows) == 1
+    assert len(windows[0].donors) + len(windows[0].acceptors) == 4
+
+
+def test_a_truncated_flank_still_yields_correct_minus_strand_indices(
+    builder: ModuleType,
+) -> None:
+    """Python slices truncate silently, and minus-strand indices are measured from w_end.
+
+    So a fetch that ran off the contig used to shift every one of them. Real genes sit
+    near contig ends, so this is reached on a real run. The window is shrunk to what the
+    assembly actually has and the indices recomputed, rather than written wrong.
+    """
+    transcripts = {"T": builder.Transcript("T", "EDGE", "chr1", "-", list(_EXONS))}
+    # flank=5000 asks for far more than this 100 nt contig can supply.
+    windows, counts = builder.build_windows(
+        transcripts, {"chr1": _CHROM_MINUS}, flank=5_000
+    )
+    assert counts["n_truncated"] == 0  # the span still fits, so it is usable
+    assert len(windows) == 1
+    window = windows[0]
+    assert len(window.sequence) == len(_CHROM_MINUS)
+    # The indices must still land on the canonical dinucleotides.
+    for position in window.donors:
+        assert window.sequence[position : position + 2] == "GT"
+    for position in window.acceptors:
+        assert window.sequence[position - 1 : position + 1] == "AG"
+
+
+def test_a_window_whose_span_runs_off_the_contig_is_skipped(
+    builder: ModuleType,
+) -> None:
+    """Truncation that cuts into the transcript itself cannot be salvaged."""
+    transcripts = {"T": builder.Transcript("T", "EDGE", "chr1", "-", list(_EXONS))}
+    windows, counts = builder.build_windows(
+        transcripts, {"chr1": _CHROM_MINUS[:50]}, flank=0
+    )
+    assert windows == []
+    assert counts["n_truncated"] == 1
+
+
+def test_a_neighbours_site_with_no_room_for_its_motif_is_dropped(
+    builder: ModuleType,
+) -> None:
+    """Otherwise the builder writes a panel BT4's own reader refuses.
+
+    Sites are collected from every overlapping transcript, so one can land on the window
+    boundary with no room for its own dinucleotide -- a legitimate site of a neighbouring
+    gene that this particular window simply cannot carry.
+    """
+    from bt4.biomodels.splice.panel import SpliceWindow as BT4Window
+    from bt4.biomodels.splice.panel import panel_from_windows
+
+    # Two transcripts whose windows each clip the other's sites at an edge.
+    neighbour = [(101, 130), (171, 200)]
+    chrom = _CHROM + _INTRON.join(("".join("ACTC"[i % 4] for i in range(30)),) * 2)
+    transcripts = {
+        "A": builder.Transcript("A", "A", "chr1", "+", list(_EXONS)),
+        "B": builder.Transcript("B", "B", "chr1", "+", list(neighbour)),
+    }
+    windows, _ = builder.build_windows(transcripts, {"chr1": chrom}, flank=0)
+    # Whatever survives must be readable by BT4 -- that is the property under test.
+    panel = panel_from_windows(
+        [
+            BT4Window(w.window_id, w.group, w.sequence, w.donors, w.acceptors, w.strand, w.note)
+            for w in windows
+        ],
+        negative_construction="all other positions",
+    )
+    assert panel.motif_consistency().fraction >= 0.9

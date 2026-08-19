@@ -12,6 +12,10 @@ Subcommands:
 * ``bt4 expression-gate PANEL.tsv`` -- run the expression acceptance gate on a
   measured CDS-variant panel, against the mandatory baselines. Reports; never
   promotes.
+* ``bt4 splice-gate PANEL.tsv`` -- run the splice gate on an annotated splice-site
+  panel, against four permanent baselines.
+* ``bt4 variant-gate PANEL.tsv`` -- run the splice gate on a measured variant panel.
+  Needs no model installed: a benchmark's own pre-computed scores are data.
 * ``bt4 --version`` -- print the single-sourced BT4 version.
 
 Only this module prints; everything else returns data.
@@ -666,6 +670,27 @@ def _cmd_expression_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_anchor_offsets(args: argparse.Namespace) -> int | dict[str, int]:
+    """Combine the anchor flags into one scalar or per-kind mapping.
+
+    Per-kind wins over the scalar, and ``--cnn-anchors`` is the measured default for the
+    wrapped CNNs. A scalar remains valid because a kind-separated panel is a legitimate
+    way to run them.
+    """
+    base = 0 if args.anchor_offset is None else args.anchor_offset
+    if args.cnn_anchors:
+        offsets = dict(api.CNN_ANCHOR_OFFSETS)
+    elif args.donor_offset is None and args.acceptor_offset is None:
+        return base
+    else:
+        offsets = dict.fromkeys(("donor", "acceptor"), base)
+    if args.donor_offset is not None:
+        offsets["donor"] = args.donor_offset
+    if args.acceptor_offset is not None:
+        offsets["acceptor"] = args.acceptor_offset
+    return offsets
+
+
 def _cmd_splice_gate(args: argparse.Namespace) -> int:
     """Run the splice acceptance gate over an annotated panel and print the verdict."""
     panel = api.read_splice_panel(
@@ -685,7 +710,7 @@ def _cmd_splice_gate(args: argparse.Namespace) -> int:
             n_bins=args.bins,
             seed=args.seed,
         ),
-        anchor_offset=args.anchor_offset,
+        anchor_offset=_resolve_anchor_offsets(args),
     )
 
     summary = panel.describe()
@@ -726,6 +751,71 @@ def _cmd_splice_gate(args: argparse.Namespace) -> int:
         "fidelity attestation: that one proves BT4's wrapper reproduces the published "
         "model, this one asks whether the numbers mean what they claim. A backend needs "
         "both, and the thresholds here are pre-commitments set at gate time.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _cmd_variant_gate(args: argparse.Namespace) -> int:
+    """Run the splice gate over a measured variant panel and print the verdict."""
+    panel = api.read_variant_panel(
+        args.panel,
+        negative_construction=args.negative_construction,
+        assay=args.assay,
+    )
+    summary = panel.describe()
+
+    if args.list_scores or not args.score:
+        print(f"panel:    {summary['n_rows']} variants / {len(panel.groups)} genes")
+        print(f"          {summary['n_positive']} positive, groups {list(panel.groups)}")
+        print(f"          sha256 {panel.content_hash()[:16]}...")
+        print(f"\nscore columns: {list(panel.score_columns)}")
+        print("\nPick one with --score. Masked and unmasked answer different questions "
+              "(masked\nsuppresses scores at annotated sites), so the choice belongs on "
+              "the record.")
+        return 0
+
+    report = api.verify_splice_gate(
+        panel.cases(args.score),
+        negative_construction=panel.negative_construction,
+        panel_note=panel.assay,
+        min_pr_auc=args.min_pr_auc,
+        min_pr_auc_skill=args.min_pr_auc_skill,
+        max_ece=args.max_ece,
+    )
+
+    held = "held out" if panel.held_out else "NOT HELD OUT"
+    print(f"panel:    {summary['n_rows']} variants / {len(panel.groups)} genes  [{held}]")
+    print(f"          sha256 {panel.content_hash()[:16]}...")
+    print(f"score:    {args.score}")
+    if panel.training_overlap:
+        print(f"\nWARNING: {list(panel.training_overlap)} are on chromosomes both models "
+              "trained on.\n         These metrics are optimistic and cannot support "
+              "promotion. Rebuild with\n         --held-out-only for a held-out run.")
+    print()
+    print(f"{'stratum':<12}{'n':>7}{'AP':>9}{'skill':>9}{'ROC':>9}{'ECE':>9}")
+    for stratum in report.strata:
+        print(f"{stratum.name:<12}{stratum.n_cases:>7}{stratum.pr_auc:>9.3f}"
+              f"{stratum.pr_auc_skill:>9.3f}{stratum.roc_auc:>9.3f}{stratum.ece:>9.3f}")
+    print()
+
+    # The published anchor this panel exists to reproduce.
+    by_name = {s.name: s.pr_auc for s in report.strata}
+    if {"exonic", "intronic"} <= set(by_name):
+        print("Smith & Kitzman 2023 report a median across eight tools of")
+        print(f"  exonic  0.419   (this run: {by_name['exonic']:.3f})")
+        print(f"  intronic 0.773  (this run: {by_name['intronic']:.3f})")
+        print("A single tool will not equal the eight-tool median, but the exonic figure")
+        print("should sit well BELOW the intronic one. If it does not, suspect the panel")
+        print("build before the model.")
+    print()
+    print(f"gate passed (thresholds) : {report.passed}")
+    for reason in report.reasons:
+        print(f"  - {reason}")
+    print(
+        "\nThis command flips nothing. It measures a backend's scores against a measured "
+        "assay;\nit does not promote anything, and the exonic stratum is the half BT4 "
+        "actually operates in.",
         file=sys.stderr,
     )
     return 0
@@ -909,10 +999,24 @@ def _parser() -> argparse.ArgumentParser:
              "reproducible-from-manifest guarantee, so it cannot support a gate result",
     )
     p_sgate.add_argument(
-        "--anchor-offset", type=int, default=0, dest="anchor_offset",
-        help="where the backend anchors its per-position score relative to the panel's "
-             "convention (donor = the G of GT, acceptor = the G of AG). Declared, never "
-             "fitted -- the report says whether the declaration looks right",
+        "--anchor-offset", type=int, default=None, dest="anchor_offset",
+        help="one offset for every site kind. Fine for a kind-separated panel; NOT "
+             "sufficient for a mixed one scored by a real backend -- see --cnn-anchors",
+    )
+    p_sgate.add_argument(
+        "--donor-offset", type=int, default=None, dest="donor_offset",
+        help="anchor offset for donors only (overrides --anchor-offset)",
+    )
+    p_sgate.add_argument(
+        "--acceptor-offset", type=int, default=None, dest="acceptor_offset",
+        help="anchor offset for acceptors only (overrides --anchor-offset)",
+    )
+    p_sgate.add_argument(
+        "--cnn-anchors", action="store_true", dest="cnn_anchors",
+        help="use the measured SpliceAI/Pangolin anchors: donor -1, acceptor +1. Both "
+             "models score a site on the EXONIC boundary base while BT4's panel anchors "
+             "on the intronic dinucleotide, so the two kinds need OPPOSITE offsets and "
+             "no single value is correct for a mixed panel",
     )
     p_sgate.add_argument(
         "--min-motif-consistency", type=float, default=api.MIN_SPLICE_MOTIF_CONSISTENCY,
@@ -936,6 +1040,36 @@ def _parser() -> argparse.ArgumentParser:
     p_sgate.add_argument("--bins", type=int, default=10, help="reliability bins")
     p_sgate.add_argument("--seed", type=int, default=0)
     p_sgate.set_defaults(func=_cmd_splice_gate)
+
+    p_vgate = sub.add_parser(
+        "variant-gate",
+        help="run the splice gate on a measured variant panel (no model needed)",
+    )
+    p_vgate.add_argument("panel", help="variant panel TSV (from make_splicebench_variant_panel.py)")
+    p_vgate.add_argument(
+        "--score", default=None,
+        help="which score column to gate. Omit to list what the panel carries",
+    )
+    p_vgate.add_argument(
+        "--list-scores", action="store_true", dest="list_scores",
+        help="list the panel's score columns and exit",
+    )
+    p_vgate.add_argument(
+        "--negative-construction", required=True, dest="negative_construction",
+        help="how the negative class was built, verbatim. REQUIRED: average precision's "
+             "floor is the prevalence, which is a construction choice",
+    )
+    p_vgate.add_argument(
+        "--assay", default="",
+        help="what was measured and under what criterion. Record it when the labels pool "
+             "several assays -- a composite is not a measurement",
+    )
+    p_vgate.add_argument("--min-pr-auc", type=float, default=0.0, dest="min_pr_auc")
+    p_vgate.add_argument(
+        "--min-pr-auc-skill", type=float, default=0.0, dest="min_pr_auc_skill"
+    )
+    p_vgate.add_argument("--max-ece", type=float, default=1.0, dest="max_ece")
+    p_vgate.set_defaults(func=_cmd_variant_gate)
 
     p_bt = sub.add_parser("build-table", help="build a codon table from a CDS FASTA")
     p_bt.add_argument("cds", help="path to a FASTA of coding sequences")

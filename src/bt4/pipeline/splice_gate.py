@@ -46,7 +46,7 @@ fidelity attestation -- a different gate answering a different question.
 from __future__ import annotations
 
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from bt4.biomodels.splice.base import DEFAULT_SITE_PROBABILITY, SpliceResult
@@ -64,10 +64,12 @@ from bt4.biomodels.splice.panel import (
 from bt4.pipeline.splice_crosscheck import resolve_splice_backend
 
 __all__ = [
+    "CNN_ANCHOR_OFFSETS",
     "COMBINED_TRACK_EPSILON",
     "PEAK_SEARCH",
     "SPLICE_BASELINES",
     "AlignmentDiagnostic",
+    "KindAlignment",
     "SpliceGateComparison",
     "SpliceGateSettings",
     "baseline_predictions",
@@ -78,6 +80,26 @@ __all__ = [
 SPLICE_BASELINES: tuple[str, ...] = ("permutation", "gt_ag", "pwm", "constant")
 """Baselines a splice backend must beat. Kept permanently: a control that disappears
 once it is inconvenient was never a control."""
+
+CNN_ANCHOR_OFFSETS: dict[str, int] = {"donor": -1, "acceptor": 1}
+"""Where SpliceAI and Pangolin put a site's score, relative to BT4's panel convention.
+
+**Both models anchor on the exonic boundary base**; BT4's panel anchors on the intronic
+dinucleotide. The gap is one base **in opposite directions for the two kinds**: a donor's
+score sits on the last *exonic* base (BT4 position - 1) and an acceptor's on the first
+*exonic* base (BT4 position + 1). The two backends agree with each other; donor and
+acceptor disagree within each.
+
+Established three ways: SpliceAI's training-label construction (``Y0[c-tx_start] = 2`` at
+exon *ends* for donors, ``= 1`` at exon *starts* for acceptors), Pangolin's CLI using
+gffutils' first/last exonic base as the sites, and direct measurement against the
+hash-verified weights (34 sites, unanimous, both strands).
+
+There is deliberately **no ``"splice"`` entry**. A combined track cannot be shifted by one
+value without breaking the other kind, so offsets are keyed by *site* kind everywhere and
+applied per site **before** the union (see :func:`_positive_indices`). An accepted-but-
+inert ``"splice"`` key was worse than no key: it scored identically whatever it was set
+to while the diagnostic reported it as the offset in force."""
 
 PEAK_SEARCH: tuple[int, ...] = (-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5)
 """Offsets probed by the alignment diagnostic. Reported, never fitted -- the anchor is
@@ -113,88 +135,139 @@ class SpliceGateSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class AlignmentDiagnostic:
-    """Where a backend's score actually peaked, relative to each declared site.
-
-    The runner's counterpart to the panel's motif check: the panel proves its positions
-    mean what the format says, and this proves the *backend* agrees about where a site
-    is anchored. Both failures look identical in the metrics -- a competent model
-    scoring near zero -- and neither is visible without being measured.
+class KindAlignment:
+    """Where one site kind's scores peaked, relative to its declared positions.
 
     Attributes:
-        counts: ``(offset, number of sites peaking there)`` over :data:`PEAK_SEARCH`.
-            These are **residual** shifts, measured on the already-aligned track, so
-            ``0`` means the declared ``anchor_offset`` is right.
-        n_sites: Sites the probe ran over.
-        n_flat: Sites whose probe window was flat, so no peak existed to align. Tracked
-            separately because the tie-break would otherwise resolve them to ``0`` and
-            report a silent backend as perfectly aligned.
-        applied_offset: The ``anchor_offset`` that was in force during the probe.
-            Carried so :meth:`note` can name the **absolute** value to declare rather
-            than the residual -- a user told to "pass anchor_offset=+1" while already
-            passing +2 would end up further from the truth, not closer.
+        kind: ``"donor"`` or ``"acceptor"`` -- the **site** kind, which is reported
+            separately even when the backend's track is combined, because the two were
+            shifted by different amounts.
+        counts: ``(residual offset, sites peaking there)`` over :data:`PEAK_SEARCH`,
+            measured **after** this kind's ``anchor_offset`` is applied, so ``0`` means
+            the declared value is right.
+        n_sites: Sites probed for this kind.
+        n_flat: Sites whose probe window was flat, so no peak existed to align.
+        applied_offset: The offset in force for this kind during the probe.
     """
 
+    kind: str
     counts: tuple[tuple[int, int], ...]
     n_sites: int
-    applied_offset: int = 0
-    n_flat: int = 0
+    n_flat: int
+    applied_offset: int
 
     @property
     def modal_offset(self) -> int:
-        """The most common peak offset, preferring ``0`` on a tie."""
+        """The most common residual offset, preferring ``0`` on a tie."""
         return max(self.counts, key=lambda item: (item[1], item[0] == 0), default=(0, 0))[0]
 
     @property
     def recommended_offset(self) -> int:
-        """The absolute ``anchor_offset`` to declare: what was applied, plus the residual."""
+        """The absolute offset to declare for this kind: applied plus residual."""
         return self.applied_offset + self.modal_offset
 
     @property
     def fraction_at_zero(self) -> float:
-        """Fraction of sites whose peak landed exactly on the declared position."""
+        """Fraction of this kind's sites peaking exactly on the declared position."""
         if not self.n_sites:
             return 0.0
         return dict(self.counts).get(0, 0) / self.n_sites
 
-    def note(self) -> str:
-        """Return a one-line verdict on whether the anchors agree."""
-        if not self.n_sites:
-            return "alignment: no sites to probe"
-        # A completely flat probe window has no argmax, and the tie-break resolves it to
-        # 0 -- so a backend emitting no signal at all was being credited with peaks
-        # landing exactly on every declared site. That is a positive alignment claim
-        # from an absence of evidence, in the one diagnostic whose job is to separate
-        # "misaligned" from "scoring near zero".
-        if self.n_flat == self.n_sites:
-            return (
-                "alignment: the backend's scores are FLAT around every declared site, so "
-                "there is no peak to align. This says nothing about the anchors -- it "
-                "says the backend produced no signal on this panel"
-            )
-        if self.n_flat:
-            return (
-                f"alignment: {self.n_flat}/{self.n_sites} sites have flat scores with no "
-                f"peak to align; of the rest, "
-            ) + self._peak_note()
-        return "alignment: " + self._peak_note()
+    @property
+    def aligned(self) -> bool:
+        """Whether this kind's declared anchor looks right.
 
-    def _peak_note(self) -> str:
-        """The alignment verdict over the sites that actually carried a peak."""
-        if self.modal_offset:
-            return (
-                f"the backend's score peaks {self.modal_offset:+d} from the "
-                f"declared position for most sites (only {self.fraction_at_zero:.1%} "
-                f"peak exactly on it) -- the anchors DISAGREE. Pass "
-                f"anchor_offset={self.recommended_offset:+d} (currently "
-                f"{self.applied_offset:+d}) after confirming the backend's convention, "
-                "rather than reading these metrics as model quality"
-            )
+        Requires a **majority** of sites to peak on the declared position, not merely a
+        plurality among the few that carried any signal. ``n_flat < n_sites`` alone let a
+        single peak outvote any number of flat sites: a kind where 7 of 8 sites produced
+        nothing was reported as aligned at 12% agreement -- the same over-claim the
+        per-kind rewrite exists to prevent, one level down.
+        """
         return (
-            f"peaks land on the declared position for "
-            f"{self.fraction_at_zero:.1%} of sites with anchor_offset="
-            f"{self.applied_offset:+d} -- anchors agree"
+            bool(self.n_sites)
+            and self.modal_offset == 0
+            and self.fraction_at_zero > 0.5
         )
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentDiagnostic:
+    """Where a backend's score actually peaked, relative to each declared site.
+
+    The runner's counterpart to the panel's motif check: the panel proves its positions
+    mean what the format says, and this proves the *backend* agrees about where a site is
+    anchored. Both failures look identical in the metrics -- a competent model scoring
+    near zero -- and neither is visible without being measured.
+
+    **It is per site kind, and that is load-bearing.** SpliceAI and Pangolin both anchor
+    on the exonic boundary base, which is one base *before* BT4's donor position and one
+    base *after* its acceptor position -- opposite directions. A pooled probe under
+    either single value sees half the sites aligned and half two bases off, and the modal
+    tie-break resolves that to ``0``: it reported "anchors agree" at 50% alignment while
+    endorsing a setting that left an entire stratum scoring ~0. Reporting per kind makes
+    that state unrepresentable.
+
+    Attributes:
+        kinds: One :class:`KindAlignment` per site kind present, sorted.
+    """
+
+    kinds: tuple[KindAlignment, ...] = ()
+
+    @property
+    def n_sites(self) -> int:
+        """Sites probed across every kind."""
+        return sum(kind.n_sites for kind in self.kinds)
+
+    @property
+    def n_flat(self) -> int:
+        """Sites with no peak to align, across every kind."""
+        return sum(kind.n_flat for kind in self.kinds)
+
+    @property
+    def aligned(self) -> bool:
+        """Whether **every** kind's declared anchor looks right."""
+        return bool(self.kinds) and all(kind.aligned for kind in self.kinds)
+
+    @property
+    def recommended_offsets(self) -> dict[str, int]:
+        """The offset to declare per kind -- ready to pass back as ``anchor_offset``."""
+        return {kind.kind: kind.recommended_offset for kind in self.kinds}
+
+    @property
+    def fraction_at_zero(self) -> float:
+        """Fraction of all probed sites peaking exactly on their declared position."""
+        if not self.n_sites:
+            return 0.0
+        return sum(dict(k.counts).get(0, 0) for k in self.kinds) / self.n_sites
+
+    def note(self) -> str:
+        """Return a verdict naming each kind separately."""
+        if not self.kinds:
+            return "alignment: no sites to probe"
+        parts: list[str] = []
+        for kind in self.kinds:
+            if not kind.n_sites:
+                continue
+            if kind.n_flat == kind.n_sites:
+                parts.append(
+                    f"{kind.kind}: scores are FLAT around every site, so there is no "
+                    "peak to align -- this says nothing about the anchor"
+                )
+            elif kind.modal_offset:
+                parts.append(
+                    f"{kind.kind}: peaks {kind.modal_offset:+d} from the declared "
+                    f"position ({kind.fraction_at_zero:.0%} on it) -- DISAGREES; "
+                    f"declare {kind.recommended_offset:+d} (currently "
+                    f"{kind.applied_offset:+d})"
+                )
+            else:
+                parts.append(
+                    f"{kind.kind}: peaks on the declared position for "
+                    f"{kind.fraction_at_zero:.0%} of sites at "
+                    f"{kind.applied_offset:+d} -- agrees"
+                )
+        verdict = "anchors agree" if self.aligned else "the anchors DISAGREE"
+        return f"alignment ({verdict}) -- " + "; ".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +317,31 @@ class SpliceGateComparison:
     alignment: AlignmentDiagnostic
     promotable: bool
     notes: tuple[str, ...]
+
+
+def _resolve_offsets(anchor_offset: int | Mapping[str, int]) -> dict[str, int]:
+    """Return a per-kind offset map from a scalar or a mapping.
+
+    A single scalar was the original design and it is **not sufficient for a real
+    backend**: SpliceAI and Pangolin need ``-1`` for donors and ``+1`` for acceptors, so
+    no one value is right for a mixed panel. A scalar still works -- it applies to every
+    kind, which is correct for a kind-separated panel -- but a mapping is what a mixed
+    one needs.
+
+    Raises:
+        ValueError: On an unknown site kind, which would otherwise be silently ignored
+            and leave that stratum misaligned.
+    """
+    if isinstance(anchor_offset, int):
+        return dict.fromkeys(("donor", "acceptor"), anchor_offset)
+    unknown = sorted(set(anchor_offset) - {"donor", "acceptor"})
+    if unknown:
+        raise ValueError(
+            f"unknown site kind(s) {unknown} in anchor_offset; expected 'donor' and/or "
+            "'acceptor'. There is no 'splice' key: a combined track is still made of "
+            "donors and acceptors, and they are shifted separately before the union"
+        )
+    return {kind: anchor_offset.get(kind, 0) for kind in ("donor", "acceptor")}
 
 
 def _tracks(result: SpliceResult, combined: bool) -> dict[str, tuple[float, ...]]:
@@ -315,47 +413,59 @@ def score_splice_panel(panel: SplicePanel, backend: str) -> list[SpliceResult]:
     return [predictor.score_sequence(window.sequence) for window in panel.windows]
 
 
-def _labels(window: SpliceWindow, kind: str) -> tuple[int, ...]:
-    """Return per-position labels for ``kind``, merging both kinds for ``"splice"``."""
-    if kind != "splice":
-        return window.labels(kind)
-    sites = set(window.donors) | set(window.acceptors)
-    return tuple(1 if i in sites else 0 for i in range(len(window.sequence)))
+def _positive_indices(
+    window: SpliceWindow, kind: str, offsets: Mapping[str, int]
+) -> set[int]:
+    """Return the track indices where a site of ``kind`` is expected.
 
+    The reformulation the per-kind offsets require: rather than shifting the *track* by
+    one scalar, each site's positive is placed where its own kind's offset says the
+    backend scores it. That is the only way a **combined** ``"splice"`` stratum can be
+    handled at all -- its union drops the kind, so the shift has to happen per site,
+    before the union.
 
-def _aligned(track: Sequence[float], position: int, anchor_offset: int) -> float:
-    """Return the backend's score for ``position`` under the declared anchor offset.
-
-    A position whose aligned index falls outside the track scores ``0.0`` -- the same
-    convention the backends themselves use for positions without full flanking context.
+    A site whose shifted index falls outside the window is **clamped back into it**
+    rather than dropped. Dropping it would quietly remove a positive, lowering the
+    prevalence and *raising* every metric -- so a backend that structurally cannot find an
+    annotated site would be rewarded for it. Under the previous track-shifting
+    formulation such a site stayed ``label=1`` with ``predicted=0.0``, a forced miss that
+    depressed the score, and that is the honest behaviour to preserve. Clamping keeps the
+    positive at the nearest scoreable index, where the backend's score is whatever it is.
     """
-    index = position + anchor_offset
-    return track[index] if 0 <= index < len(track) else 0.0
+    n = len(window.sequence)
+    indices: set[int] = set()
+    for position, site_kind in window.sites():
+        if kind != "splice" and site_kind != kind:
+            continue
+        shifted = position + offsets.get(site_kind, 0)
+        indices.add(min(max(shifted, 0), n - 1))
+    return indices
 
 
 def _build_cases(
     panel: SplicePanel,
     results: Sequence[SpliceResult],
     combined: bool,
-    anchor_offset: int,
+    offsets: Mapping[str, int],
 ) -> tuple[list[SpliceSiteCase], list[tuple[int, int]]]:
     """Build one case per (position, stratum), plus a back-reference to the sequence.
 
     Returns:
         ``(cases, refs)`` where ``refs[j]`` is the ``(window index, position)`` case
-        ``j`` came from -- what the sequence-derived baselines need in order to score
-        the same positions without re-deriving the alignment.
+        ``j`` came from -- what the sequence-derived baselines need in order to score the
+        same positions. Baselines are scored at their own anchors, not the backend's, so
+        ``refs`` carries the panel's positions rather than the shifted ones.
     """
     cases: list[SpliceSiteCase] = []
     refs: list[tuple[int, int]] = []
     for index, (window, result) in enumerate(zip(panel.windows, results, strict=True)):
         for kind, track in _tracks(result, combined).items():
-            labels = _labels(window, kind)
-            for position, label in enumerate(labels):
+            positives = _positive_indices(window, kind, offsets)
+            for position in range(len(window.sequence)):
                 cases.append(
                     SpliceSiteCase(
-                        predicted=_aligned(track, position, anchor_offset),
-                        label=label,
+                        predicted=track[position] if position < len(track) else 0.0,
+                        label=1 if position in positives else 0,
                         kind=kind,
                         group=window.group,
                     )
@@ -364,46 +474,82 @@ def _build_cases(
     return cases, refs
 
 
+def _track_at(track: Sequence[float], index: int) -> float:
+    """Return ``track[index]``, or ``0.0`` outside it.
+
+    The same convention the backends themselves use for positions without full flanking
+    context.
+    """
+    return track[index] if 0 <= index < len(track) else 0.0
+
+
 def _alignment(
     panel: SplicePanel,
     results: Sequence[SpliceResult],
     combined: bool,
-    anchor_offset: int,
+    offsets: Mapping[str, int],
 ) -> AlignmentDiagnostic:
-    """Probe where the backend's score peaks around each declared site.
+    """Probe, **per site kind**, where the backend's score peaks around each site.
 
-    Computed on the **aligned** track, so a modal offset of zero means the declared
-    ``anchor_offset`` is right and any other value is the residual correction needed.
+    Per kind rather than pooled, and that is the whole point. SpliceAI and Pangolin need
+    opposite offsets for donors and acceptors, so a pooled probe sees half the sites
+    aligned and half two bases off under *either* value -- and the modal tie-break
+    resolves that to ``0``, reporting "anchors agree" at 50% alignment while endorsing a
+    setting that leaves an entire stratum unscored.
     """
-    counts = dict.fromkeys(PEAK_SEARCH, 0)
-    n_sites = 0
-    n_flat = 0
+    per_kind: dict[str, dict[int, int]] = {}
+    totals: dict[str, int] = {}
+    flats: dict[str, int] = {}
     for window, result in zip(panel.windows, results, strict=True):
         tracks = _tracks(result, combined)
-        for position, kind in window.sites():
-            track = tracks.get("splice" if combined else kind)
+        for position, site_kind in window.sites():
+            # Keyed by SITE kind even when the stratum is combined: the stratum is one
+            # track, but the two kinds were shifted by different amounts, so reporting a
+            # single "splice" anchor would name a value that was never applied.
+            track = tracks.get("splice" if combined else site_kind)
             if track is None:
                 continue
-            n_sites += 1
-            probed = [_aligned(track, position + d, anchor_offset) for d in PEAK_SEARCH]
+            counts = per_kind.setdefault(site_kind, dict.fromkeys(PEAK_SEARCH, 0))
+            totals[site_kind] = totals.get(site_kind, 0) + 1
+            applied = offsets.get(site_kind, 0)
+            probed = [_track_at(track, position + applied + d) for d in PEAK_SEARCH]
             if max(probed) - min(probed) < COMBINED_TRACK_EPSILON:
-                # No peak exists here. Counting the tie-break's 0 would manufacture an
-                # "anchors agree" claim out of a backend that produced nothing.
-                n_flat += 1
+                flats[site_kind] = flats.get(site_kind, 0) + 1
                 continue
-            # Ties resolve to the offset nearest zero, then the lower one, so the probe
-            # is deterministic (invariant #7).
             best = max(
                 zip(PEAK_SEARCH, probed, strict=True),
                 key=lambda item: (item[1], -abs(item[0]), -item[0]),
             )[0]
             counts[best] += 1
     return AlignmentDiagnostic(
-        counts=tuple(sorted(counts.items())),
-        n_sites=n_sites,
-        applied_offset=anchor_offset,
-        n_flat=n_flat,
+        kinds=tuple(
+            KindAlignment(
+                kind=kind,
+                counts=tuple(sorted(counts.items())),
+                n_sites=totals.get(kind, 0),
+                n_flat=flats.get(kind, 0),
+                applied_offset=offsets.get(kind, 0),
+            )
+            for kind, counts in sorted(per_kind.items())
+        )
     )
+
+
+def _panel_position(index: int, kind: str, offsets: Mapping[str, int]) -> dict[str, int]:
+    """Map a track index back to the panel position(s) it could describe, per site kind.
+
+    Case ``j`` sits at *track* index ``i`` and is positive when a site of kind ``k`` sits
+    at panel position ``i - offsets[k]``. The sequence-derived baselines anchor on the
+    **panel's** convention, so they must be read there and not at ``i`` -- otherwise a
+    declared ``anchor_offset`` silently moves every control one base off its own anchor
+    while leaving the head correctly aligned.
+
+    A combined ``"splice"`` stratum has no single inverse (its two kinds were shifted in
+    opposite directions), so both are returned and the caller unions them -- exactly as
+    the label was built.
+    """
+    kinds = ("donor", "acceptor") if kind == "splice" else (kind,)
+    return {k: index - offsets.get(k, 0) for k in kinds}
 
 
 def baseline_predictions(
@@ -413,6 +559,7 @@ def baseline_predictions(
     refs: Sequence[tuple[int, int]],
     head_predictions: Sequence[float],
     seed: int,
+    offsets: Mapping[str, int] | None = None,
 ) -> list[float]:
     """Return one baseline's predictions over the same cases, in case order.
 
@@ -424,9 +571,15 @@ def baseline_predictions(
     :func:`~bt4.biomodels.splice.default` already returns -- plus ``constant``, the
     per-stratum base rate, which is perfectly calibrated and carries no information.
 
+    Args:
+        offsets: The per-kind anchor offsets in force for the head. The baselines are
+            read at the **panel's** anchor, so this is used to invert the shift; ``None``
+            means no shift was applied.
+
     Raises:
         ValueError: If ``name`` is not in :data:`SPLICE_BASELINES`.
     """
+    shift = dict(offsets or {})
     if name == "permutation":
         rng = random.Random(seed)
         by_kind: dict[str, list[int]] = {}
@@ -441,24 +594,34 @@ def baseline_predictions(
                 shuffled[index] = value
         return shuffled
     if name == "gt_ag":
-        return [
-            1.0
-            if canonical_motif_at(panel.windows[window].sequence, position, case.kind)
-            else 0.0
-            for case, (window, position) in zip(cases, refs, strict=True)
-        ]
+        motif: list[float] = []
+        for case, (window, position) in zip(cases, refs, strict=True):
+            sequence = panel.windows[window].sequence
+            sites = _panel_position(position, case.kind, shift)
+            hit = any(canonical_motif_at(sequence, at, k) for k, at in sites.items())
+            motif.append(1.0 if hit else 0.0)
+        return motif
     if name == "pwm":
         # The PWM baseline anchors on the same intronic dinucleotide the panel format
         # pins, so it is scored at offset 0 by construction rather than by assumption.
         # In combined mode `_tracks` unions its donor and acceptor tracks, so the
         # control keeps its full strength instead of going blind to every acceptor.
         results = score_splice_panel(panel, "pwm")
-        combined = any(case.kind == "splice" for case in cases)
-        tracks = [_tracks(result, combined) for result in results]
-        return [
-            _aligned(tracks[window][case.kind], position, 0)
-            for case, (window, position) in zip(cases, refs, strict=True)
+        # The PWM is a genuine two-track predictor scored at the panel's own anchor, so
+        # its tracks are read per kind and unioned only where the head's stratum is.
+        pwm_tracks = [
+            {"donor": result.donor, "acceptor": result.acceptor} for result in results
         ]
+        scored: list[float] = []
+        for case, (window, position) in zip(cases, refs, strict=True):
+            sites = _panel_position(position, case.kind, shift)
+            scored.append(
+                max(
+                    (_track_at(pwm_tracks[window][k], at) for k, at in sites.items()),
+                    default=0.0,
+                )
+            )
+        return scored
     if name == "constant":
         totals: dict[str, list[int]] = {}
         for case in cases:
@@ -501,7 +664,7 @@ def run_splice_panel_gate(
     *,
     settings: SpliceGateSettings | None = None,
     baselines: Sequence[str] = SPLICE_BASELINES,
-    anchor_offset: int = 0,
+    anchor_offset: int | Mapping[str, int] = 0,
     combined_track: bool | None = None,
     results: Sequence[SpliceResult] | None = None,
 ) -> SpliceGateComparison:
@@ -515,9 +678,13 @@ def run_splice_panel_gate(
         baselines: Which baselines to run. Defaults to all of
             :data:`SPLICE_BASELINES`; dropping one is a deliberate, visible choice.
         anchor_offset: Where the backend anchors its score relative to the panel's
-            convention (see the module docstring). Declared by the caller, never
-            fitted -- :attr:`SpliceGateComparison.alignment` reports whether the
-            declaration looks right.
+            convention -- a scalar, or a **per-kind mapping** such as
+            :data:`CNN_ANCHOR_OFFSETS` (``{"donor": -1, "acceptor": 1}``). A scalar is
+            not sufficient for a mixed panel scored by a real backend: SpliceAI and
+            Pangolin both anchor on the exonic boundary base, which is one base before
+            BT4's donor position and one base *after* its acceptor position. Declared by
+            the caller, never fitted -- :attr:`SpliceGateComparison.alignment` reports
+            per kind whether the declaration looks right.
         combined_track: Force single-``"splice"``-stratum scoring on (``True``) or off
             (``False``). ``None`` detects it from the backend's own output.
         results: Pre-computed per-window scores, to gate a panel without re-running a
@@ -574,9 +741,10 @@ def run_splice_panel_gate(
             f"rather than reading the result as model quality (first: {edge[0]})"
         )
 
-    cases, refs = _build_cases(panel, scored, combined, anchor_offset)
+    offsets = _resolve_offsets(anchor_offset)
+    cases, refs = _build_cases(panel, scored, combined, offsets)
     head_predictions = [case.predicted for case in cases]
-    alignment = _alignment(panel, scored, combined, anchor_offset)
+    alignment = _alignment(panel, scored, combined, offsets)
     notes.append(alignment.note())
 
     head = _gate(cases, head_predictions, panel, settings)
@@ -586,7 +754,7 @@ def run_splice_panel_gate(
             _gate(
                 cases,
                 baseline_predictions(
-                    baseline, panel, cases, refs, head_predictions, settings.seed
+                    baseline, panel, cases, refs, head_predictions, settings.seed, offsets
                 ),
                 panel,
                 settings,
