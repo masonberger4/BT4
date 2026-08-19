@@ -51,6 +51,7 @@ from dataclasses import dataclass
 
 from bt4.biomodels.splice.agreement import SiteCallAgreement, site_call_agreement
 from bt4.biomodels.splice.base import DEFAULT_SITE_PROBABILITY, SpliceResult
+from bt4.biomodels.splice.designed_panel import DesignedCdsPanel
 from bt4.biomodels.splice.gate import (
     SpliceGateReport,
     SpliceSiteCase,
@@ -70,11 +71,13 @@ __all__ = [
     "PEAK_SEARCH",
     "SPLICE_BASELINES",
     "AlignmentDiagnostic",
+    "DesignedCdsProbe",
     "KindAlignment",
     "ProgressCallback",
     "SpliceGateComparison",
     "SpliceGateSettings",
     "baseline_predictions",
+    "probe_designed_cds",
     "run_panel_backend_agreement",
     "run_splice_panel_gate",
     "score_splice_panel",
@@ -1030,3 +1033,123 @@ def run_panel_backend_agreement(
     return site_call_agreement(
         tracks[backends[0]], tracks[backends[1]], site_indices, backends
     )
+
+
+@dataclass(frozen=True, slots=True)
+class DesignedCdsProbe:
+    """What splice backends do on designed synonymous CDS. **Not a gate.**
+
+    There is no field named ``passed`` or ``promotable``, and there will not be: the
+    panel carries no splice labels because designed coding sequence has no splice ground
+    truth. Everything here is label-free, which is precisely why it is measurable in the
+    one regime BT4 actually operates in.
+
+    Attributes:
+        group: The protein. Every measurement is *within* it -- see
+            ``designed_panel``'s note on why pooling across proteins answers the wrong
+            question.
+        n_designs: Designs scored against the group's native reference.
+        delta_spread: Per backend, ``max - min`` of Δsplicing across the designs.
+            **The number that decides whether these models are usable in BT4's loop.**
+            Synonymous positions are the only thing BT4 changes; a backend whose spread
+            is ~0 cannot distinguish the candidates BT4 produces, and routing it into
+            candidate selection would be picking at random with extra steps.
+        delta_range: Per backend, the ``(min, max)`` Δ, so the spread has a location --
+            a spread of 0.1 around zero and one around -3 mean different things.
+        rank_correlations: Pairwise Spearman agreement of the backends' Δ *rankings*.
+            The decision-relevant form of agreement here: if BT4 ranked candidates by
+            splice Δ, this is whether the winner would depend on which backend ran.
+        sign_agreement: Fraction of designs where all backends agree on the Δ's sign --
+            better or worse than native.
+        backends: The backends' **own** names, in input order -- ``pwm`` resolves to
+            ``consensus-pwm-baseline`` and Pangolin to a name carrying its tissue set.
+            Those identify what actually ran, which a registry alias does not.
+    """
+
+    group: str
+    n_designs: int
+    backends: tuple[str, ...]
+    delta_spread: dict[str, float]
+    delta_range: dict[str, tuple[float, float]]
+    rank_correlations: dict[tuple[str, str], float]
+    sign_agreement: float
+
+
+def probe_designed_cds(
+    panel: DesignedCdsPanel,
+    backends: Sequence[str] = ("pangolin", "spliceai"),
+    *,
+    progress: ProgressCallback | None = None,
+) -> tuple[DesignedCdsProbe, ...]:
+    """Measure splice backends on designed synonymous CDS, without any labels.
+
+    Two questions, both answerable with no ground truth, and both unanswerable from the
+    natural-sequence panels BT4 has measured so far:
+
+    1. **Does a synonymous change move the score at all?** Every design in a group
+       encodes the same protein, so any Δ between them is attributable to codon choice
+       alone. A backend with ~0 spread is insensitive to exactly the axis BT4 varies.
+    2. **Would two backends pick the same candidate?** Spearman over their Δ rankings.
+       If BT4 used splice Δ to select among candidates, this says whether the selection
+       is a property of the sequence or of the backend.
+
+    **The agreement number here is NOT the site panel's Jaccard**, and the two must not
+    be set side by side: that one is positional overlap of called sites on genomic
+    sequence, this one is rank agreement over candidate Δs. Different statistics on
+    different inputs.
+
+    Args:
+        panel: The designed-CDS panel.
+        backends: Backend names to compare. One is allowed -- the spread is still
+            meaningful -- but agreement needs two.
+        progress: Called per sequence scored, as :data:`ProgressCallback`.
+
+    Returns:
+        One :class:`DesignedCdsProbe` per group, in the panel's group order.
+
+    Raises:
+        ValueError: On an unknown or duplicated backend name.
+    """
+    names = tuple(backends)
+    if len(set(names)) != len(names):
+        raise ValueError(f"backend names must be distinct, got {names!r}")
+
+    from bt4.biomodels.splice.agreement import backend_agreement
+
+    predictors = [resolve_splice_backend(name) for name in names]
+    # Report under the predictors' OWN names, not the registry aliases asked for.
+    # `backend_agreement` keys by `predictor.name`, and those names carry configuration
+    # a bare alias loses -- "pangolin[heart+liver+brain+testis]" versus "pangolin" -- so
+    # they are the honest provenance as well as the working key.
+    resolved = tuple(predictor.name for predictor in predictors)
+
+    probes: list[DesignedCdsProbe] = []
+    for group in panel.groups:
+        native = panel.native(group)
+        designs = panel.designed(group)
+        if progress is not None:
+            progress(
+                panel.groups.index(group) + 1, len(panel.groups), group, len(native.cds)
+            )
+        report = backend_agreement(
+            predictors, [m.cds for m in designs], native.cds
+        )
+        spread: dict[str, float] = {}
+        ranges: dict[str, tuple[float, float]] = {}
+        for name in resolved:
+            deltas = report.delta_by_backend[name]
+            lo, hi = (min(deltas), max(deltas)) if deltas else (0.0, 0.0)
+            spread[name] = hi - lo
+            ranges[name] = (lo, hi)
+        probes.append(
+            DesignedCdsProbe(
+                group=group,
+                n_designs=len(designs),
+                backends=resolved,
+                delta_spread=spread,
+                delta_range=ranges,
+                rank_correlations=dict(report.rank_correlations),
+                sign_agreement=report.sign_agreement,
+            )
+        )
+    return tuple(probes)
