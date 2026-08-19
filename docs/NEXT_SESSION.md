@@ -556,6 +556,37 @@ Three more, learned from reading upstream rather than from a crash:
   released state dicts carry CUDA tensors they will refuse to load on a CPU-only
   box — that is an upstream property, not a BT4 bug.
 
+## Splice CNN environment gotchas (learned on real hardware)
+
+Point `$BT4_PANGOLIN_MODEL_DIR` / `$BT4_SPLICEAI_MODEL_DIR` at the weights. Neither
+variable appeared in any doc before this note.
+
+- **`pip install spliceai` fails on Windows, and it does not matter.** It depends on
+  **pysam**, which has no Windows wheels and cannot build (its `setup.py` shells out to
+  a configure script). Use **`pip install spliceai==1.3.1 --no-deps`**: pysam serves
+  SpliceAI's own VCF command line, and BT4 never uses it. The adapter resolves the
+  weights with `importlib.util.find_spec` — which locates the module *without executing
+  it* — and loads the `.h5` files with Keras directly. Verified on Windows:
+  `SpliceAiSplicePredictor().available()` is `True`, and `from spliceai.utils import
+  one_hot_encode` (which the capture script needs) imports fine, with no pysam present.
+- **`pip install pangolin` is a different package entirely** (a probabilistic
+  programming language). Pangolin is GitHub-only: `pip install <checkout>`.
+- **TensorFlow 2.16+ cannot load SpliceAI's weights**, because `tensorflow.keras` is
+  Keras 3 from that release and the weights are 2019 Keras-2 `.h5` graphs. The extra
+  pins `tensorflow>=2.6,<2.16`; to use a newer TensorFlow, install `tf_keras` alongside
+  it and BT4 prefers that shim automatically (`_ambient_keras_is_v3`).
+- **Set `TF_ENABLE_ONEDNN_OPTS=0` for both the capture and the gate.** TensorFlow warns
+  on import that oneDNN "may see slightly different numerical results ... from different
+  computation orders". Whatever it is set to, it must be the **same on both sides** — a
+  capture with it on gated with it off produces a deviation caused by TensorFlow rather
+  than by BT4's adapter, which is the one thing the fidelity gate must not confuse.
+- **The two model stacks share one environment more easily than expected.** The plan
+  assumed they could not coexist (Pangolin wants torch, SpliceAI an old TensorFlow).
+  Measured: TF 2.15 forces `numpy<2`, and `torch 2.13.0+cpu` runs fine on numpy 1.26.4,
+  so a single venv serves both. On Windows there is no `conda`, so use
+  `python -m venv`; the activated prompt is the check that a `pip install` is landing
+  where it is meant to.
+
 ---
 
 *History (what each session shipped) lives in

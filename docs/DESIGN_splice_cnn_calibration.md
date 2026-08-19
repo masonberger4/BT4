@@ -136,7 +136,7 @@ file; note `setup.py` still says "GPLv3", which is stale and wrong).
 conda create -n spliceai python=3.10 -y && conda activate spliceai
 pip install "tensorflow==2.15.*"        # last TF whose bundled Keras is 2.x
 pip install "numpy<2" "pandas<2.2" "setuptools<81"
-pip install spliceai==1.3.1
+pip install spliceai==1.3.1 --no-deps  # --no-deps is REQUIRED on Windows; see below
 pip install -e '.[splice-spliceai]'     # from the BT4 checkout
 ```
 
@@ -146,16 +146,31 @@ declares **no upper bounds and no `requires_python`**:
 
 | Pin | Why |
 |---|---|
-| `tensorflow==2.15.*` | TF ≥ 2.16 defaults to **Keras 3**, which cannot load these 2019 Keras-2 `.h5` graphs. Alternative: modern TF + `pip install tf_keras` + `export TF_USE_LEGACY_KERAS=1` — BT4's `_import_keras` already falls back to `tf_keras`, but TF 2.15 is the verified-safe path. |
+| `tensorflow==2.15.*` | TF ≥ 2.16 defaults to **Keras 3**, which cannot load these 2019 Keras-2 `.h5` graphs. Alternative: modern TF + `pip install tf_keras`. BT4's `_import_keras` now prefers the shim automatically when the ambient Keras is 3.x — it previously ordered by module *availability*, which made that fallback **unreachable** (under TF ≥ 2.16 `tensorflow.keras` imports fine, it is simply Keras 3). TF 2.15 remains the verified-safe path. |
 | `numpy<2` | `spliceai/utils.py` uses the long-deprecated `np.fromstring` |
 | `setuptools<81` | the package imports `pkg_resources`, removed in setuptools ≥ 81 |
 
 `WARNING:absl:No training configuration found in the save file` on load is
 **benign** for inference.
 
-> **Note for BT4's own metadata:** `bt4[splice-spliceai]` currently declares
-> `tensorflow>=2.6` with **no upper bound**, so a fresh install pulls a TF that
-> cannot load the weights. Tighten that pin as part of this work.
+> **Done:** `bt4[splice-spliceai]` declared `tensorflow>=2.6` with no upper bound, so
+> a fresh install pulled a TF that installs cleanly and then fails at load. It is now
+> `tensorflow>=2.6,<2.16`.
+
+> **`--no-deps` is required on Windows, and costs nothing anywhere.** `spliceai`
+> depends on **pysam**, which has no Windows wheels and cannot build there (its
+> `setup.py` shells out to a configure script). pysam serves SpliceAI's own VCF command
+> line; **BT4 never uses it** — the adapter resolves the weights with
+> `importlib.util.find_spec`, which locates the module without executing it, and loads
+> the `.h5` files with Keras directly. Verified on Windows with no pysam present:
+> `available()` returns `True`, and `from spliceai.utils import one_hot_encode` — which
+> the A4 capture script needs — imports fine.
+
+> **Hold `TF_ENABLE_ONEDNN_OPTS` constant across capture and gate.** TensorFlow warns on
+> import that oneDNN "may see slightly different numerical results ... from different
+> computation orders". Setting it to `0` on both sides is the safe choice; what must not
+> happen is capturing with one setting and gating with the other, which would produce a
+> deviation caused by TensorFlow rather than by BT4's adapter.
 
 > **Because Illumina's repo is archived (finding 4)**, the maintained forks
 > `bw2/SpliceAI` (v1.3.4) and `bw2/Pangolin` (v1.0.5) — which back
