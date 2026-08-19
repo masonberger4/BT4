@@ -7,6 +7,25 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **`bt4 variant-gate` compared strata on raw average precision, and told the reader a
+  panel was broken when it was not.** Its guidance said the exonic figure "should sit
+  well BELOW the intronic one. If it does not, suspect the panel build before the
+  model." A real held-out run on `splicebench2023`'s chr3 genes produced exactly that
+  inversion — exonic AP **0.665** above intronic **0.598** — and the panel was fine. The
+  cause was prevalence: **42.3% exonic against 22.7% intronic**, so average precision's
+  floor differed by nearly double and raw AP was never comparable between the strata.
+  On `pr_auc_skill`, which exists for precisely this, the expected ordering held
+  (0.419 < 0.480), as it did on ROC-AUC.
+  - The report now prints **`prev`** beside every AP, because average precision without
+    its floor is not interpretable — a point the gate's own docstrings make and the CLI
+    was not surfacing.
+  - The ordering is read on **skill**, never on raw AP.
+  - An AP inversion that skill contradicts is **detected and explained** as the
+    prevalence artifact it is, rather than left to send a reader hunting a panel bug.
+    A genuine skill inversion still warns, because that one really is worth suspecting
+    the panel over.
+
 ### Changed
 - **`bt4 variant-gate` no longer claims the exonic/intronic *gap* is comparable to the
   published one.** The previous wording said "only the GAP is meant to be compared
