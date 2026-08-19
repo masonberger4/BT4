@@ -253,3 +253,25 @@ def test_panel_columns_are_the_documented_set() -> None:
         "group", "variant_id", "cds", "measured", "utr5", "utr3",
         "readout", "cell_type", "species",
     )
+
+
+def test_an_over_cap_cds_is_refused_by_the_panel_not_by_the_stdlib(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A row longer than csv's 131,072-char field cap must still reach the real check.
+
+    A *valid* row can never approach that cap -- `MAX_CDS_UTR3_LEN` holds CDS+3'UTR to
+    11,937 nt, RiboNN's input width -- so unlike the splice panel, this is not about
+    reading a legitimately huge field. It is about which error an over-long row gets:
+    the panel's own message, naming RiboNN's limit and what to do about it, rather than
+    a bare `_csv.Error` citing a field limit the format does not have.
+    """
+    import csv
+
+    cds = "ATG" + "AAA" * 50_000 + "TAA"  # 150,006 nt, a well-formed but far-too-long ORF
+    assert len(cds) > csv.field_size_limit(), "fixture must exceed the csv cap"
+
+    path = _write(tmp_path, f"P1\tv1\t{cds}\t1.5\tGCCACC\tGCTAAT\n")
+    with pytest.raises(ValueError, match="over RiboNN's"):
+        read_panel(path)
+    assert csv.field_size_limit() == 131_072  # the caller's limit is left alone

@@ -460,3 +460,55 @@ def test_the_edge_margin_is_caller_settable_for_a_cnn_panel() -> None:
     assert panel.edge_sites(margin=0) == ()
     # With a CNN-sized margin every site in a short window is near an edge.
     assert len(panel.edge_sites(margin=len(_SEQ))) == panel.n_sites
+
+
+def test_a_real_sized_window_can_actually_be_read(tmp_path: Path) -> None:
+    """csv caps a field at 131,072 chars; a panel window is a gene span plus flank.
+
+    `read_splice_panel` could not read a single panel that
+    `scripts/make_gencode_splice_panel.py` produced from real genomic sequence -- the
+    reader and the writer were mutually incompatible for every real gene, and the
+    failure was a bare `_csv.Error` from deep inside the stdlib rather than anything
+    naming the format. Every fixture in this file is a few hundred bases, which is
+    exactly why it survived: only a field over the cap reaches the bug.
+    """
+    import csv
+
+    filler = "".join("ACTC"[i % 4] for i in range(100_000))  # 100,000 nt each side
+    donor = len(filler)
+    sequence = filler + "GTAAGT" + filler
+    assert len(sequence) > csv.field_size_limit(), "fixture must exceed the csv cap"
+
+    path = tmp_path / "big.tsv"
+    path.write_text(
+        "window_id\tgroup\tstrand\tsequence\tdonors\tacceptors\n"
+        f"W1\tchr1\t+\t{sequence}\t{donor}\t\n",
+        encoding="utf-8",
+    )
+    panel = read_splice_panel(path, negative_construction=_NEG)
+    assert len(panel.windows[0].sequence) == len(sequence)
+    assert panel.windows[0].donors == (donor,)
+    assert panel.motif_consistency().fraction == 1.0
+
+
+def test_reading_a_panel_leaves_the_processs_csv_limit_alone(tmp_path: Path) -> None:
+    """The cap is global module state, so a library must not raise it permanently."""
+    import csv
+
+    before = csv.field_size_limit()
+
+    path = tmp_path / "fine.tsv"
+    path.write_text(
+        f"window_id\tgroup\tstrand\tsequence\tdonors\tacceptors\nW1\tchr1\t+\t{_SEQ}\t9\t39\n",
+        encoding="utf-8",
+    )
+    read_splice_panel(path, negative_construction=_NEG)
+    assert csv.field_size_limit() == before
+
+    # And restored when the parse raises, which is the case a bare try/finally-less
+    # implementation would get wrong.
+    bad = tmp_path / "bad.tsv"
+    bad.write_text("window_id\tgroup\tsequence\nW1\tchr1\tACGX\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        read_splice_panel(bad, negative_construction=_NEG)
+    assert csv.field_size_limit() == before

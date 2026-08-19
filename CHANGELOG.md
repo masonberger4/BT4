@@ -8,6 +8,28 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **`read_splice_panel` could not read a single panel the GENCODE builder produces.**
+  Python's `csv` caps one field at 131,072 characters; a splice window is a gene span
+  plus 5,000 nt of flank each side, which routinely exceeds that. So BT4's own writer
+  and its own reader were mutually incompatible for **every real gene**, and the failure
+  surfaced as a bare `_csv.Error` from inside the stdlib that named nothing about the
+  format. Every fixture in the panel tests is a few hundred bases, which is exactly why
+  it survived to be found by running it on chr1.
+  - New `biomodels/_csv.py`: `relaxed_field_size()`, a context manager that raises the
+    cap to `2**31 - 1` for one parse and **restores the caller's value afterward**,
+    including on an exception — the limit is process-global module state, so a library
+    must not raise it permanently. `2**31 - 1` rather than `sys.maxsize` because
+    `csv.field_size_limit` takes a C `long`, which is 32-bit on Windows even in a 64-bit
+    build.
+  - Applied to the expression panel reader too, for a **different and smaller** reason,
+    stated rather than blurred: a valid row there can never approach the cap
+    (`MAX_CDS_UTR3_LEN` holds CDS+3'UTR to 11,937 nt), so this only decides *which*
+    error an over-long row gets — the panel's own message naming RiboNN's limit, instead
+    of a stdlib error citing a limit the format does not have.
+  - Two regression tests, each verified to fail against the unfixed reader, and each
+    using a field genuinely over the cap — the only size that reaches the bug.
+
+### Fixed
 - **`scripts/make_gencode_splice_panel.py` ignored `--limit` after the first window.**
   `build_windows` rebound its own `limit` parameter to the window's sequence length
   partway through the loop, so from the second iteration the guard read

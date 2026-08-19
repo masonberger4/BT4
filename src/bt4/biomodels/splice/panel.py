@@ -56,6 +56,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from bt4.biomodels._csv import relaxed_field_size
 from bt4.domain.sequence import validate_dna
 
 __all__ = [
@@ -763,10 +764,14 @@ def _parse(handle: Iterable[str], source: str, **kwargs: object) -> SplicePanel:
             f"{source or 'panel'} has unrecognised column(s) {unknown}; known columns "
             f"are {list(PANEL_COLUMNS)}"
         )
-    windows = [
-        _window_from_mapping({k: v for k, v in row.items() if k}, line_number)
-        for line_number, row in enumerate(reader, start=2)
-    ]
+    # A window is a gene span plus 5,000 nt of flank each side, which routinely
+    # exceeds csv's 131,072-character default -- without this, no panel built from
+    # real genomic sequence could be read at all.
+    with relaxed_field_size():
+        windows = [
+            _window_from_mapping({k: v for k, v in row.items() if k}, line_number)
+            for line_number, row in enumerate(reader, start=2)
+        ]
     if not windows:
         raise ValueError(f"{source or 'panel'} has a header but no rows")
     return panel_from_windows(windows, source=source, **kwargs)  # type: ignore[arg-type]
