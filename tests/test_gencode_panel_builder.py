@@ -212,6 +212,30 @@ def test_a_window_with_an_assembly_gap_is_skipped(builder: ModuleType) -> None:
     assert counts["n_gap"] == 1
 
 
+def test_limit_stops_the_build_at_the_requested_window_count(
+    builder: ModuleType,
+) -> None:
+    """``--limit`` is the trial-run knob, and it silently stopped working after one.
+
+    ``build_windows`` rebound its own ``limit`` parameter to the window's sequence
+    length partway through the loop, so from the second iteration the guard read
+    ``len(windows) >= 35000`` and never fired again. A user asking for 5 windows got
+    every transcript on five chromosomes -- a multi-hour run and a panel two orders of
+    magnitude too large to score. Ten separate contigs, so every transcript yields a
+    window and the count is unambiguous.
+    """
+    genome = {f"chr{k}": _CHROM for k in range(10)}
+    transcripts = {
+        f"T{k:02d}": builder.Transcript(f"T{k:02d}", f"G{k}", f"chr{k}", "+", list(_EXONS))
+        for k in range(10)
+    }
+    for want in (1, 3, 5):
+        windows, _ = builder.build_windows(transcripts, genome, flank=0, limit=want)
+        assert len(windows) == want, f"limit={want} built {len(windows)}"
+    unlimited, _ = builder.build_windows(transcripts, genome, flank=0)
+    assert len(unlimited) == 10
+
+
 # --------------------------------------------------------------------------
 # Provenance and determinism
 
