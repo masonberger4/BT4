@@ -8,6 +8,46 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **A second adversarial review, over the ~1,200 lines written since the first, found ten
+  more defects — including two the per-kind anchor rewrite introduced.**
+  - **Declaring an anchor crippled every sequence-derived control.** Case building moved
+    each site's *label* into the backend's frame, but `gt_ag` and `pwm` were still read at
+    the case's own index — the backend's anchor, not the panel's. Measured: with the head
+    identically perfect, the `pwm` control fell from **0.853 skill to 0.0001** and `gt_ag`
+    to exactly 0, making `beats_every_baseline` near-automatic for precisely the real
+    backends that need an offset. All four review lenses found it independently. The
+    controls now invert the shift, unioning both kinds for a combined stratum.
+  - **The `"splice"` offset key was inert but reported as applied.** `{"splice": -5}`
+    scored identically to `{"splice": 0}` while the diagnostic claimed each value was in
+    force and recommended a correction derived from that fiction — so the advertised
+    round-trip destroyed a correctly aligned run. Offsets are now keyed by *site* kind
+    throughout and the key is refused.
+  - **A shifted-out-of-window site silently left the positive class**, lowering prevalence
+    and *raising* every metric — rewarding a backend that structurally cannot find an
+    annotated site. It is clamped back to the nearest scoreable index, preserving the
+    forced miss the old formulation produced.
+  - **`aligned` could be carried by a single peak.** `n_flat < n_sites` let one site
+    outvote any number of silent ones; a kind where 7 of 8 produced nothing reported as
+    aligned at 12% agreement. It now needs a majority.
+  - **The GENCODE builder's motif tolerance discarded small genes.**
+    `len(bad) > len(same) * 0.1` reads as 10% slack, but a k-intron gene contributes only
+    2k sites, so the allowance was 0.2k — below **1** for any gene with four introns or
+    fewer. One legitimate GC-AG intron discarded every site of the gene, the opposite of
+    absorbing the minor spliceosome it was meant for.
+  - **A window running off a contig end was written silently.** Python slices truncate,
+    and minus-strand indices are measured from `w_end`, so every one shifted. The window
+    is now shrunk to what the assembly has and the indices recomputed; a truncation that
+    cuts into the transcript is skipped and counted.
+  - Neighbouring sites with no room for their own dinucleotide at a window edge are
+    dropped rather than written into a panel BT4's own reader would refuse.
+  - **A ragged row crashed the splicebench converter.** `csv.DictReader` fills a short
+    row's missing fields with `None`, so `_boolean(None)` raised `AttributeError` instead
+    of counting the row unparseable — and a 972-column published supplement can easily
+    have one. Null score spellings (`NA`, `NaN`, `None`, `-`, `.`) are now all matched.
+  - A whitespace-only key defeated the `variant_id` fallback (truthiness was tested before
+    stripping), emitting an empty id that made the **whole** panel unreadable.
+  - A genuine score of `0.0` was replaced by a falsy fallback, and `describe()` published
+    a measured-looking prevalence of `0.0` for an empty region.
 - **`anchor_offset` was a single scalar, and no scalar is correct for a real backend.**
   Research into SpliceAI's and Pangolin's source established that **both anchor on the
   exonic boundary base**, one base *before* BT4's donor position and one base *after* its

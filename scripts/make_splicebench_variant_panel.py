@@ -100,10 +100,19 @@ _LABEL = "sdv_fc2"
 _REGION = "exon"
 _KEY = "varlist"
 
+_NULLS = frozenset({"", "na", "n/a", "nan", "none", "null", "-", "."})
+"""Spellings of "no score" seen in published supplements. Matched case-insensitively."""
 
-def _boolean(cell: str) -> bool | None:
-    """Parse the archive's ``"True"``/``"False"`` strings; ``None`` if unparseable."""
-    text = cell.strip().lower()
+
+def _boolean(cell: str | None) -> bool | None:
+    """Parse the archive's ``"True"``/``"False"`` strings; ``None`` if unparseable.
+
+    Accepts ``None`` because ``csv.DictReader`` fills a short row's missing trailing
+    fields with ``restval`` (``None``), so a ragged line -- which a 972-column supplement
+    can easily have -- used to raise ``AttributeError`` instead of being counted as
+    unparseable.
+    """
+    text = (cell or "").strip().lower()
     if text in ("true", "1"):
         return True
     if text in ("false", "0"):
@@ -148,13 +157,17 @@ def convert(
         kept = 0
         with path.open("r", encoding="utf-8", newline="") as handle:
             for record in csv.DictReader(handle, delimiter="\t"):
-                label = _boolean(record.get(_LABEL, ""))
-                exonic = _boolean(record.get(_REGION, ""))
+                label = _boolean(record.get(_LABEL))
+                exonic = _boolean(record.get(_REGION))
                 if label is None or exonic is None:
                     counts["skipped_unparseable"] += 1
                     continue
+                # Strip BEFORE testing: a whitespace-only `varlist` is truthy, so the
+                # fallback never fired and the row was written with an empty id -- which
+                # makes the whole converted panel unreadable, not just that row.
+                key = (record.get(_KEY) or "").strip()
                 row = {
-                    "variant_id": (record.get(_KEY) or f"{gene}_{kept}").strip(),
+                    "variant_id": key or f"{gene}_{kept}",
                     "group": gene,
                     "region": "exonic" if exonic else "intronic",
                     "label": "1" if label else "0",
@@ -163,7 +176,10 @@ def convert(
                 }
                 for upstream, name in SCORE_COLUMNS.items():
                     cell = (record.get(upstream) or "").strip()
-                    row[name] = cell if cell.lower() not in ("", "na", "nan") else ""
+                    # A missing score that parsed as a number would corrupt the gate
+                    # silently, so the null spellings a real supplement uses are all
+                    # matched case-insensitively.
+                    row[name] = "" if cell.lower() in _NULLS else cell
                 rows.append(row)
                 kept += 1
         counts[gene] = kept

@@ -81,7 +81,7 @@ SPLICE_BASELINES: tuple[str, ...] = ("permutation", "gt_ag", "pwm", "constant")
 """Baselines a splice backend must beat. Kept permanently: a control that disappears
 once it is inconvenient was never a control."""
 
-CNN_ANCHOR_OFFSETS: dict[str, int] = {"donor": -1, "acceptor": 1, "splice": 0}
+CNN_ANCHOR_OFFSETS: dict[str, int] = {"donor": -1, "acceptor": 1}
 """Where SpliceAI and Pangolin put a site's score, relative to BT4's panel convention.
 
 **Both models anchor on the exonic boundary base**; BT4's panel anchors on the intronic
@@ -95,10 +95,11 @@ exon *ends* for donors, ``= 1`` at exon *starts* for acceptors), Pangolin's CLI 
 gffutils' first/last exonic base as the sites, and direct measurement against the
 hash-verified weights (34 sites, unanimous, both strands).
 
-``"splice"`` maps to ``0`` deliberately: a combined track cannot be shifted by one value
-without breaking the other kind, so a caller supplying per-kind offsets gets them applied
-per site *before* the union (see :func:`_positive_indices`), and this entry only exists so
-a bare mapping lookup is total."""
+There is deliberately **no ``"splice"`` entry**. A combined track cannot be shifted by one
+value without breaking the other kind, so offsets are keyed by *site* kind everywhere and
+applied per site **before** the union (see :func:`_positive_indices`). An accepted-but-
+inert ``"splice"`` key was worse than no key: it scored identically whatever it was set
+to while the diagnostic reported it as the offset in force."""
 
 PEAK_SEARCH: tuple[int, ...] = (-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5)
 """Offsets probed by the alignment diagnostic. Reported, never fitted -- the anchor is
@@ -138,7 +139,9 @@ class KindAlignment:
     """Where one site kind's scores peaked, relative to its declared positions.
 
     Attributes:
-        kind: ``"donor"``, ``"acceptor"`` or ``"splice"``.
+        kind: ``"donor"`` or ``"acceptor"`` -- the **site** kind, which is reported
+            separately even when the backend's track is combined, because the two were
+            shifted by different amounts.
         counts: ``(residual offset, sites peaking there)`` over :data:`PEAK_SEARCH`,
             measured **after** this kind's ``anchor_offset`` is applied, so ``0`` means
             the declared value is right.
@@ -172,8 +175,19 @@ class KindAlignment:
 
     @property
     def aligned(self) -> bool:
-        """Whether this kind's declared anchor looks right."""
-        return bool(self.n_sites) and self.n_flat < self.n_sites and self.modal_offset == 0
+        """Whether this kind's declared anchor looks right.
+
+        Requires a **majority** of sites to peak on the declared position, not merely a
+        plurality among the few that carried any signal. ``n_flat < n_sites`` alone let a
+        single peak outvote any number of flat sites: a kind where 7 of 8 sites produced
+        nothing was reported as aligned at 12% agreement -- the same over-claim the
+        per-kind rewrite exists to prevent, one level down.
+        """
+        return (
+            bool(self.n_sites)
+            and self.modal_offset == 0
+            and self.fraction_at_zero > 0.5
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,14 +333,15 @@ def _resolve_offsets(anchor_offset: int | Mapping[str, int]) -> dict[str, int]:
             and leave that stratum misaligned.
     """
     if isinstance(anchor_offset, int):
-        return dict.fromkeys(("donor", "acceptor", "splice"), anchor_offset)
-    unknown = sorted(set(anchor_offset) - {"donor", "acceptor", "splice"})
+        return dict.fromkeys(("donor", "acceptor"), anchor_offset)
+    unknown = sorted(set(anchor_offset) - {"donor", "acceptor"})
     if unknown:
         raise ValueError(
-            f"unknown site kind(s) {unknown} in anchor_offset; "
-            "expected 'donor', 'acceptor' and/or 'splice'"
+            f"unknown site kind(s) {unknown} in anchor_offset; expected 'donor' and/or "
+            "'acceptor'. There is no 'splice' key: a combined track is still made of "
+            "donors and acceptors, and they are shifted separately before the union"
         )
-    return {kind: anchor_offset.get(kind, 0) for kind in ("donor", "acceptor", "splice")}
+    return {kind: anchor_offset.get(kind, 0) for kind in ("donor", "acceptor")}
 
 
 def _tracks(result: SpliceResult, combined: bool) -> dict[str, tuple[float, ...]]:
@@ -409,9 +424,13 @@ def _positive_indices(
     handled at all -- its union drops the kind, so the shift has to happen per site,
     before the union.
 
-    A site whose shifted index falls outside the window contributes no positive: the
-    backend cannot score it there. Those are edge sites, which
-    :meth:`SplicePanel.edge_sites` already reports.
+    A site whose shifted index falls outside the window is **clamped back into it**
+    rather than dropped. Dropping it would quietly remove a positive, lowering the
+    prevalence and *raising* every metric -- so a backend that structurally cannot find an
+    annotated site would be rewarded for it. Under the previous track-shifting
+    formulation such a site stayed ``label=1`` with ``predicted=0.0``, a forced miss that
+    depressed the score, and that is the honest behaviour to preserve. Clamping keeps the
+    positive at the nearest scoreable index, where the backend's score is whatever it is.
     """
     n = len(window.sequence)
     indices: set[int] = set()
@@ -419,8 +438,7 @@ def _positive_indices(
         if kind != "splice" and site_kind != kind:
             continue
         shifted = position + offsets.get(site_kind, 0)
-        if 0 <= shifted < n:
-            indices.add(shifted)
+        indices.add(min(max(shifted, 0), n - 1))
     return indices
 
 
@@ -485,16 +503,18 @@ def _alignment(
     for window, result in zip(panel.windows, results, strict=True):
         tracks = _tracks(result, combined)
         for position, site_kind in window.sites():
-            stratum = "splice" if combined else site_kind
-            track = tracks.get(stratum)
+            # Keyed by SITE kind even when the stratum is combined: the stratum is one
+            # track, but the two kinds were shifted by different amounts, so reporting a
+            # single "splice" anchor would name a value that was never applied.
+            track = tracks.get("splice" if combined else site_kind)
             if track is None:
                 continue
-            counts = per_kind.setdefault(stratum, dict.fromkeys(PEAK_SEARCH, 0))
-            totals[stratum] = totals.get(stratum, 0) + 1
+            counts = per_kind.setdefault(site_kind, dict.fromkeys(PEAK_SEARCH, 0))
+            totals[site_kind] = totals.get(site_kind, 0) + 1
             applied = offsets.get(site_kind, 0)
             probed = [_track_at(track, position + applied + d) for d in PEAK_SEARCH]
             if max(probed) - min(probed) < COMBINED_TRACK_EPSILON:
-                flats[stratum] = flats.get(stratum, 0) + 1
+                flats[site_kind] = flats.get(site_kind, 0) + 1
                 continue
             best = max(
                 zip(PEAK_SEARCH, probed, strict=True),
@@ -515,6 +535,23 @@ def _alignment(
     )
 
 
+def _panel_position(index: int, kind: str, offsets: Mapping[str, int]) -> dict[str, int]:
+    """Map a track index back to the panel position(s) it could describe, per site kind.
+
+    Case ``j`` sits at *track* index ``i`` and is positive when a site of kind ``k`` sits
+    at panel position ``i - offsets[k]``. The sequence-derived baselines anchor on the
+    **panel's** convention, so they must be read there and not at ``i`` -- otherwise a
+    declared ``anchor_offset`` silently moves every control one base off its own anchor
+    while leaving the head correctly aligned.
+
+    A combined ``"splice"`` stratum has no single inverse (its two kinds were shifted in
+    opposite directions), so both are returned and the caller unions them -- exactly as
+    the label was built.
+    """
+    kinds = ("donor", "acceptor") if kind == "splice" else (kind,)
+    return {k: index - offsets.get(k, 0) for k in kinds}
+
+
 def baseline_predictions(
     name: str,
     panel: SplicePanel,
@@ -522,6 +559,7 @@ def baseline_predictions(
     refs: Sequence[tuple[int, int]],
     head_predictions: Sequence[float],
     seed: int,
+    offsets: Mapping[str, int] | None = None,
 ) -> list[float]:
     """Return one baseline's predictions over the same cases, in case order.
 
@@ -533,9 +571,15 @@ def baseline_predictions(
     :func:`~bt4.biomodels.splice.default` already returns -- plus ``constant``, the
     per-stratum base rate, which is perfectly calibrated and carries no information.
 
+    Args:
+        offsets: The per-kind anchor offsets in force for the head. The baselines are
+            read at the **panel's** anchor, so this is used to invert the shift; ``None``
+            means no shift was applied.
+
     Raises:
         ValueError: If ``name`` is not in :data:`SPLICE_BASELINES`.
     """
+    shift = dict(offsets or {})
     if name == "permutation":
         rng = random.Random(seed)
         by_kind: dict[str, list[int]] = {}
@@ -550,24 +594,34 @@ def baseline_predictions(
                 shuffled[index] = value
         return shuffled
     if name == "gt_ag":
-        return [
-            1.0
-            if canonical_motif_at(panel.windows[window].sequence, position, case.kind)
-            else 0.0
-            for case, (window, position) in zip(cases, refs, strict=True)
-        ]
+        motif: list[float] = []
+        for case, (window, position) in zip(cases, refs, strict=True):
+            sequence = panel.windows[window].sequence
+            sites = _panel_position(position, case.kind, shift)
+            hit = any(canonical_motif_at(sequence, at, k) for k, at in sites.items())
+            motif.append(1.0 if hit else 0.0)
+        return motif
     if name == "pwm":
         # The PWM baseline anchors on the same intronic dinucleotide the panel format
         # pins, so it is scored at offset 0 by construction rather than by assumption.
         # In combined mode `_tracks` unions its donor and acceptor tracks, so the
         # control keeps its full strength instead of going blind to every acceptor.
         results = score_splice_panel(panel, "pwm")
-        combined = any(case.kind == "splice" for case in cases)
-        tracks = [_tracks(result, combined) for result in results]
-        return [
-            _track_at(tracks[window][case.kind], position)
-            for case, (window, position) in zip(cases, refs, strict=True)
+        # The PWM is a genuine two-track predictor scored at the panel's own anchor, so
+        # its tracks are read per kind and unioned only where the head's stratum is.
+        pwm_tracks = [
+            {"donor": result.donor, "acceptor": result.acceptor} for result in results
         ]
+        scored: list[float] = []
+        for case, (window, position) in zip(cases, refs, strict=True):
+            sites = _panel_position(position, case.kind, shift)
+            scored.append(
+                max(
+                    (_track_at(pwm_tracks[window][k], at) for k, at in sites.items()),
+                    default=0.0,
+                )
+            )
+        return scored
     if name == "constant":
         totals: dict[str, list[int]] = {}
         for case in cases:
@@ -700,7 +754,7 @@ def run_splice_panel_gate(
             _gate(
                 cases,
                 baseline_predictions(
-                    baseline, panel, cases, refs, head_predictions, settings.seed
+                    baseline, panel, cases, refs, head_predictions, settings.seed, offsets
                 ),
                 panel,
                 settings,

@@ -915,3 +915,145 @@ def test_an_unknown_site_kind_in_the_mapping_is_refused() -> None:
         run_splice_panel_gate(
             _hard_panel(), "pwm", anchor_offset={"donors": -1}
         )
+
+
+# --------------------------------------------------------------------------
+# Second review round: what the per-kind anchor rewrite itself broke
+
+
+def test_declaring_an_anchor_does_not_cripple_the_controls() -> None:
+    """The severest defect of the session, and the one all four lenses found.
+
+    Case building moved each site's *label* into the backend's frame, but the
+    sequence-derived baselines were still read at the *case's* index -- the backend's
+    anchor, not the panel's. So declaring an offset knocked ``gt_ag`` and ``pwm`` one base
+    off their own anchors: measured, the ``pwm`` control fell from 0.853 skill to 0.0001
+    while the head stayed perfect, making ``beats_every_baseline`` near-automatic for
+    exactly the real backends that need an offset.
+
+    The controls anchor on the panel, so they must be read there whatever the head does.
+    """
+    panel = _hard_panel()
+
+    def perfect(shift: int) -> list[SpliceResult]:
+        out = []
+        for window in panel.windows:
+            donor = [0.0] * len(window.sequence)
+            acceptor = [0.0] * len(window.sequence)
+            for position in window.donors:
+                donor[position + shift] = 1.0
+            for position in window.acceptors:
+                acceptor[position + shift] = 1.0
+            out.append(
+                SpliceResult(
+                    donor=tuple(donor),
+                    acceptor=tuple(acceptor),
+                    model_name="perfect",
+                    calibrated=False,
+                )
+            )
+        return out
+
+    reference = None
+    for shift in (0, -1, 2):
+        comparison = run_splice_panel_gate(
+            panel, "pwm", results=perfect(shift), anchor_offset=shift, combined_track=False
+        )
+        controls = {
+            name: round(report.strata[0].pr_auc_skill, 6)
+            for name, report in comparison.baselines
+            if name in ("pwm", "gt_ag")
+        }
+        assert all(s.pr_auc == pytest.approx(1.0) for s in comparison.head.strata)
+        if reference is None:
+            reference = controls
+        # The controls are anchor-invariant: identical whatever the head declared.
+        assert controls == reference, shift
+        assert controls["pwm"] > 0.5
+
+
+def test_an_edge_site_stays_a_forced_miss_rather_than_vanishing() -> None:
+    """Dropping it would lower prevalence and RAISE every metric.
+
+    Under the old track-shifting formulation a site the backend cannot reach stayed
+    ``label=1`` with ``predicted=0.0`` -- a forced miss that depressed the score. The
+    label-shifting rewrite dropped it from the positive class entirely, so a backend that
+    structurally cannot find an annotated site was *rewarded* for it. Wrong direction, and
+    the harder one to notice.
+    """
+    from bt4.pipeline.splice_gate import _build_cases, _resolve_offsets
+
+    sequence = "GT" + "".join("ACTC"[i % 4] for i in range(60)) + "CAGGTAAGT" + "A" * 40
+    interior = sequence.index("CAGGTAAGT") + 3
+    panel = panel_from_windows(
+        [
+            SpliceWindow("edge", "chr1", sequence, donors=(0, interior)),
+            SpliceWindow("plain", "chr3", sequence, donors=(interior,)),
+        ],
+        negative_construction=_NEG,
+    )
+    results = score_splice_panel(panel, "pwm")
+    for offset in (0, -1, -3):
+        cases, _ = _build_cases(panel, results, False, _resolve_offsets(offset))
+        assert sum(c.label for c in cases) == panel.n_sites, offset
+
+
+def test_alignment_needs_a_majority_not_a_lone_peak() -> None:
+    """One site with a peak must not outvote a kind that is otherwise silent."""
+    panel = _hard_panel()
+    results = _oracle(panel)
+    # Silence every donor but the first: 1 peak, the rest flat.
+    muted = []
+    for index, (window, result) in enumerate(zip(panel.windows, results, strict=True)):
+        donor = list(result.donor)
+        keep = window.donors[0] if index == 0 else None
+        for position in window.donors:
+            if position != keep:
+                donor[position] = 0.0
+        muted.append(
+            SpliceResult(
+                donor=tuple(donor),
+                acceptor=result.acceptor,
+                model_name="mostly-silent",
+                calibrated=False,
+            )
+        )
+    diagnostic = run_splice_panel_gate(panel, "pwm", results=muted).alignment
+    donors = next(k for k in diagnostic.kinds if k.kind == "donor")
+    assert donors.n_flat > 0
+    assert donors.fraction_at_zero < 0.5
+    assert donors.aligned is False
+    assert diagnostic.aligned is False
+
+
+def test_there_is_no_inert_splice_offset_key() -> None:
+    """It scored identically whatever it was set to, while the note claimed otherwise.
+
+    ``_positive_indices`` and the probe both key by *site* kind, which is only ever
+    donor/acceptor, so a ``"splice"`` entry never reached label placement -- yet the
+    diagnostic read it back as the offset in force and recommended a correction derived
+    from that fiction, so the advertised round-trip destroyed a correctly aligned run.
+    """
+    assert "splice" not in CNN_ANCHOR_OFFSETS
+    with pytest.raises(ValueError, match="no 'splice' key"):
+        run_splice_panel_gate(_hard_panel(), "pwm", anchor_offset={"splice": 2})
+
+
+def test_a_combined_track_reports_its_anchors_per_site_kind() -> None:
+    """The stratum is one track; the two kinds were still shifted differently."""
+    panel = _hard_panel()
+    combined = [
+        SpliceResult(
+            donor=tuple(max(d, a) for d, a in zip(r.donor, r.acceptor, strict=True)),
+            acceptor=tuple(0.0 for _ in r.acceptor),
+            model_name="pangolin-like",
+            calibrated=False,
+        )
+        for r in _exonic_anchored(panel)
+    ]
+    diagnostic = run_splice_panel_gate(
+        panel, "pwm", results=combined, anchor_offset=CNN_ANCHOR_OFFSETS
+    ).alignment
+    assert {k.kind for k in diagnostic.kinds} == {"donor", "acceptor"}
+    assert diagnostic.recommended_offsets == {"donor": -1, "acceptor": 1}
+    assert diagnostic.aligned is True

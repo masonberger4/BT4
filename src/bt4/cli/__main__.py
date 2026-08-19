@@ -679,7 +679,7 @@ def _resolve_anchor_offsets(args: argparse.Namespace) -> int | dict[str, int]:
     elif args.donor_offset is None and args.acceptor_offset is None:
         return base
     else:
-        offsets = dict.fromkeys(("donor", "acceptor", "splice"), base)
+        offsets = dict.fromkeys(("donor", "acceptor"), base)
     if args.donor_offset is not None:
         offsets["donor"] = args.donor_offset
     if args.acceptor_offset is not None:
