@@ -8,6 +8,29 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **`bt4 splice-agreement` — do two backends call the same *positions*?** §6 names
+  cross-backend agreement a first-class uncertainty signal, and `backend_agreement`
+  provided it only for the design flow (ranking candidate CDSs by Δsplicing). A
+  site-prediction panel has no candidates to rank, so the question was unanswerable
+  there — which is where it matters most now that both CNNs are attested.
+  - **Comparing two gate reports is not a substitute, and a test proves it.** Two
+    backends can each recover every annotated site while pointing at entirely
+    different bases; constructed as `test_two_backends_can_score_identically_and_agree_on_nothing`,
+    where both score perfectly and Jaccard is 0.
+  - Reports **Jaccard of called positions**, **Spearman over the union of calls**
+    (not over every base — at 1-in-2,600 prevalence a whole-panel correlation is
+    dominated by the ~99.96% where both are ~0 and reads near 1.0 regardless), and the
+    2×2 of annotated sites recovered by **both / only one / neither**.
+  - Calls are the top-*k* **positive** scores per window, `k` = that window's site
+    count. Both details were forced by failing tests: pooling across windows measures
+    window length rather than agreement, and taking top-*k* unconditionally pads with
+    zero-scored positions chosen by the index tie-break — manufacturing agreement
+    between two backends that found nothing in common, in the flattering direction.
+  - No anchor shift is applied *between* the backends (both CNNs anchor identically);
+    the shift places the annotated sites in their shared frame. A combined-track
+    backend collapses exactly as the gate collapses it.
+
+### Added
 - **SpliceAI passed its integration-fidelity gate — `max_abs_deviation` exactly 0.0 over
   18 cases — so BOTH wrapped CNNs now reproduce their published models bit-for-bit and
   both attestations ship.** Part A is complete.

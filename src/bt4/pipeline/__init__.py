@@ -61,6 +61,7 @@ from bt4.pipeline.splice_gate import (
     AlignmentDiagnostic,
     SpliceGateComparison,
     SpliceGateSettings,
+    run_panel_backend_agreement,
     run_splice_panel_gate,
     score_splice_panel,
 )
@@ -106,6 +107,7 @@ __all__ = [
     "run_frontier",
     "run_library",
     "run_optimize",
+    "run_panel_backend_agreement",
     "run_panel_gate",
     "run_splice_crosscheck",
     "run_splice_panel_gate",

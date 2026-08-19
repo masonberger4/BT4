@@ -36,6 +36,7 @@ from bt4.pipeline.splice_gate import (
     SPLICE_BASELINES,
     SpliceGateSettings,
     baseline_predictions,
+    run_panel_backend_agreement,
     run_splice_panel_gate,
     score_splice_panel,
 )
@@ -1147,3 +1148,133 @@ def test_scoring_reports_progress_and_is_silent_by_default() -> None:
         panel, "pwm", results=_oracle(panel), progress=lambda *call: never.append(call)
     )
     assert never == []
+
+
+# --------------------------------------------------------------------------
+# Site-panel backend agreement: WHERE the models point, not how well they score
+
+
+def _flat(value: float, n: int) -> tuple[float, ...]:
+    return tuple([value] * n)
+
+
+def _spiked(n: int, peaks: dict[int, float]) -> tuple[float, ...]:
+    return tuple(peaks.get(i, 0.0) for i in range(n))
+
+
+def test_identical_backends_agree_completely() -> None:
+    """The trivial anchor: the same track twice must be perfect agreement."""
+    from bt4.biomodels.splice.agreement import site_call_agreement
+
+    track = [_spiked(50, {10: 0.9, 30: 0.8})]
+    report = site_call_agreement(track, track, [[10, 30]], ("a", "b"))
+    assert report.jaccard == 1.0
+    assert (report.both, report.only_first, report.only_second, report.neither) == (2, 0, 0, 0)
+
+
+def test_two_backends_can_score_identically_and_agree_on_nothing() -> None:
+    """The reason this exists at all, as a constructed counterexample.
+
+    Both tracks put their two peaks exactly on two annotated sites, so each backend
+    recovers 2/2 and any accuracy metric reports them as equals. They point at
+    *different* sites. A reader comparing two gate reports would see agreement; the
+    models agree on nothing.
+    """
+    from bt4.biomodels.splice.agreement import site_call_agreement
+
+    sites = [5, 15, 25, 35]
+    first = [_spiked(50, {5: 0.9, 15: 0.9})]
+    second = [_spiked(50, {25: 0.9, 35: 0.9})]
+
+    # Each is equally "good": both call 2 positions, both land on real sites.
+    report = site_call_agreement(first, second, [sites], ("first", "second"))
+    assert report.jaccard == 0.0
+    assert report.both == 0
+    assert report.only_first == 2
+    assert report.only_second == 2
+    assert report.neither == 0
+    assert report.n_sites == 4
+
+
+def test_a_site_both_backends_miss_is_reported_not_dropped() -> None:
+    """`neither` is a real outcome and must be visible, not silently absorbed."""
+    from bt4.biomodels.splice.agreement import site_call_agreement
+
+    first = [_spiked(50, {5: 0.9, 40: 0.8})]
+    second = [_spiked(50, {5: 0.9, 41: 0.8})]
+    report = site_call_agreement(first, second, [[5, 15]], ("a", "b"))
+    assert report.both == 1  # position 5
+    assert report.neither == 1  # position 15, missed by both
+    assert report.only_first == report.only_second == 0
+
+
+def test_no_calls_at_all_reads_as_zero_agreement_not_one() -> None:
+    """An empty union is agreement about nothing. 0.0 is honest; 1.0 would not be."""
+    from bt4.biomodels.splice.agreement import site_call_agreement
+
+    flat = [_flat(0.0, 20)]
+    report = site_call_agreement(flat, flat, [[]], ("a", "b"))
+    assert report.n_called_union == 0
+    assert report.jaccard == 0.0
+
+
+def test_calls_are_ranked_per_window_not_pooled() -> None:
+    """Pooling would let a long window absorb every call and measure length instead.
+
+    Two windows, one site each. The second window's scores are uniformly lower than
+    the first's, so a pooled top-2 would take both calls from window one and score
+    window two as missed by everybody.
+    """
+    from bt4.biomodels.splice.agreement import site_call_agreement
+
+    tracks = [_spiked(30, {7: 0.95}), _spiked(30, {21: 0.05})]
+    report = site_call_agreement(tracks, tracks, [[7], [21]], ("a", "b"))
+    assert report.both == 2
+    assert report.neither == 0
+
+
+def test_agreement_refuses_two_identical_names() -> None:
+    """A report naming the same backend twice is unreadable rather than wrong."""
+    from bt4.biomodels.splice.agreement import site_call_agreement
+
+    track = [_spiked(10, {1: 0.5})]
+    with pytest.raises(ValueError, match="must differ"):
+        site_call_agreement(track, track, [[1]], ("pangolin", "pangolin"))
+
+
+def test_agreement_refuses_mismatched_window_counts() -> None:
+    """A silent zip-shortest here would compare different windows to each other."""
+    from bt4.biomodels.splice.agreement import site_call_agreement
+
+    with pytest.raises(ValueError, match="window counts differ"):
+        site_call_agreement(
+            [_spiked(10, {1: 0.5}), _spiked(10, {2: 0.5})],
+            [_spiked(10, {1: 0.5})],
+            [[1], [2]],
+            ("a", "b"),
+        )
+
+
+def test_panel_agreement_runs_end_to_end_on_supplied_results() -> None:
+    """The pipeline wrapper, without needing either licensed model installed."""
+    panel = _hard_panel()
+    oracle = _oracle(panel)
+    report = run_panel_backend_agreement(
+        panel, ("pangolin", "spliceai"), results={"pangolin": oracle, "spliceai": oracle}
+    )
+    assert report.backends == ("pangolin", "spliceai")
+    assert report.n_sites == panel.n_sites
+    # An oracle against itself: it calls the same positions, so agreement is total.
+    assert report.jaccard == 1.0
+    assert report.only_first == report.only_second == 0
+
+
+def test_panel_agreement_refuses_a_results_length_mismatch() -> None:
+    """Supplied scores must cover the panel, or the comparison is against nothing."""
+    panel = _hard_panel()
+    oracle = _oracle(panel)
+    with pytest.raises(ValueError, match="entries for"):
+        run_panel_backend_agreement(
+            panel, ("pangolin", "spliceai"),
+            results={"pangolin": oracle, "spliceai": oracle[:1]},
+        )
