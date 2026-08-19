@@ -37,9 +37,11 @@ from bt4.biomodels.splice.base import DEFAULT_TOP_K, SplicePredictor, pooled_ris
 
 __all__ = [
     "AgreementReport",
+    "SiteCallAgreement",
     "agreement_from_deltas",
     "backend_agreement",
     "pearson",
+    "site_call_agreement",
     "spearman",
 ]
 
@@ -193,3 +195,160 @@ def backend_agreement(
         delta_by_backend[predictor.name] = tuple(deltas)
 
     return agreement_from_deltas(delta_by_backend, sign_epsilon=sign_epsilon)
+
+
+# --------------------------------------------------------------------------
+# Site-panel agreement: do two backends call the SAME positions?
+
+
+@dataclass(frozen=True, slots=True)
+class SiteCallAgreement:
+    """Whether two backends flag the same positions on a site-prediction panel.
+
+    A different question from :class:`AgreementReport`, which ranks *candidate
+    sequences* by Delta-splicing for the design flow. Here the panel is annotated
+    genomic sequence and the question is positional: given the same window, do the
+    two models point at the same bases?
+
+    It is not answered by comparing their gate metrics. Two backends can each score
+    skill 0.98 on the same panel while being confident about different positions --
+    the metrics would look like agreement and the models would not agree.
+
+    Attributes:
+        backends: The two backend names, in input order.
+        n_sites: Annotated sites across the panel -- also the per-window ``k``.
+        both / only_first / only_second / neither: How many annotated sites each
+            backend recovered in its own top-``k``. ``neither`` is a site both
+            missed, which is a real and reportable outcome.
+        jaccard: ``|A n B| / |A u B|`` over the *called* positions (each backend's
+            top-``k`` per window), whether or not those calls are correct. This is
+            the headline: it measures agreement about where the sites are, and is
+            unaffected by prevalence because ``k`` is fixed by the annotation.
+        spearman_on_called: Rank correlation of the two backends' scores, computed
+            over the **union of their called positions** rather than every base.
+            Over a whole panel the correlation is dominated by the ~99.96% of
+            positions where both are ~0 and would read near 1.0 regardless of
+            whether the models agree anywhere that matters.
+        n_called_union: Size of that union, so the correlation has a denominator.
+    """
+
+    backends: tuple[str, str]
+    n_sites: int
+    both: int
+    only_first: int
+    only_second: int
+    neither: int
+    jaccard: float
+    spearman_on_called: float
+    n_called_union: int
+
+
+def _top_k_indices(scores: Sequence[float], k: int) -> set[int]:
+    """Return the indices of the ``k`` highest **positive** scores.
+
+    A call requires a positive score. Taking the top ``k`` unconditionally pads the
+    set with zero-scored positions whenever a backend has fewer than ``k`` peaks,
+    and those padded entries are chosen by the index tie-break -- so two backends
+    that found nothing in common still "agree" on positions 0, 1, 2 ... The error
+    is in the flattering direction, which is the one to design against: a window
+    where both models are silent would report partial agreement rather than none.
+
+    Ties among genuinely positive scores are still broken by index, which keeps the
+    result deterministic (invariant #7).
+    """
+    if k <= 0:
+        return set()
+    positive = [i for i, score in enumerate(scores) if score > 0.0]
+    positive.sort(key=lambda i: (-scores[i], i))
+    return set(positive[:k])
+
+
+def site_call_agreement(
+    first_tracks: Sequence[Sequence[float]],
+    second_tracks: Sequence[Sequence[float]],
+    site_indices: Sequence[Sequence[int]],
+    names: tuple[str, str],
+) -> SiteCallAgreement:
+    """Compare where two backends call sites, window by window.
+
+    Each backend's calls are its top-``k`` positions **within each window**, where
+    ``k`` is that window's annotated-site count. Per-window rather than pooled: a
+    long window would otherwise absorb every call and a short one none, which
+    measures window length rather than model agreement.
+
+    Args:
+        first_tracks / second_tracks: One score track per window, already collapsed
+            to a single per-position series (see ``pipeline.splice_gate._tracks``)
+            and in the **same frame** as each other.
+        site_indices: The annotated site positions per window, in the backends'
+            frame -- i.e. already anchor-shifted. Both wrapped CNNs share the same
+            anchors, so backend-vs-backend agreement needs no shift between them;
+            the shift is only needed to compare either against the annotation.
+        names: The two backend names.
+
+    Returns:
+        A :class:`SiteCallAgreement`.
+
+    Raises:
+        ValueError: On mismatched window counts, or two identical names (which
+            would make the report unreadable rather than wrong).
+    """
+    if names[0] == names[1]:
+        raise ValueError(f"backend names must differ, got {names[0]!r} twice")
+    if not (len(first_tracks) == len(second_tracks) == len(site_indices)):
+        raise ValueError(
+            f"window counts differ: {len(first_tracks)} / {len(second_tracks)} tracks "
+            f"for {len(site_indices)} annotated windows"
+        )
+
+    both = only_first = only_second = neither = 0
+    intersection = union = 0
+    paired_first: list[float] = []
+    paired_second: list[float] = []
+
+    for first, second, sites in zip(first_tracks, second_tracks, site_indices, strict=True):
+        if len(first) != len(second):
+            raise ValueError(
+                f"track lengths differ within a window: {len(first)} vs {len(second)}"
+            )
+        k = len(set(sites))
+        called_first = _top_k_indices(first, k)
+        called_second = _top_k_indices(second, k)
+
+        intersection += len(called_first & called_second)
+        called_union = called_first | called_second
+        union += len(called_union)
+        for index in sorted(called_union):
+            paired_first.append(first[index])
+            paired_second.append(second[index])
+
+        for site in set(sites):
+            in_first = site in called_first
+            in_second = site in called_second
+            if in_first and in_second:
+                both += 1
+            elif in_first:
+                only_first += 1
+            elif in_second:
+                only_second += 1
+            else:
+                neither += 1
+
+    return SiteCallAgreement(
+        backends=names,
+        n_sites=both + only_first + only_second + neither,
+        both=both,
+        only_first=only_first,
+        only_second=only_second,
+        neither=neither,
+        # An empty union means neither backend called anything, which is total
+        # agreement about nothing -- 0.0 is the honest reading, not 1.0.
+        jaccard=(intersection / union) if union else 0.0,
+        # `spearman` raises below two points; a union that small carries no rank
+        # information, so 0.0 is the honest report and matches `_stats`'s own
+        # convention of returning 0.0 on degenerate input rather than raising.
+        spearman_on_called=(
+            spearman(paired_first, paired_second) if len(paired_first) >= 2 else 0.0
+        ),
+        n_called_union=union,
+    )

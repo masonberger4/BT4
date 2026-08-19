@@ -49,6 +49,7 @@ import random
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from bt4.biomodels.splice.agreement import SiteCallAgreement, site_call_agreement
 from bt4.biomodels.splice.base import DEFAULT_SITE_PROBABILITY, SpliceResult
 from bt4.biomodels.splice.gate import (
     SpliceGateReport,
@@ -74,6 +75,7 @@ __all__ = [
     "SpliceGateComparison",
     "SpliceGateSettings",
     "baseline_predictions",
+    "run_panel_backend_agreement",
     "run_splice_panel_gate",
     "score_splice_panel",
 ]
@@ -928,4 +930,87 @@ def run_splice_panel_gate(
             and not missing_baselines
         ),
         notes=tuple(notes),
+    )
+
+
+def run_panel_backend_agreement(
+    panel: SplicePanel,
+    backends: tuple[str, str] = ("pangolin", "spliceai"),
+    *,
+    anchor_offset: int | Mapping[str, int] = CNN_ANCHOR_OFFSETS,
+    progress: ProgressCallback | None = None,
+    results: Mapping[str, Sequence[SpliceResult]] | None = None,
+) -> SiteCallAgreement:
+    """Report whether two backends call the **same positions** on a site panel.
+
+    Section 6 names cross-backend agreement a first-class uncertainty signal, and
+    :func:`~bt4.biomodels.splice.agreement.backend_agreement` provides it for the
+    *design* flow -- ranking candidate CDSs by Delta-splicing. It cannot answer the
+    positional question a site panel poses, because a site panel has no candidates
+    to rank. This does.
+
+    **Comparing the two gate reports is not a substitute.** Two backends can each
+    reach skill 0.98 on the same panel while being confident about different bases;
+    the metrics would agree and the models would not.
+
+    Both wrapped CNNs anchor identically (donor -1, acceptor +1), so no shift is
+    applied *between* them; ``anchor_offset`` is used only to place the annotated
+    sites in the backends' shared frame, which is what makes ``both`` /
+    ``only_first`` / ``only_second`` meaningful.
+
+    A backend emitting one combined track is collapsed exactly as the gate collapses
+    it -- unioning donor and acceptor -- so Pangolin's single ``P(splice)`` series is
+    compared against the stronger of SpliceAI's two per position, rather than
+    against a track it never claimed to produce.
+
+    Args:
+        panel: The annotated site panel.
+        backends: Exactly two backend names.
+        anchor_offset: Where the backends score a site relative to the panel's
+            convention. Defaults to :data:`CNN_ANCHOR_OFFSETS`, correct for both
+            wrapped CNNs; a scalar applies to every kind.
+        progress: Forwarded to :func:`score_splice_panel` for each backend in turn.
+        results: Pre-computed per-window scores keyed by backend name, to avoid
+            re-scoring a panel that takes tens of minutes per backend.
+
+    Returns:
+        A :class:`~bt4.biomodels.splice.agreement.SiteCallAgreement`.
+
+    Raises:
+        ValueError: If ``backends`` is not two distinct names, or supplied
+            ``results`` do not cover both of them at the panel's length.
+    """
+    if len(backends) != 2 or backends[0] == backends[1]:
+        raise ValueError(f"need two distinct backend names, got {backends!r}")
+
+    scored: dict[str, Sequence[SpliceResult]] = {}
+    for name in backends:
+        if results is not None and name in results:
+            supplied = results[name]
+            if len(supplied) != len(panel.windows):
+                raise ValueError(
+                    f"results[{name!r}] has {len(supplied)} entries for "
+                    f"{len(panel.windows)} windows"
+                )
+            scored[name] = supplied
+        else:
+            scored[name] = score_splice_panel(panel, name, progress=progress)
+
+    # One backend may be combined and the other not -- exactly the Pangolin/SpliceAI
+    # case -- but both collapse the same way: per position, "a site of either kind",
+    # the union. For a combined backend the acceptor track is identically zero, so the
+    # union IS its single track; for a two-track backend it is the stronger claim. So
+    # there is no branch here, and adding one would imply a distinction that does not
+    # exist.
+    offsets = _resolve_offsets(anchor_offset)
+    tracks = {
+        name: [_tracks(result, combined=True)["splice"] for result in per_window]
+        for name, per_window in scored.items()
+    }
+
+    site_indices = [
+        sorted(_positive_indices(window, "splice", offsets)) for window in panel.windows
+    ]
+    return site_call_agreement(
+        tracks[backends[0]], tracks[backends[1]], site_indices, backends
     )

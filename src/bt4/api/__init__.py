@@ -129,6 +129,9 @@ from bt4.pipeline import (
     summarize,
 )
 from bt4.pipeline import (
+    run_panel_backend_agreement as splice_panel_agreement,
+)
+from bt4.pipeline import (
     run_panel_gate as expression_gate,
 )
 from bt4.pipeline import (
@@ -230,6 +233,7 @@ __all__ = [
     "result_to_json",
     "splice_audit",
     "splice_crosscheck",
+    "splice_panel_agreement",
     "splice_panel_gate",
     "summarize",
     "to_fasta",

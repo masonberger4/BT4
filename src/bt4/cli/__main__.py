@@ -706,6 +706,43 @@ def _splice_gate_progress(index: int, total: int, window_id: str, length: int) -
     )
 
 
+def _cmd_splice_agreement(args: argparse.Namespace) -> int:
+    """Report whether two splice backends call the same positions on a site panel."""
+    panel = api.read_splice_panel(
+        args.panel,
+        negative_construction=args.negative_construction,
+        annotation=args.annotation,
+        min_motif_consistency=args.min_motif_consistency,
+    )
+    report = api.splice_panel_agreement(
+        panel,
+        (args.first, args.second),
+        progress=None if args.quiet else _splice_gate_progress,
+    )
+
+    first, second = report.backends
+    print(f"panel:    {panel.n_sites} annotated sites over {len(panel.windows)} windows")
+    print(f"          sha256 {panel.content_hash()[:16]}...")
+    print(f"backends: {first}  vs  {second}\n")
+    print(f"  jaccard of called positions   {report.jaccard:.3f}"
+          f"   (over {report.n_called_union} called)")
+    print(f"  spearman on called positions  {report.spearman_on_called:.3f}\n")
+    print(f"  annotated sites recovered ({report.n_sites} total)")
+    print(f"    both backends      {report.both:5d}")
+    print(f"    only {first:<14s}{report.only_first:5d}")
+    print(f"    only {second:<14s}{report.only_second:5d}")
+    print(f"    neither            {report.neither:5d}")
+
+    print(
+        "\nThis measures WHERE the two models point, not how well either scores -- two "
+        "\nbackends can each reach a high skill on this panel while being confident "
+        "\nabout different bases. Agreement between two independently-trained models is "
+        "\nan uncertainty signal; it is not evidence that either is right, and it "
+        "\nchanges no calibration flag."
+    )
+    return 0
+
+
 def _cmd_splice_gate(args: argparse.Namespace) -> int:
     """Run the splice acceptance gate over an annotated panel and print the verdict."""
     panel = api.read_splice_panel(
@@ -1106,6 +1143,32 @@ def _parser() -> argparse.ArgumentParser:
              "unaffected either way",
     )
     p_sgate.set_defaults(func=_cmd_splice_gate)
+
+    p_sagree = sub.add_parser(
+        "splice-agreement",
+        help="do two splice backends call the same positions on a site panel?",
+    )
+    p_sagree.add_argument("panel", help="panel TSV, as read by splice-gate")
+    p_sagree.add_argument(
+        "--negative-construction", required=True,
+        help="how the negative class was built, verbatim -- required by the panel reader",
+    )
+    p_sagree.add_argument("--annotation", default="", help="the gene model the sites came from")
+    p_sagree.add_argument(
+        "--first", default="pangolin", choices=["pwm", "pangolin", "spliceai"]
+    )
+    p_sagree.add_argument(
+        "--second", default="spliceai", choices=["pwm", "pangolin", "spliceai"]
+    )
+    p_sagree.add_argument(
+        "--min-motif-consistency", type=float,
+        default=api.MIN_SPLICE_MOTIF_CONSISTENCY, dest="min_motif_consistency",
+    )
+    p_sagree.add_argument(
+        "--quiet", action="store_true",
+        help="suppress the per-window scoring progress on stderr",
+    )
+    p_sagree.set_defaults(func=_cmd_splice_agreement)
 
     p_vgate = sub.add_parser(
         "variant-gate",
