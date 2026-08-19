@@ -351,10 +351,29 @@ items 1–3 are in
     trap: where each score actually peaked around a declared site, so a one-base anchor
     disagreement cannot masquerade as a hopeless model.
 
-    **Still ahead here:** acquiring the two panels (annotated donor/acceptor positions
-    from a pinned GENCODE release for site prediction; `kitzmanlab/splicebench2023`,
-    MIT, 3,616 pre-scored variants for variant effect), running the gate and deriving
-    BT4's own operating point, writing `docs/REVIEW_splice_calibration.md`, the
+    **Panel acquisition is now scripted, and both sources are characterized.**
+    `scripts/make_gencode_splice_panel.py` builds the site-prediction panel from a pinned
+    GENCODE v44 + GRCh38 (URLs and md5s in the runbook's B1). Its arithmetic was
+    *executed* against real GRCh38 -- 99.42% canonical GT/AG over 1,206 chr1 MANE sites,
+    versus 0.08% and 44.2% for the two plausible wrong conventions -- and it handles the
+    two traps that silently relabel true positives as negatives: a +/-5,000 nt window
+    holds a **median of 8** annotated sites (only 2.8% hold just the centre one), and
+    **27%** of gene-body windows contain opposite-strand sites.
+
+    For variant effect, `kitzmanlab/splicebench2023` carries **no data in the repo** --
+    it is one Zenodo archive (record 8351879), whose top directory must be renamed
+    `for_zenodo` -> `data`. Label column `sdv_fc2`, stratifier `exon`, SpliceAI `DS_maxm`,
+    Pangolin `pang_max_abs`; the paper's 0.419/0.773 exonic/intronic split reproduces
+    from those columns to six decimals. **But 53% of it (BRCA1, FAS, WT1) is on
+    chromosomes both models trained on** -- only the chr3 genes (POU1F1, MST1R, MLH1) are
+    held out, and BT4's gate now correctly refuses to call the rest held out.
+
+    *Provenance caveat:* Pangolin's held-out split is from its own paper; **SpliceAI's is
+    not** -- the Cell paper is paywalled, so chr1/3/5/7/9 comes from OpenSpliceAI (eLife
+    2025), which rebuilt its pipeline. Well-sourced second-hand, not primary.
+
+    **Still ahead here:** running the gate on those panels and deriving BT4's own
+    operating point, writing `docs/REVIEW_splice_calibration.md`, the
     integration-fidelity gate for **SpliceAI**, and a Studio checkbox for the opt-in.
 
     **SpliceAI's tooling is now complete — only the licensed weights step is left.**

@@ -529,34 +529,137 @@ the only published reliability/ECE analysis: SpliceAI-architecture models are
 split fixes it. Its `calibrate` subcommand is a ready-made recipe to mirror. *(No
 published work applying isotonic regression to SpliceAI deltas was found.)*
 
-### B1 — Get a panel *(start with the MIT one — it saves days)*
+### B1 — Get a panel
 
-**Start here: `github.com/kitzmanlab/splicebench2023`** (Smith & Kitzman, *Genome
-Biol* 2023). 3,616 variants across 5 genes (POU1F1 ex2, MST1R/RON ex11, FAS ex6,
-WT1 ex9, BRCA1 11 exons), **already scored by 8 tools including SpliceAI and
-Pangolin**, plus 500,000 random background exonic SNVs. **Explicitly MIT-licensed.**
-This gives labels *and* a reference scoring to cross-check the install against,
-before building anything. Its BRCA1 saturation-genome-editing subset is the closest
-public thing to BT4's synonymous-CDS regime.
+Two panels, for the two tasks the gate keeps separate. Everything below was verified
+against the primary sources (URLs HEAD-checked, md5s matched, the arithmetic **executed**
+against real GRCh38), and the parts that could not be verified are flagged as such.
 
-Then add, as budget allows: **MFASS** (27,733 ExAC variants, 83% outside canonical
-sites; no LICENSE file — check before redistributing), **MaPSy** (4,964 exonic
-disease variants), **SpliceVarDB** (50,715 assessed variants), or build labels
-directly from a pinned **GENCODE** release. Full table in
-[`RESEARCH_splice_cnn_calibration.md`](RESEARCH_splice_cnn_calibration.md) §5.
+#### Site prediction — `scripts/make_gencode_splice_panel.py` *(landed)*
 
-**Match the published test split.** Both models trained on human chr **2, 4, 6, 8,
-10–22, X, Y** — so **chr 1, 3, 5, 7, 9 are held out**. Building from training
-chromosomes produces flattering nonsense. *(Caveat worth recording: OpenSpliceAI
-found 0.71% of MANE transcripts on the test chromosomes are paralogous to training
-sequences — the split is not perfectly clean.)*
+```
+python scripts\make_gencode_splice_panel.py ^
+  --gtf gencode.v44.basic.annotation.gtf.gz ^
+  --fasta GRCh38.primary_assembly.genome.fa ^
+  --out panel.tsv
+```
 
-If building labels from GENCODE directly: for a `+`-strand transcript each internal
-exon's end+1 is a **donor** and each exon's start−1 an **acceptor** (flip for `−`);
-drop the first acceptor and last donor. Negatives are the other positions in the
-same gene bodies — exactly the top-k denominator both papers use. SpliceAI's own
-bundled `spliceai/annotations/grch38.txt` is already a flat `EXON_START`/`EXON_END`
-table if you want to skip GTF parsing.
+Downloads, from **one** release directory so the FASTA's sequence names match the GTF's
+(`https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_44`):
+
+| File | Bytes | md5 |
+|---|---|---|
+| `gencode.v44.basic.annotation.gtf.gz` | 29,570,410 | `7450ef42cf9cb3d29625320b22d4bb45` |
+| `GRCh38.primary_assembly.genome.fa.gz` | 844,691,642 | `9c3fc2ca260a767530dddb0f26721a6b` |
+
+Check them against the release's own `MD5SUMS` before parsing anything. Then
+`gunzip` the FASTA (2.94 GiB uncompressed) — `pyfastx` indexes it on first use.
+
+**Which GTF, and why it matters.** Use `basic`, not `primary_assembly` (adds scaffolds
+that carry no MANE gene) and never `chr_patch_hapl_scaff` (ALT contigs duplicate real
+genes and would leak the same locus into the panel twice). Note the naming asymmetry
+that trips people: the **`primary_assembly` GTF is a superset** of the plain one, while
+the **`primary_assembly` FASTA is a subset** of `GRCh38.p14.genome.fa.gz`. Same word,
+opposite meanings.
+
+**Pin v44 and keep the MANE Select filter.** From v44 to v50 the protein-coding
+transcript count on the held-out chromosomes grows **4.1×** (18,147 → 74,570) while MANE
+Select grows **1.3%** (5,479 → 5,549). Without the filter a newer release fills the
+negative class with low-confidence transcript models.
+
+**The arithmetic the script implements.** A GTF is 1-based, fully inclusive, and always
+records `start <= end` regardless of strand — but GENCODE emits minus-strand exons in
+*transcript* order, so the script sorts by coordinate rather than trusting file order.
+For an intron between consecutive exons `(s1,e1)` and `(s2,e2)`, with `lo = e1+1` and
+`hi = s2-1`:
+
+| strand | donor (G of `GT`) | acceptor (G of `AG`) |
+|---|---|---|
+| `+` | `lo` | `hi` |
+| `−` | `hi` | `lo` |
+
+Windows are stored in transcript orientation, so a genomic coordinate `g` maps to
+`g - w_start` on `+` and `w_end - g` on `−`. Taking sites **per intron** rather than per
+exon means the spurious "first acceptor" and "last donor" are never generated at all.
+
+*This was executed, not reasoned about:* over 1,206 annotated sites from 64 chr1 MANE
+Select transcripts it came out **99.42% canonical GT/AG on both strands**, while the two
+plausible wrong conventions scored 0.08% and 44.2%. The residual ~0.6% is the real minor
+spliceosome (GC-AG, U12 AT-AC), which is why `MIN_MOTIF_CONSISTENCY` is 90% and not 100%.
+
+**Two traps that silently relabel true positives as negatives**, neither caught by the
+motif check, both handled by the script:
+
+1. **A window contains far more than its centre transcript's sites.** A ±5,000 nt window
+   centred on a splice site contains a **median of 8** annotated sites; only **2.8%**
+   contain the centre site alone. Labelling one transcript's introns leaves every other
+   real site scored as a negative — and a backend that correctly detects them is punished
+   for it. The script collects sites from *every* MANE transcript overlapping the window.
+2. **Opposite-strand sites.** **27%** of gene-body windows contain them. The models are
+   strand-specific, so an antisense site is not a site on the strand being scored — but
+   it is real sequence that looks exactly like one. Such windows are **skipped** by
+   default; `--keep-antisense` keeps them and records the count per window.
+
+Windows containing `N` (assembly gaps) are skipped, because BT4's format forbids `N` and
+an unscoreable position is not a real negative.
+
+> **Provenance caveat, recorded rather than smoothed over.** Pangolin's held-out split is
+> stated in its own paper. **SpliceAI's is not confirmed from the SpliceAI paper** —
+> Jaganathan et al. (*Cell* 2019) is paywalled and absent from PMC/Europe PMC. The
+> chr1/3/5/7/9 split is taken from OpenSpliceAI (*eLife* 2025), a peer-reviewed
+> reimplementation that rebuilt SpliceAI's data pipeline and attributes the split to the
+> original. Treat it as well-sourced second-hand, not primary.
+
+#### Variant effect — `kitzmanlab/splicebench2023`
+
+**The repo contains no data.** It is four notebooks, a LICENSE (**MIT, © 2023 Regents of
+the University of Michigan**, verified from the file) and a readme. Everything is in one
+Zenodo archive:
+
+```
+curl -L -o splicebench_data.tar.gz "https://zenodo.org/records/8351879/files/splicebench_data.tar.gz?download=1"
+# md5 e628ca38209064be73d28d5bddf1ae80   (334,223,475 bytes)
+tar -xzf splicebench_data.tar.gz
+mv for_zenodo data          # <-- the archive's top dir is `for_zenodo`; notebooks read ../data/
+```
+
+Labels and scores alone are 11.5 MB: `tar -xzf splicebench_data.tar.gz for_zenodo/scored_data`.
+
+| What | Where |
+|---|---|
+| the 3,616 variants | `data/scored_data/{brca1_findlay,fas_ex6_snvs,pou1f1_snvs,ron_ex11,wt1_ex9}_scored.txt` (1386+189+941+598+502) |
+| the 500,000 background SNVs | `data/background_set/random_500k_scored.txt` |
+| **the label** | **`sdv_fc2`** — string `"True"`/`"False"` (intermediates already dropped) |
+| **the exonic/intronic stratifier** | **`exon`** — string `"True"`/`"False"`. This, and nothing else, is what the paper's 0.419/0.773 split uses |
+| SpliceAI | `DS_maxm` (masked) / `DS_max` (unmasked) |
+| Pangolin | `pang_max_abs` (masked) / `pang_max_nomask_abs` (unmasked) |
+
+Read `chrom` as a **string**: the scored files have no `chr` prefix, the background file
+does. `mlh1_final_scored.txt` (296 variants) is a *separate* clinical set — 3,616 + 296 =
+3,912, the paper's benchmark total. Both numbers are true about different things.
+
+The paper's headline result was reproduced end-to-end from these columns: pooling all six
+datasets on `exon` gives median prAUC **0.418808 exonic vs 0.772757 intronic**, matching
+the published 0.419 / 0.773 and all seven per-tool values to six decimals. So this panel
+is a working check that BT4's gate reproduces a published benchmark.
+
+> **Over half of this panel is NOT held out — check before you run it.** The genes sit on:
+>
+> | gene | chr | variants | split |
+> |---|---|---|---|
+> | BRCA1 | 17 | 1,386 | **training** |
+> | FAS | 10 | 189 | **training** |
+> | WT1 | 11 | 502 | **training** |
+> | POU1F1 | 3 | 941 | held out |
+> | MST1R/RON | 3 | 598 | held out |
+> | MLH1 (separate) | 3 | 296 | held out |
+>
+> **2,077 of 3,616 variants (53%) are on chromosomes both models trained on** — including
+> BRCA1, the saturation-genome-editing set that is otherwise the closest public thing to
+> BT4's synonymous-CDS regime. That does not make the panel useless (the paper used it as
+> a tool-ranking benchmark, which it is), but BT4's gate will correctly refuse to call
+> such a run held out, and it cannot support a promotion. For a held-out gate run, use
+> the chr3 genes only.
 
 #### The file format to build (and the off-by-one it refuses)
 
