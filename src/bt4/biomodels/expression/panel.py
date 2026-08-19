@@ -40,6 +40,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from bt4.biomodels._csv import relaxed_field_size
 from bt4.domain.sequence import validate_dna
 
 __all__ = [
@@ -320,11 +321,19 @@ def _parse(handle: Iterable[str], source: str) -> ExpressionPanel:
             f"are {list(PANEL_COLUMNS)}. A typo'd column would otherwise be ignored "
             "silently."
         )
-    rows = [
-        _row_from_mapping({key: value for key, value in record.items() if key}, number)
-        # DictReader yields data rows, so line 1 is the header.
-        for number, record in enumerate(reader, start=2)
-    ]
+    # NOT because a valid row can be this long: MAX_CDS_UTR3_LEN caps CDS+3'UTR at
+    # 11,937 nt, well under csv's 131,072-char default. It is so an OVER-cap row is
+    # refused by the check below, which names RiboNN's limit and what to do, rather
+    # than dying earlier in the stdlib with a bare `_csv.Error` about a field limit
+    # that is not the one the panel actually has.
+    with relaxed_field_size():
+        rows = [
+            _row_from_mapping(
+                {key: value for key, value in record.items() if key}, number
+            )
+            # DictReader yields data rows, so line 1 is the header.
+            for number, record in enumerate(reader, start=2)
+        ]
     return ExpressionPanel(rows=tuple(rows), source=source)
 
 
