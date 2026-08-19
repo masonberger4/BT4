@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from bt4.biomodels.splice import SpliceResult, pooled_risk, score_in_context
 from bt4.biomodels.splice import default as splice_default
-from bt4.biomodels.splice.attestations import promote_if_attested
+from bt4.biomodels.splice.attestations import bundled_attestation, promote_if_attested
 from bt4.biomodels.splice.audit import (
     DEFAULT_MATCH_WINDOW,
     DEFAULT_SITE_THRESHOLD,
@@ -38,23 +38,45 @@ from bt4.pipeline.candidates import CandidateSet
 __all__ = ["audit_candidate_set", "available_splice_backends"]
 
 
-def available_splice_backends() -> list[SplicePredictor]:
+def available_splice_backends(
+    *, use_attested: bool | None = None
+) -> list[SplicePredictor]:
     """Return the splice backends that can actually run here, most-informative first.
 
     Always includes the honest PWM baseline; adds the wrapped **Pangolin** and
     **SpliceAI** CNNs only when the user's own install and weights are present
     (their ``available()`` gate). Running *all* available backends is what makes
-    the cross-backend agreement signal meaningful -- but every one is
-    ``calibrated is False`` today, so the audit stays advisory.
+    the cross-backend agreement signal meaningful.
+
+    Args:
+        use_attested: Whether to honor a committed fidelity attestation, promoting an
+            attested backend to ``calibrated=True``. ``None`` (the default) reads the
+            standing opt-in, ``$BT4_SPLICE_USE_ATTESTED``; ``True``/``False`` forces it
+            for this call, so a GUI can offer the choice per run without mutating the
+            process environment.
+
+    Returns:
+        The runnable backends. Without the opt-in every one reports
+        ``calibrated is False``, so the audit stays advisory.
     """
     backends: list[SplicePredictor] = [ConsensusPwmSplicePredictor()]
     for cnn in (PangolinSplicePredictor(), SpliceAiSplicePredictor()):
         if cnn.available():
-            # Honors a committed fidelity attestation only when the caller has
-            # opted in ($BT4_SPLICE_USE_ATTESTED); a no-op otherwise, so the
-            # default audit stays advisory.
-            backends.append(promote_if_attested(cnn))
+            backends.append(promote_if_attested(cnn, enabled=use_attested))
     return backends
+
+
+def attested_backends_available() -> tuple[str, ...]:
+    """Return backend names that are installed *and* carry a committed attestation.
+
+    What a caller needs to decide whether offering the promotion opt-in is meaningful:
+    an empty tuple means the switch would do nothing, and a control that silently does
+    nothing is worse than one that says why it is unavailable (CLAUDE.md section 6.6).
+    """
+    named = (("pangolin", PangolinSplicePredictor()), ("spliceai", SpliceAiSplicePredictor()))
+    return tuple(
+        name for name, cnn in named if cnn.available() and bundled_attestation(name) is not None
+    )
 
 
 @dataclass(frozen=True, slots=True)

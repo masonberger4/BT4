@@ -152,6 +152,7 @@ class CandidatesWorker(_EngineWorker):
         n: int,
         repeat_variants: int,
         include_cnns: bool,
+        use_attested: bool = False,
         predictor: api.ExpressionPredictor | None = None,
     ) -> None:
         """Store the run parameters (no Qt parent, so it can move to a thread).
@@ -163,6 +164,10 @@ class CandidatesWorker(_EngineWorker):
             n: Maximum candidates to keep after scoring.
             repeat_variants: Repeat-refined variants to attempt for a GLOBAL-rule
                 violating seed.
+            use_attested: When ``True``, honor a committed fidelity attestation for
+                this run, promoting an attested backend to ``calibrated=True``. Passed
+                explicitly rather than read from ``$BT4_SPLICE_USE_ATTESTED`` so the GUI
+                can offer the choice per run without mutating the process environment.
             include_cnns: When ``True``, run every backend
                 :func:`bt4.api.available_splice_backends` reports (adding the
                 wrapped SpliceAI / Pangolin CNNs if installed); otherwise the
@@ -180,6 +185,7 @@ class CandidatesWorker(_EngineWorker):
         self._n = n
         self._repeat_variants = repeat_variants
         self._include_cnns = include_cnns
+        self._use_attested = use_attested
         self._predictor = predictor
 
     def compute(self) -> CandidatesResult:
@@ -201,7 +207,11 @@ class CandidatesWorker(_EngineWorker):
         if not candidate_set.candidates:
             return CandidatesResult(candidate_set, None)
         self.progress.emit(60, "auditing splice sites")
-        predictors = api.available_splice_backends() if self._include_cnns else None
+        predictors = (
+            api.available_splice_backends(use_attested=self._use_attested)
+            if self._include_cnns
+            else None
+        )
         audit = api.splice_audit(candidate_set, predictors=predictors)
         self.progress.emit(100, "done")
         return CandidatesResult(candidate_set, audit)

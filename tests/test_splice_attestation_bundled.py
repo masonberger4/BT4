@@ -209,3 +209,50 @@ def test_api_exposes_the_opt_in_surface() -> None:
     assert api.USE_ATTESTED_SPLICE_ENV_VAR == USE_ATTESTED_ENV_VAR
     assert api.bundled_splice_attestation("pangolin") is not None
     assert callable(api.attested_splice_promotion_enabled)
+
+
+# --------------------------------------------------------------------------
+# The promotion opt-in is reachable per call, not only per process
+
+
+def test_available_backends_take_the_opt_in_as_an_argument() -> None:
+    """A GUI must be able to offer the choice without mutating os.environ.
+
+    Reading only ``$BT4_SPLICE_USE_ATTESTED`` meant the switch was set before launch or
+    not at all, which is not a control a user can see.
+    """
+    import inspect
+
+    from bt4.api import available_splice_backends
+
+    parameter = inspect.signature(available_splice_backends).parameters["use_attested"]
+    assert parameter.default is None  # None = read the standing env-var opt-in
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_the_default_stays_uncalibrated_however_it_is_called() -> None:
+    """Promotion is opt-in in every spelling; the baseline is never promoted."""
+    from bt4.api import available_splice_backends
+
+    for kwargs in ({}, {"use_attested": False}, {"use_attested": True}):
+        backends = available_splice_backends(**kwargs)  # type: ignore[arg-type]
+        baseline = next(b for b in backends if b.name == "consensus-pwm-baseline")
+        assert baseline.calibrated is False, kwargs
+
+
+def test_the_attested_probe_reports_only_installed_and_attested_backends() -> None:
+    """What a caller needs to know whether offering the opt-in is meaningful.
+
+    A control that silently does nothing is worse than one that says why it cannot.
+    In CI no licensed weights are installed, so this is empty and a GUI disables the
+    switch with an explanation.
+    """
+    from bt4.api import attested_backends_available
+
+    reported = attested_backends_available()
+    assert isinstance(reported, tuple)
+    assert set(reported) <= {"pangolin", "spliceai"}
+    # Every reported backend must actually carry a committed attestation.
+    from bt4.biomodels.splice import bundled_attestation
+
+    assert all(bundled_attestation(name) is not None for name in reported)

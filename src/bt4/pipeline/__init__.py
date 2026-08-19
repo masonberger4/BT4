@@ -44,7 +44,11 @@ from bt4.pipeline.presets import (
     resolve_preset,
 )
 from bt4.pipeline.rerank import rerank_by_expression
-from bt4.pipeline.splice_audit import audit_candidate_set, available_splice_backends
+from bt4.pipeline.splice_audit import (
+    attested_backends_available,
+    audit_candidate_set,
+    available_splice_backends,
+)
 from bt4.pipeline.splice_crosscheck import (
     CrossCheckSite,
     SpliceCrossCheck,
@@ -88,6 +92,7 @@ __all__ = [
     "ValidationReport",
     "apply_preset",
     "assemble_and_rank_candidates",
+    "attested_backends_available",
     "audit_candidate_set",
     "audit_construct",
     "available_presets",
