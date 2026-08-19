@@ -7,6 +7,27 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **The `tf_keras` fallback for SpliceAI's weights was unreachable, and the extra's
+  TensorFlow pin steered installs straight into the case it existed for.** SpliceAI's
+  weights are 2019 **Keras 2** `.h5` graphs and Keras 3 cannot load them; from
+  TensorFlow 2.16 `tensorflow.keras` **is** Keras 3.
+  - `_import_keras` ordered its candidates by module *availability* — try
+    `tensorflow.keras`, fall back on `ImportError` — so under TF ≥ 2.16 the first
+    import succeeded and returned the wrong Keras. The shim was only ever reached when
+    TensorFlow was absent entirely, which is the one situation it cannot help. Order is
+    now decided by the installed Keras **generation** (`_ambient_keras_is_v3`), read
+    from the packages rather than the TensorFlow version so an explicit `keras<3` or
+    `TF_USE_LEGACY_KERAS` is respected.
+  - `bt4[splice-spliceai]` declared `tensorflow>=2.6` with **no upper bound**, so a
+    fresh install pulled a TensorFlow that installs cleanly and then fails at load with
+    an opaque deserialization error about a file that is not corrupt. Now
+    `>=2.6,<2.16`, with the reason recorded inline and the `tf_keras` route named for
+    anyone who wants a newer TensorFlow.
+  - Three tests pin the resolution across environments (Keras 3 + shim, Keras 2, and
+    Keras 3 with no shim — which must degrade rather than refuse to import, so the
+    honest failure happens at the weights). The first was verified to fail unfixed.
+
 ### Added
 - **`docs/REVIEW_splice_calibration.md` now records the site-prediction half too**, so
   both halves of Part B are measured rather than planned. Run against BT4's own wrapped

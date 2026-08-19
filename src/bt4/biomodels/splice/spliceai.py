@@ -212,12 +212,42 @@ def _verify_weight_file(path: Path) -> None:
         )
 
 
+def _ambient_keras_is_v3() -> bool:
+    """Whether the Keras that ``import tensorflow.keras`` would yield is 3.x.
+
+    Reported from the installed packages rather than the TensorFlow version, because a
+    user can pin either side: ``TF_USE_LEGACY_KERAS`` and an explicit ``keras<3`` both
+    make a modern TensorFlow serve Keras 2. Any failure to determine it answers
+    ``False``, which keeps the historical order for every environment this cannot read.
+    """
+    for module_name in ("tensorflow.keras", "keras"):
+        try:
+            module = __import__(module_name, fromlist=["__version__"])
+        except ImportError:
+            continue
+        version = getattr(module, "__version__", "")
+        if isinstance(version, str) and version:
+            return version.split(".")[0] == "3"
+    return False
+
+
 def _import_keras() -> Any:
     """Import and return a Keras ``load_model`` callable (lazy, guarded).
 
-    Tries ``tensorflow.keras``, then standalone ``keras``, then the ``tf_keras``
-    compatibility shim (the 2019 SpliceAI ``.h5`` files predate Keras 3 and may
-    need ``tf_keras`` under modern TensorFlow).
+    SpliceAI's weights are 2019 **Keras 2** ``.h5`` graphs, and Keras 3 cannot load
+    them. From TensorFlow 2.16 ``tensorflow.keras`` *is* Keras 3, so preference order
+    is decided by the installed Keras **generation**, not by module availability:
+
+    1. ``tf_keras`` -- the legacy shim -- whenever the ambient Keras is 3.x. It exists
+       for exactly this case, and is what ``TF_USE_LEGACY_KERAS=1`` selects.
+    2. ``tensorflow.keras`` / ``keras`` otherwise (TF <= 2.15, where they are Keras 2).
+    3. ``tf_keras`` as a last resort.
+
+    Ordering by availability alone -- trying ``tensorflow.keras`` first and falling
+    back on ``ImportError`` -- makes the shim **unreachable**, because under TF >= 2.16
+    ``tensorflow.keras`` imports perfectly well; it is simply the wrong Keras. The
+    failure then surfaces at ``load_model`` as an opaque deserialization error about a
+    file that is not corrupt.
 
     Returns:
         The resolved ``load_model`` function.
@@ -227,7 +257,10 @@ def _import_keras() -> Any:
             ``bt4[splice-spliceai]`` extra (TensorFlow) plus the ``spliceai``
             package (see the module docstring), or use the baseline predictor.
     """
-    for module_name in ("tensorflow.keras.models", "keras.models", "tf_keras.models"):
+    order = ("tensorflow.keras.models", "keras.models", "tf_keras.models")
+    if _ambient_keras_is_v3():
+        order = ("tf_keras.models", "tensorflow.keras.models", "keras.models")
+    for module_name in order:
         try:
             module = __import__(module_name, fromlist=["load_model"])
         except ImportError:

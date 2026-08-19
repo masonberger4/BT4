@@ -36,7 +36,14 @@ splice-pangolin = ["torch>=2.2"]
 # weights are CC BY-NC 4.0 (noncommercial). NOT bundled; install the `spliceai`
 # package separately (it ships the weights). This extra pins only TensorFlow (the
 # runtime BT4 loads the Keras models with); see bt4.biomodels.splice.spliceai.
-splice-spliceai = ["tensorflow>=2.6"]
+#
+# The upper bound is load-bearing, not caution: from TF 2.16 `tensorflow.keras` IS
+# Keras 3, which cannot load SpliceAI's 2019 Keras-2 .h5 graphs, so an unbounded
+# `tensorflow>=2.6` resolved to a TensorFlow that installs cleanly and then fails at
+# load with an opaque deserialization error about a file that is not corrupt. To use
+# a newer TensorFlow, install `tf_keras` alongside it -- BT4 prefers that shim
+# automatically whenever the ambient Keras is 3.x (see `_ambient_keras_is_v3`).
+splice-spliceai = ["tensorflow>=2.6,<2.16"]
 # Wrapped published RiboNN translation-efficiency CNN (the Phase-4 expression
 # head, inference only, out of the optimizer loop / a frontier reranker). RiboNN's
 # code AND weights are Sanofi *non-commercial* — NOT bundled; clone the repo
