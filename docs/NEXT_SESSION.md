@@ -372,8 +372,23 @@ items 1–3 are in
     not** -- the Cell paper is paywalled, so chr1/3/5/7/9 comes from OpenSpliceAI (eLife
     2025), which rebuilt its pipeline. Well-sourced second-hand, not primary.
 
-    **Still ahead here:** running the gate on those panels and deriving BT4's own
-    operating point, writing `docs/REVIEW_splice_calibration.md`, the
+    **The variant half has now been RUN** (2026-08-19, maintainer machine) and the
+    measured results are recorded in
+    [`REVIEW_splice_calibration.md`](REVIEW_splice_calibration.md). Headline findings, on
+    `splicebench2023`'s own pre-computed scores so no weights were involved: removing the
+    training-chromosome genes costs **a third of intronic skill** (0.724 → 0.480) while
+    exonic *rises* slightly (0.365 → 0.419), collapsing the exonic/intronic skill gap from
+    0.359 to **0.061**. The write-up is explicit that this is *confounded* — holding out
+    chr1/3/5/7/9 replaces the gene set rather than filtering a fixed one, and the two are
+    collinear — so it does **not** establish that the published gap is leakage. And held-out exonic **ECE is 0.345**, direct
+    evidence these scores cannot be read as probabilities, which is what BT4's own 0.5
+    operating point assumes. Three defects in BT4's *reporting* layer were found by those
+    runs and fixed (#103, #104, #105) — each a claim about numbers that no test could
+    reach.
+
+    **Still ahead here:** the **site-prediction** half (needs the ~3 GB genome download and
+    the licensed weights; it is the half that exercises BT4's own adapters rather than the
+    benchmark's numbers), deriving BT4's own operating point from it, the
     integration-fidelity gate for **SpliceAI**, and a Studio checkbox for the opt-in.
 
     **SpliceAI's tooling is now complete — only the licensed weights step is left.**
