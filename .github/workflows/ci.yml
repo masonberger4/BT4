@@ -17,8 +17,24 @@ concurrency:
   # leaves main without a green check even though nothing failed).
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Every job sets `timeout-minutes`. GitHub's default is 6 HOURS, and a job that
+# hangs rather than fails burns all of it while holding a required check pending --
+# which blocks a PR's auto-merge for the duration. That is not hypothetical here:
+# the `app` job once sat 35+ minutes on `apt-get install` (a step that takes 9
+# seconds when healthy) before any test body ran, and would have sat there until
+# the 6-hour cap. A hang must fail fast and say so.
+#
+# The values are set from measured durations on a green run of `main`, at roughly
+# 3-15x the observed time -- generous enough that a slow runner or a cold cache
+# never trips one (a timeout that fires on healthy work is worse than the hang it
+# guards), tight enough that a wedged job is a CI failure within minutes:
+#
+#   determinism 21s | service 23s | ilp 31s | app 53s | native 77s
+#   quality 3m46s (3.13) .. 5m49s (3.10)
 jobs:
   quality:
+    # The slowest job -- the full suite plus coverage, four Python versions.
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,6 +59,7 @@ jobs:
         run: pytest --cov --cov-report=term-missing
 
   determinism:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +76,7 @@ jobs:
   native:
     # Builds the optional Rust/PyO3 accelerator and runs the suite with it
     # active, so the accelerator-vs-pure-Python equivalence test exercises Rust.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +101,7 @@ jobs:
     # Builds and tests BT4 Studio (the PySide6 desktop app) headless, driving Qt
     # through the offscreen platform plugin. The app is an in-tree, tested surface
     # (the lesson from BT3's stranded `streamlit` branch), not a side project.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,6 +109,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: System Qt runtime libraries (headless)
+        # Tighter than the job's own budget because this is the step that wedged,
+        # and it is the only network-dependent step here with a sub-10-second
+        # healthy time -- so minutes of it is already a fault, not slowness.
+        timeout-minutes: 5
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3
@@ -108,6 +131,7 @@ jobs:
 
   service:
     # Builds and tests the optional headless HTTP API (bt4.service, FastAPI).
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -127,6 +151,7 @@ jobs:
 
   ilp:
     # Builds and tests the optional OR-Tools CP-SAT solver backend.
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
