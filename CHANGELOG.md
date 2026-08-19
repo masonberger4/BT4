@@ -8,6 +8,34 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **The designed synonymous CDS panel — BT4's own regime, and the one nothing had
+  measured.** Every splice measurement so far is *recall on natural sites in natural
+  genes*; BT4 emits a synonymous re-encoding of one protein's CDS, where the question is
+  *specificity*.
+  - **It carries no splice labels, and the reader refuses to accept one.** Designed
+    coding sequence has no splice ground truth — nothing is assayed, none of it is
+    annotated, and a motif is not a site. A `label` column is rejected **by name**, with
+    the reason, because anyone adding one believed the panel has truth it does not.
+  - **`bt4.api.read_designed_cds_panel`** (`biomodels/splice/designed_panel.py`) verifies
+    the defining property rather than trusting it: within a group, every member must
+    translate to the **same protein**, and the refusal names the offending member. A
+    panel whose members are not synonymous is not a weaker synonymous panel — it is a
+    different experiment, and every number from it would be about the wrong thing.
+  - **`scripts/make_designed_cds_panel.py`** builds it from the already-committed
+    `ranaghan2021_tab4.fasta` (CC BY 4.0): **93 sequences, 3 proteins, each the native
+    human CDS plus 30 designs** from three anonymized commercial optimizers over ten
+    repeat runs. Third-party by default — generating the designs with BT4 would make the
+    answer partly a fact about BT4, which is the tool that would consume it. Verified:
+    3 groups, one protein each, 93 distinct DNAs. `--include-bt4` adds BT4's own design
+    when that comparison is wanted explicitly.
+  - **`bt4 designed-probe`** reports what is measurable without labels: the **Δ spread
+    across synonymous variants** — the number that decides whether these models are
+    usable in BT4's loop at all, since synonymous positions are the only thing BT4
+    changes — plus cross-backend rank agreement and sign agreement. It states that it is
+    **not a gate** and has no threshold, and that its agreement figure is **not** the
+    site panel's Jaccard and must not be set beside it.
+
+### Added
 - **`docs/REVIEW_splice_calibration.md` records the SpliceAI run and the first
   two-backend agreement measurement**, so all three panel20 results are in the repo
   rather than a chat log.

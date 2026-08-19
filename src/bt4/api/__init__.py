@@ -54,6 +54,9 @@ from bt4.biomodels.splice import (
 from bt4.biomodels.splice import (
     MIN_MOTIF_CONSISTENCY as MIN_SPLICE_MOTIF_CONSISTENCY,
 )
+from bt4.biomodels.splice.designed_panel import (
+    read_designed_cds_panel,
+)
 from bt4.constraints import (
     ForbiddenPreset,
     available_enzymes,
@@ -127,6 +130,9 @@ from bt4.pipeline import (
     run_tracks,
     run_validate,
     summarize,
+)
+from bt4.pipeline import (
+    probe_designed_cds as designed_cds_probe,
 )
 from bt4.pipeline import (
     run_panel_backend_agreement as splice_panel_agreement,
@@ -208,6 +214,7 @@ __all__ = [
     "context_from_genbank",
     "count_codons",
     "default_reference_set",
+    "designed_cds_probe",
     "enzyme_provenance",
     "enzyme_suggestions",
     "expression_gate",
@@ -219,6 +226,7 @@ __all__ = [
     "packaging_report",
     "parse_fasta",
     "parse_genbank",
+    "read_designed_cds_panel",
     "read_fasta",
     "read_genbank",
     "read_panel",

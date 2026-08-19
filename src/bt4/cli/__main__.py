@@ -706,6 +706,44 @@ def _splice_gate_progress(index: int, total: int, window_id: str, length: int) -
     )
 
 
+def _cmd_designed_probe(args: argparse.Namespace) -> int:
+    """Measure splice backends on designed synonymous CDS. Not a gate."""
+    panel = api.read_designed_cds_panel(args.panel, provenance=args.provenance)
+    summary = panel.describe()
+    print(f"panel:    {summary['n_members']} members over {len(panel.groups)} proteins")
+    print(f"          sha256 {panel.content_hash()[:16]}...")
+    print(f"          {summary['provenance']}\n")
+
+    probes = api.designed_cds_probe(panel, tuple(args.backends))
+    for probe in probes:
+        print(f"{probe.group}  ({probe.n_designs} designs vs native)")
+        for name in probe.backends:
+            low, high = probe.delta_range[name]
+            print(
+                f"    {name:34s} delta spread {probe.delta_spread[name]:8.4f}"
+                f"   range [{low:+.4f}, {high:+.4f}]"
+            )
+        for (first, second), rho in sorted(probe.rank_correlations.items()):
+            print(f"    rank agreement {first} vs {second}: {rho:+.3f}")
+        if len(probe.backends) > 1:
+            print(f"    sign agreement: {probe.sign_agreement:.3f}")
+        print()
+
+    print(
+        "NOT A GATE, and there is no threshold to set. This panel carries no splice\n"
+        "labels because designed coding sequence has no splice ground truth -- nothing\n"
+        "here was assayed and none of it is annotated.\n\n"
+        "Read the SPREAD first: synonymous positions are the only thing BT4 changes, so\n"
+        "a backend whose delta barely moves across these designs cannot distinguish the\n"
+        "candidates BT4 produces, and routing it into candidate selection would be\n"
+        "picking at random with extra steps.\n\n"
+        "The rank agreement is NOT the site panel's Jaccard and must not be set beside\n"
+        "it: that is positional overlap on genomic sequence, this is rank agreement over\n"
+        "candidate deltas."
+    )
+    return 0
+
+
 def _cmd_splice_agreement(args: argparse.Namespace) -> int:
     """Report whether two splice backends call the same positions on a site panel."""
     panel = api.read_splice_panel(
@@ -1180,6 +1218,24 @@ def _parser() -> argparse.ArgumentParser:
         help="suppress the per-window scoring progress on stderr",
     )
     p_sagree.set_defaults(func=_cmd_splice_agreement)
+
+    p_dprobe = sub.add_parser(
+        "designed-probe",
+        help="how splice backends behave on designed synonymous CDS (not a gate)",
+    )
+    p_dprobe.add_argument("panel", help="designed-CDS panel TSV")
+    p_dprobe.add_argument(
+        "--provenance", required=True,
+        help="how the sequences were obtained, verbatim -- required, because a "
+             "designed-CDS panel is only interpretable next to who designed it",
+    )
+    p_dprobe.add_argument(
+        "--backends", nargs="+", default=["pangolin", "spliceai"],
+        choices=["pwm", "pangolin", "spliceai"],
+        help="backends to compare. One is allowed (the spread is still meaningful); "
+             "agreement needs two",
+    )
+    p_dprobe.set_defaults(func=_cmd_designed_probe)
 
     p_vgate = sub.add_parser(
         "variant-gate",
