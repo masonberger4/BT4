@@ -7,6 +7,26 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **`docs/REVIEW_splice_calibration.md` — the first measured results Part B has ever
+  had.** The variant-effect half was run on a maintainer machine against
+  `splicebench2023`'s own pre-computed scores (no weights involved, so this measures
+  BT4's gate against a published benchmark rather than BT4's adapters against a model).
+  Panels are recorded by content hash.
+  - **Removing training-chromosome genes costs a third of intronic skill** (0.724 →
+    0.480) while exonic *rises* slightly (0.365 → 0.419). The exonic/intronic
+    skill gap collapses from 0.359 to **0.061** on chr3 alone. The write-up names the
+    confound rather than claiming leakage: holding out chr1/3/5/7/9 *replaces* the gene
+    set instead of filtering a fixed one, and gene and chromosome are collinear, so no
+    split of this benchmark can separate difficulty from training overlap.
+  - **Held-out exonic ECE is 0.345.** These delta scores cannot be read as probabilities
+    of disruption, which matters because BT4's own operating point treats scores as if
+    they were. Direct evidence against importing published cutoffs.
+  - Records what it does **not** establish: nothing about BT4's adapters (these are the
+    benchmark's numbers), and nothing about BT4's regime (natural variants in natural
+    genes, not designed synonymous CDS). No flag changed; `default()` still returns the
+    PWM baseline.
+
 ### Fixed
 - **`bt4 variant-gate` compared strata on raw average precision, and told the reader a
   panel was broken when it was not.** Its guidance said the exonic figure "should sit
