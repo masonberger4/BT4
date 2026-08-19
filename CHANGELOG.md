@@ -7,6 +7,16 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **`scripts/make_gencode_splice_panel.py` ignored `--limit` after the first window.**
+  `build_windows` rebound its own `limit` parameter to the window's sequence length
+  partway through the loop, so from the second iteration the guard read
+  `len(windows) >= 35000` and could never fire. The flag exists so a user can cost a
+  trial run before committing to a real one; instead `--limit 5` built every MANE
+  transcript on five chromosomes — a multi-hour build and a panel two orders of magnitude
+  too large to score with a CNN. Found by running it. The local is renamed, and a
+  regression test asserts the built count equals the requested one.
+
 ### Added
 - **`docs/REVIEW_splice_calibration.md` — the first measured results Part B has ever
   had.** The variant-effect half was run on a maintainer machine against

@@ -321,11 +321,13 @@ def build_windows(
         # Drop sites with no room for their own dinucleotide inside this window. They
         # are real sites of a *neighbouring* transcript that happen to land on the
         # boundary; keeping them writes a panel BT4's own reader refuses.
-        limit = len(stored)
+        # NOT named `limit`: that is this function's own parameter, and rebinding it
+        # here silently disabled the `--limit` guard after the first window was built.
+        width = len(stored)
         keep = [
             (i, kind)
             for i, kind in same
-            if (kind == "donor" and 0 <= i <= limit - 2) or (kind == "acceptor" and i >= 1)
+            if (kind == "donor" and 0 <= i <= width - 2) or (kind == "acceptor" and i >= 1)
         ]
         counts["n_unscoreable"] += len(same) - len(keep)
         same = keep
