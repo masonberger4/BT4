@@ -8,6 +8,24 @@ its first tagged release.
 ## [Unreleased]
 
 ### Added
+- **`docs/REVIEW_splice_calibration.md` now records the site-prediction half too**, so
+  both halves of Part B are measured rather than planned. Run against BT4's own wrapped
+  Pangolin and the hash-verified GPL weights, on a GENCODE v44 / GRCh38 panel of 20
+  held-out MANE windows (861,096 positions, 333 sites, motif consistency 100%).
+  - **The per-kind anchors are confirmed on real data** — donors peak at −1 for 100% of
+    sites, acceptors at +1 for 99%. Those offsets were derived in #102 from upstream
+    source rather than measured, and this was the largest correctness risk in this half.
+  - Pangolin scores **skill 0.983 / top-k 0.940** against the `pwm` baseline's 0.096, and
+    with `--min-pr-auc-skill 0.75` declared beforehand the run reports **`PROMOTABLE on
+    this panel: True`** — a first for any BT4 splice backend. Stable across a 2.3× panel
+    size change (skill moved −0.005).
+  - Recorded as **not a promotion**: the figures sit **+0.133 / +0.150 above** Zeng & Li's
+    published 0.85 / 0.79, consistently, which says the panel is easier than the
+    genome-wide benchmark rather than that the model is better. Pangolin's combined track
+    also means there is **no exonic/intronic split** here, so the penalty that matters most
+    to BT4 is not checkable on this panel shape. `calibrated` is unchanged and `default()`
+    still returns the PWM baseline.
+
 - **`bt4 splice-gate` now reports which window it is scoring.** A CNN-backed run over a
   real GENCODE panel takes tens of minutes — the wrapped models read ~10 kb of context
   per position — and the command printed *nothing* until it finished, which is
