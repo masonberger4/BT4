@@ -7,6 +7,28 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **`bt4 designed-probe` rounded away the distinction its own conclusion rests on.** At
+  `%.4f` an exactly-zero Δ spread and one of 1e-7 both print `0.0000`, and the two
+  readings are opposite: exactly zero means the backend gave the native and every design
+  the same pooled risk and **cannot rank them at all**, while 1e-7 means it ranks them
+  and the signal is merely tiny. On the first real run Pangolin displayed `0.0000` for
+  two of three proteins, so the formatting was deciding the finding. Zero now prints as
+  `0`, sub-1e-4 values in scientific notation, and an exactly-zero spread gets an
+  explicit line saying the backend cannot rank the candidates.
+- **`bt4 designed-probe` printed nothing while it ran** — the same silence-looks-like-a-hang
+  defect fixed for `splice-gate` one change earlier, reintroduced in the new command:
+  `probe_designed_cds` accepted a `progress` callback and the CLI did not pass one. Now
+  wired, with `--quiet` to suppress it.
+  - Reported per **protein group** rather than per sequence, and the docstring says why:
+    the probe hands a whole group to `backend_agreement`, which scores its members
+    internally, so the group is the finest boundary this layer can honestly report.
+    Claiming per-sequence progress it cannot observe would be worse than coarse progress.
+- Two guarantees the probe already had are now pinned: it reports the backends' **own**
+  names (`consensus-pwm-baseline`, not the `pwm` alias — the bug found by running it),
+  and `DesignedCdsProbe` has **no** `passed` / `promotable` field, structurally, because
+  the panel it reads has no labels.
+
 ### Added
 - **The designed synonymous CDS panel — BT4's own regime, and the one nothing had
   measured.** Every splice measurement so far is *recall on natural sites in natural
