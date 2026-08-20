@@ -7,6 +7,47 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **A plain-English walkthrough for the RiboNN calibration job**
+  (`docs/GUIDE_ribonn_calibration.md`). `DESIGN_ribonn_calibration.md` is an expert
+  runbook; this is the same procedure for someone who can use a terminal but has never
+  met conformal prediction — 21 numbered steps, a glossary, a 15-row trap table, and the
+  **free, weights-free steps pulled to the front** (the 195-test apparatus and a
+  full-pipeline dry run against the `null` backend, neither of which the runbook
+  mentions). Every command was checked against the source and the runnable ones were
+  executed; the test counts (90 / 195) and the report field names are measured, not
+  transcribed.
+
+### Fixed
+- **The runbook claimed a fidelity result BT4 does not have.** Its job table marked job 1
+  *"✅ done — the adapter reproduces upstream bit-for-bit"*. There is **no** RiboNN
+  fidelity gate, capture script or attestation anywhere in the tree — "bit-for-bit" is the
+  *splice* side's vocabulary, and `expression/attestation.py` explicitly contrasts itself
+  with it. What is established is that real end-to-end runs produce numbers, which is why
+  the runbook's own Stage 1.2 (fold semantics) exists at all. Corrected in place; §10.6
+  applies to BT4's own docs as much as to its models.
+
+### Measured
+- **The runbook's own panel-size floor fails a good head more often than it passes one.**
+  Stage 2 says "≥ 4 proteins and ≥ ~90 rows". The gate splits by whole protein at 50%, so
+  90 rows leaves ~45 to judge coverage on — against a 90% ± 5% band. Simulated against the
+  real `verify_expression_gate` with a head at median within-protein ρ = 0.96: **44%** pass
+  at 92 rows, 82% at 200, 79% at 200/10 proteins, **99%** at 900. The rank half passed
+  **100% of the time at every size** — coverage was the entire failure mode. So a negative
+  at the documented floor is not evidence about RiboNN, and Stage 5 maps it to "RiboNN does
+  not do BT4's job". Size for **~200 rows**, which is also what the research doc's own
+  ±0.05 arithmetic (n ≈ 102, post-split) has always implied.
+- **Six further runbook defects, all verified in source** and recorded in the guide's
+  Appendix B: the `bt4 expression-gate` shortcut offered at Stage 4 has **no `--json`** (nor
+  `--baselines`/`--top-k`/`--batch-size`), so it cannot produce the `gate_result.json` the
+  same stage tells you to keep; `harness_ok` is a not-equal test at a **1e-9** floor, not
+  the "differ substantially" the prose promises; `$BT4_RIBONN_WEIGHTS` exists and is
+  documented in **no** markdown file in the repo; the Stage 0.3 `max_shift` snippet prints
+  nothing and exits 0 on a wrong path, indistinguishable from "all clear"; RiboNN's
+  `torch.load` carries no `map_location`, so the CPU-only environment the runbook offers may
+  simply not load (recorded in `NEXT_SESSION.md`, absent from the runbook); and the CI claim
+  that `NullExpressionModel` "cannot pass in either mode" is checked in pooled mode only.
+
 ### Fixed
 - **Overstated the `N`-padding effect by roughly 2×, via a set mismatch.** `CLAUDE.md` §6,
   `NEXT_SESSION.md` and the review doc all read *"median peak inside the CDS 0.276 →
