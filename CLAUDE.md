@@ -384,7 +384,15 @@ aborting with "no feasible codon".
   splice number computed on the `N`-padded path is a **lower bound** on that model's
   response, not its estimate; supplying the real `ConstructContext` changes the answer
   rather than refining it. None of this licenses moving the cutoff — there are no labels,
-  and a higher score is not a more correct one. See
+  and a higher score is not a more correct one. **And the models are not inert here:**
+  a textbook donor consensus planted into a designed CDS lifts the local peak from 0.052
+  to 0.570 (~11x) at exactly the anchor base, while a composition-matched scramble and a
+  `GT`->`CT` ablation keeping 7 of 9 bases both sit at host baseline — so the response is
+  the splice signal, not a reaction to an edit. **But the floor is high:** a *weakened*
+  real donor scores 0.357 and clears nothing, so BT4's 0.5 cutoff sits above the
+  intermediate-strength sites cryptic splicing actually uses. This bounds inertness from
+  below and **does not** license "a clean designed CDS has no cryptic site" — detecting a
+  site BT4 planted is not evidence about sites nobody put there. See
   [`docs/REVIEW_splice_calibration.md`](docs/REVIEW_splice_calibration.md). *(License
   correction — the earlier roadmap called Pangolin "MIT"; the upstream repo is in
   fact **GPL-3.0**, and **SpliceAI is more restrictive still — PolyForm Strict
