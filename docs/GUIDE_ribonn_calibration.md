@@ -18,7 +18,15 @@ A few reassurances before we start:
   deliverable. You have not failed if the answer is no.
 - **Nothing you do here changes BT4 for users by accident.** There is no switch you
   can trip. Turning the model on for real needs a deliberate, separate step, and even
-  that isn't wired up yet (see [Step 20](#step-20--the-part-that-still-wont-work)).
+  that isn't wired up yet (see [Step 21](#step-21--the-part-that-still-wont-work)).
+- **Don't recognise a word?** There is a one-line-per-term [Glossary](#glossary) at the
+  very end. CDS, UTR, Spearman, GC3, r², coverage, conformal interval and attestation are
+  all in it.
+
+**The shape of the job:** **Part 1** free checks · **Part 2** install the model ·
+**Part 3** cheap experiments that can end the project · **Part 4** get real measurements ·
+**Part 5** run the test, once · **Part 6** if it passed. Parts 1 and 3 are where most
+projects stop, and that is by design.
 
 ---
 
@@ -55,7 +63,9 @@ is to pick the best spelling. RiboNN was never tested on that.
 The published numbers say what to expect:
 
 - On the job it was built for (comparing natural genes): **r² = 0.62** — good.
-- On designed, made-up sequences: **r² = 0.17–0.19** — weak.
+- On designed, made-up sequences: **r² = 0.17–0.19** — weak. (Re-training it on such
+  data recovers 0.49–0.50 — but BT4 uses the model frozen, exactly as published, so that
+  number is not available to you here.)
 - On the one test in its own paper that isolates the coding region: **r² = 0.11** — near
   useless.
 
@@ -75,11 +85,12 @@ anything.
 ⚠️ **Do this before you download anything.** It is the one step that can invalidate
 everything else.
 
-RiboNN's licence does **not** simply say "free for non-commercial use". It grants use
-"to any person from academic research or non-profit organizations" — that is a rule about
-**who you are**, not about what you intend to do with it. If you are an independent
-researcher with no university or non-profit affiliation, you may not be covered at all,
-however non-commercial your motives.
+RiboNN's licence does **not** simply say "free for non-commercial use". It restricts
+**both** what you may do with it (academic-research, non-commercial purposes only) **and
+who you may be** — it grants use "to any person from academic research or non-profit
+organizations". Most non-commercial licences only do the first; this one does both. So if
+you are an independent researcher with no university or non-profit affiliation, you may
+not be covered at all, however non-commercial your motives.
 
 Email **`patent.gos@sanofi.com`**. State your affiliation and what you intend to do. Get
 the answer **in writing** before downloading the weights.
@@ -121,7 +132,7 @@ pytest tests/test_expression_gate.py tests/test_expression_panel.py \
 These tests are not busywork — they are the honesty guarantees you are about to rely on.
 Among other things they prove that a model which has learned nothing except *"which
 protein am I looking at"* sails through the easy version of the test and **fails** the
-strict version. That single fact is why Step 17 insists on one particular flag.
+strict version. That single fact is why Step 18 insists on one particular flag.
 
 > **A warning about green tests:** every RiboNN test uses a stand-in, not the real model.
 > A green test suite tells you BT4's side is sound. It tells you **nothing** about whether
@@ -176,12 +187,18 @@ Spend a few minutes reading `dryrun.json`. The part that decides everything is `
 
 # Part 2 — Setting up the real model
 
-From here on you need the licence from Step 1 and about 3 GB of downloads.
+From here on you need the licence from Step 1. The weights themselves are about
+**200 MB**; the conda environment that PyTorch lives in is a few GB on top of that.
 
 ## Step 5 — Install RiboNN
 
 RiboNN is a research codebase from Sanofi. You do **not** need to run its `Makefile`;
 BT4 loads it directly.
+
+> **First you need `mamba`.** It is a package manager for scientific Python. Check with
+> `mamba --version`; if that errors, install
+> [Miniforge](https://github.com/conda-forge/miniforge), close your terminal, and open a
+> new one.
 
 ```bash
 git clone https://github.com/Sanofi-Public/RiboNN.git ~/RiboNN
@@ -203,28 +220,36 @@ mamba create -n RiboNN -c conda-forge -y python=3.10.13 pytorch=1.13.1 \
 > PyTorch "there is no graphics card here". If the released files were saved from a GPU,
 > loading them on a CPU-only box can fail outright. That is RiboNN's behaviour, not a BT4
 > bug — but it means a CPU-only setup may simply not work, and you want to discover that
-> at Step 8, not at Step 17.
+> at Step 8, not at Step 18.
 
 ## Step 6 — Download the model weights
 
-The weights are ~3 GB on Zenodo. **The folder they live in must be named exactly
-`models`** — RiboNN looks for that literal name.
+The weights are about **200 MB** on Zenodo. Name the folder they go into `models` —
+that is the name RiboNN looks for, and using it avoids a fallback that needs
+administrator rights on Windows.
 
 ```bash
 cd ~/RiboNN
 mkdir models
 curl -L -o weights.zip "https://zenodo.org/records/17258709/files/weights.zip?download=1"
-tar -xf weights.zip -C models
+unzip -q weights.zip -d models
 ls models/human            # expect a list of folders, each holding state_dict.pth
 ```
 
 The zip contains `human/` and `mouse/` at its top level, which is why it is extracted
 **into** `models` rather than alongside it.
 
+> ⚠️ **Use `unzip`, not `tar`.** On Linux, `tar -xf weights.zip` fails — GNU `tar` cannot
+> read zip archives, and you get `This does not look like a tar archive` after the
+> download. (It happens to work on macOS and Windows, which ship a different `tar`.) No
+> `unzip`? Install it (`sudo apt install unzip`), or use
+> `python -m zipfile -e weights.zip models`, which needs nothing extra.
+
 > **If you must keep the weights elsewhere** (a different drive, say), point BT4 at them
-> with the `BT4_RIBONN_WEIGHTS` environment variable. The folder still has to be *named*
-> `models`, but it can live anywhere. This escape hatch is real but appears in no other
-> document.
+> with the `BT4_RIBONN_WEIGHTS` environment variable — an escape hatch that appears in no
+> other document. On Linux and macOS the folder can then have any name; BT4 bridges the
+> difference itself. Only on Windows does the name need to be literally `models`, because
+> the bridge it uses there needs Developer Mode or an elevated prompt.
 
 ## Step 7 — Install BT4 into the *same* environment
 
@@ -256,24 +281,61 @@ check that `~/RiboNN/src/` and `~/RiboNN/models/human/` both exist.
 > PyTorch is installed. It does **not** open a single model file. Empty folders with the
 > right names will pass it. Step 8 is the real test.
 
+> **Every step from here on runs inside this environment.** If you open a new terminal,
+> run `conda activate RiboNN` and set `BT4_RIBONN_DIR` again before doing anything else —
+> otherwise you are silently running against a different Python.
+
+### First: getting the sequences you'll need
+
+Every remaining step needs **real UTRs** — the untranslated stretches at each end of an
+mRNA. RiboNN refuses to run without them, and BT4 deliberately doesn't supply any, because
+picking them for you would be a hidden choice affecting every number you produce.
+
+You need **two pairs**: a main pair, and a genuinely different second pair for the control
+in Step 10.
+
+**Where to get them.** Pick a well-studied human transcript — human beta-globin (*HBB*) is
+the classic reporter choice, and something structurally unlike it (say *ACTB*) makes a good
+second pair. On [Ensembl](https://www.ensembl.org): search the gene → pick the main
+transcript → **Sequence** → the 5′UTR and 3′UTR are marked in the exon table.
+
+**Put each in its own file** in FASTA format — a header line starting with `>`, then the
+letters:
+
+```
+>utr5
+ACATTTGCTTCTGACACAACTGTGTTCACTAGCAACCTCAAACAGACACC
+```
+
+Save four files: `utr5.fa`, `utr3.fa`, and `alt5.fa`, `alt3.fa` for the second pair.
+Wherever a command below says `--utr5 utr5.fa`, you can also paste the sequence directly
+instead of a filename.
+
+⚠️ **Keep these files.** Only a 12-character hash of them is recorded in any report, so
+two runs made with different UTRs are not comparable and you will have no way to tell them
+apart afterwards.
+
+**You also need one coding sequence** for Step 8 — any real CDS will do, including one
+from `scripts/data/ranaghan2021_tab4.fasta` in the BT4 repo. It must be `A`/`C`/`G`/`T`
+only, a length divisible by 3, and end in `TAA`, `TGA`, or `TAG`.
+
 ## Step 8 — Prove it *actually* works
 
 This is the first command that genuinely proves your setup. It checks all 90 model files
 against known fingerprints and then runs a real prediction.
-
-You need three real sequences: a 5′UTR, a 3′UTR (the untranslated bits at each end of an
-mRNA), and a coding sequence. **The coding sequence must have a length divisible by 3 and
-end in `TAA`, `TGA`, or `TAG`.**
 
 ```bash
 python -c "
 from bt4.biomodels.expression import RiboNNExpressionModel
 m = RiboNNExpressionModel(species='human', utr5='PUT_REAL_UTR5_HERE',
                           utr3='PUT_REAL_UTR3_HERE', cell_types=('HEK293T',))
-r = m.score_sequence('ATG...TAA')
+r = m.score_sequence('PUT_REAL_CDS_HERE')
 print(r.score, '|', r.units, '| calibrated =', r.calibrated)
 "
 ```
+
+Replace all three `PUT_REAL_..._HERE` strings before running — anything that isn't real
+`A`/`C`/`G`/`T` is refused.
 
 Success looks like a number, a description of its units, and `calibrated = False`.
 
@@ -295,9 +357,10 @@ Common refusals, all of them loud and clearly worded:
 ```bash
 python -c "
 from bt4.biomodels.expression import RiboNNExpressionModel
-m = RiboNNExpressionModel(species='human', utr5='...', utr3='...')
-a = [x.score for x in m.score_many(['ATG...TAA'])]
-b = [x.score for x in m.score_many(['ATG...TAA'])]
+m = RiboNNExpressionModel(species='human', utr5='PUT_REAL_UTR5_HERE',
+                          utr3='PUT_REAL_UTR3_HERE')
+a = [x.score for x in m.score_many(['PUT_REAL_CDS_HERE'])]
+b = [x.score for x in m.score_many(['PUT_REAL_CDS_HERE'])]
 print(a, b, 'OK' if a == b else 'NOT REPRODUCIBLE — see Step 9')
 "
 ```
@@ -311,9 +374,10 @@ time**, and every number below becomes meaningless.
 
 ```bash
 python -c "
-import glob, sys, pandas as pd
-files = glob.glob('$HOME/RiboNN/models/*/runs.csv')
-if not files: sys.exit('FAIL: no runs.csv found — the weights are not where you think')
+import glob, os, sys, pandas as pd
+root = os.environ.get('BT4_RIBONN_WEIGHTS') or os.path.expanduser('~/RiboNN/models')
+files = glob.glob(os.path.join(root, '*/runs.csv'))
+if not files: sys.exit(f'FAIL: no runs.csv found under {root} — check where Step 6 put the weights')
 for f in files:
     df = pd.read_csv(f)
     cols = [c for c in df.columns if 'max_shift' in c]
@@ -345,8 +409,14 @@ compared.
 ## Step 10 — Positive control: is the wiring even live?
 
 Before trusting any "no effect" result, prove the machinery can detect an effect at all.
-Score one sequence under two genuinely different real UTR pairs. Because most of RiboNN's
-signal comes from the UTRs, the scores should move.
+Score one sequence under two genuinely different real UTR pairs — the scores should move.
+
+Why they should: **per nucleotide**, the UTRs carry most of RiboNN's information density
+(the paper's split is 67/31/2 across 5′UTR/CDS/3′UTR). That qualifier is load-bearing and
+often dropped: *integrated over their length*, the split is 22/73/5, so the CDS is
+actually the **majority** of the total attributed signal. Both numbers are real. Swapping
+UTRs is simply the biggest change you can make in one step, which is what makes it a good
+control — not evidence that the CDS doesn't matter.
 
 ```bash
 python scripts/ribonn_sensitivity.py --check utr-control \
@@ -368,9 +438,16 @@ Look for **`harness_ok: true`**.
 
 Now the real question: **does RiboNN notice at all when you rewrite a gene's spelling?**
 
-BT4 ships 93 real sequences — three human proteins, each written 31 different ways by
-real commercial codon-optimization tools. No measurements needed; you're only asking
-whether RiboNN's scores *move*.
+BT4 ships 93 real sequences: three human proteins, each with its **natural** coding
+sequence plus 30 optimizer outputs — three codon-optimization algorithms run ten times
+each (31 records per protein). No measurements needed; you're only asking whether RiboNN's
+scores *move*.
+
+> Two honest caveats about this panel. The ten runs of one algorithm measure that tool's
+> run-to-run variability, so you are seeing **three** design processes, not 31. And the
+> algorithms are **anonymized** in the source paper — the repo's licence file explicitly
+> forbids mapping them to named commercial tools, because that mapping was never
+> published.
 
 ```bash
 python scripts/ribonn_sensitivity.py --check cds-spread \
@@ -408,12 +485,20 @@ free, instantly**. A model whose only skill is GC adds nothing at all.
 ```bash
 # Does it prefer a highly-optimized spelling over a deliberately bad one?
 python scripts/ribonn_sensitivity.py --check direction \
-    --utr5 utr5.fa --utr3 utr3.fa --cell-type HEK293T --json
+    --utr5 utr5.fa --utr3 utr3.fa --cell-type HEK293T
 
 # Does its score change smoothly as sequences change gradually?
 python scripts/ribonn_sensitivity.py --check ladder \
-    --utr5 utr5.fa --utr3 utr3.fa --cell-type HEK293T --json
+    --utr5 utr5.fa --utr3 utr3.fa --cell-type HEK293T
 ```
+
+Leave `--json` off for these two — the plain output is easier to read and ends with a
+`note:` line telling you how to interpret it.
+
+- **`direction`** prints how many non-tied proteins it preferred the max-CAI design in.
+  About half is the coin flip.
+- **`ladder`** prints `spearman(score, CAI)`. Near zero, or a score that jumps around
+  while CAI climbs steadily, means the scores can't be used for ranking.
 
 Read these asymmetrically: a clear preference proves little (optimized and deoptimized
 sequences differ in many ways at once), but **a coin-flip result is genuinely bad news**,
@@ -422,9 +507,23 @@ aren't zero.
 
 ### 🚦 Decision point
 
-Continue to Part 4 **only if** Step 11 shows real spread and Step 12 shows it isn't
-purely GC. Otherwise stop, write down the numbers, and close the question. **That is a
-successful outcome**, reached for the price of an afternoon instead of a research grant.
+Continue to Part 4 **only if both** of these hold:
+
+- **`within_over_between` ≥ 0.2** (Step 11) — RiboNN's response to rewriting one protein is
+  at least a fifth of its response to changing protein entirely.
+- **`median_abs_gc3_spearman` ≤ 0.7** (Step 12) — its within-protein response is not almost
+  entirely explained by GC3.
+
+**Those two numbers are our own pre-commitment, not an industry standard** — no standard
+exists. Write them down *before* you look at the output, for the same reason Step 17 makes
+you pre-register the gate's thresholds.
+
+If `within_over_between` comes back as `null`, the *between*-protein spread was itself at
+the floor — that means the harness isn't working, so re-check Step 10 rather than reading
+it as a result.
+
+Otherwise stop, write down the numbers, and close the question. **That is a successful
+outcome**, reached for the price of an afternoon instead of a research grant.
 
 ---
 
@@ -434,6 +533,11 @@ To judge whether RiboNN's ordering is *correct*, you need real experimental meas
 of different spellings of the same protein. This is the expensive part.
 
 ## Step 14 — Find the best available dataset
+
+> **Read [Step 16](#step-16--how-much-data-do-you-actually-need-read-this-before-buying-anything)
+> first.** It sets the size floor you should judge these candidates against — and it is
+> roughly double what the technical runbook says. Two of the three options below are
+> chosen partly on size, so knowing the floor first changes the decision.
 
 **No public dataset fully fits.** This is a "best partial answer, honestly labelled"
 exercise. In priority order:
@@ -452,8 +556,9 @@ Step 11 is sequence-only — that paper measured exactly one sequence, in bacter
 perfect for Part 3 and useless here.
 
 > **How much would making your own cost?** Roughly **$15–19k in DNA synthesis alone** for
-> ~300 sequences, before any lab work; 6–12 months. Out of scope, but worth knowing when
-> weighing whether to continue.
+> ~300 sequences — and **mid-five to low-six figures all-in** once transcription,
+> transfection and sequencing are counted; 6–12 months. Out of scope, but worth knowing
+> when weighing whether to continue.
 
 ### Choosing the right kind of measurement
 
@@ -527,30 +632,43 @@ accuracy land within 90% ± 5%. On 45 rows, ordinary statistical luck misses tha
 about half the time **even when the model is excellent**.
 
 Measured directly against BT4's real gate, using a simulated model with near-perfect
-within-protein ranking (median ρ = 0.96):
+within-protein ranking (median ρ = 0.96), 1,500 trials per row:
 
 | Data size | Chance a genuinely good model passes | What actually failed |
 |---|---|---|
-| 4 proteins, **92 rows** | **44%** | error-bar band — never the ranking |
-| 4 proteins, **200 rows** | **82%** | " |
-| 6 proteins, **198 rows** | **82%** | " |
-| 10 proteins, **200 rows** | **79%** | " |
+| 4 proteins, **92 rows** | **51%** — a coin flip | error-bar band — never the ranking |
+| 4 proteins, **200 rows** | **76%** | " |
+| 6 proteins, **198 rows** | **77%** | " |
+| 10 proteins, **200 rows** | **75%** | " |
+| 10 proteins, **500 rows** | **94%** | " |
 | 20 proteins, **900 rows** | **99%** | " |
 
-The ranking part passed **100% of the time** at every size. Coverage was the entire story.
+The ranking part passed **100% of the time at every size.** Coverage was the entire story.
 
-**Aim for ~200 rows, not 90.** This agrees with BT4's own research doc, which computes
-that a ±0.05 coverage claim needs about 102 rows — and after the 50% split, 200 rows is
-what leaves you 100. At 90 rows you are more likely than not to record "RiboNN can't do
-this" about a model that can.
+**Treat ~200 rows as the pragmatic floor, and ~500 as what actually buys you confidence.**
+At 90 rows a genuinely good model is a coin flip away from being recorded as a failure —
+and Step 19's table maps that failure to "RiboNN does not do BT4's job."
+
+> **Why not the research doc's ~102 rows?** That figure counts only the *test* fold's
+> sampling noise. Split conformal has a second, roughly equal source of uncertainty — the
+> calibration fold's own estimate of the error-bar width — so ~102 is a lower bound, not a
+> guarantee. The measured table above is the honest version.
+
+**Two caveats on the table.** It assumes each protein contributes roughly the same number
+of variants; with lopsided proteins the two folds diverge and the pass rate drops below
+these numbers. And it assumes the model's error is a similar size across proteins — if it
+isn't (the report tells you, as `link_slope_spread`), then adding *proteins* helps more
+than adding variants. Maximise both where you can.
 
 Other floors worth knowing: at least **9 rows** in the calibration half (below that the
-error bars are reported as infinite), at least **2 proteins**, and at least one protein
-with 2+ variants in the test half.
+error bars come back as infinite), at least **2 proteins**, and at least one protein with
+2+ variants in the test half.
 
-> **A quirk to plan around:** the split isn't random — it sorts your protein names
-> **alphabetically** and puts the first half in calibration. So what you *name* your
-> proteins determines which ones get tested. Name them before you look at any results.
+> **A quirk to plan around, and it is not cosmetic:** the split isn't random. It sorts your
+> protein names **alphabetically** and puts the first half into calibration. So what you
+> *name* your proteins decides which ones get tested — and the alphabetically-first half
+> must hold at least 9 rows, ideally about half the panel. Fix your names before you look
+> at any results.
 
 ---
 
@@ -579,7 +697,7 @@ target_coverage:      0.90
 coverage_tolerance:   0.05
 min_spearman:         0.30      # our own pre-commitment, NOT an industry standard
 decision_rule:        the model's cautious (lower-bound) score must beat every baseline's
-                      best score
+                      point estimate
 baselines:            permutation, cai, gc3, length, constant
 width_rule:           median error-bar width ÷ spread of the data must be < 1.0
 runs_permitted:       1
@@ -590,6 +708,14 @@ used, your `top_k` setting, and which UTR files. None of those appear in the out
 and you will not remember them later.
 
 ## Step 18 — Run the test. Once.
+
+> ⚠️ **Stop here if your panel has only one protein.** The gate refuses to run — you get
+> `error: expression gate needs at least two distinct groups for a leakage-free split,
+> got 1` and no output file at all. This is not a bug: with one protein there is no way to
+> split calibration from test without the two halves leaking into each other. If that is
+> the only data you have (PERSIST-seq is shaped this way), the honest move is to group by
+> *design family* instead of by protein — a real but distinctly narrower claim, and one
+> you should describe as such rather than promote.
 
 ```bash
 python scripts/run_expression_gate.py \
@@ -635,8 +761,8 @@ separate things all hold:
 2. **`beats_every_baseline`** — RiboNN beat all five stand-ins. **The hard one is CAI**, a
    simple arithmetic formula BT4 already computes instantly, for free, *inside* the
    optimizer. A model that can't beat it adds nothing. Note the bar is deliberately
-   demanding: RiboNN's *cautious lower estimate* must exceed each baseline's *best*
-   estimate.
+   demanding: RiboNN's *cautious lower bound* must exceed the best baseline's plain
+   mid-range score (its point estimate) — not the other way round.
 3. **`interval_is_informative`** — the error bars are narrower than the spread of the data
    itself. This catches a genuinely sneaky failure: a model that always predicts the same
    number gets its error bars technically "right" while saying nothing at all.
@@ -647,9 +773,8 @@ separate things all hold:
 |---|---|---|
 | **`promotable: true`** | RiboNN really does rank spellings of a protein | Go to Step 20 |
 | Ranking works, but doesn't beat **CAI** | No gain over what BT4 already does for free | Stays uncalibrated. Publish the numbers. |
-| **Ranking fails** | RiboNN doesn't do BT4's job | Stays uncalibrated **for this regime**. Write it up — the question is now *answered*, not pending. |
+| **Ranking fails** | RiboNN doesn't do BT4's job | Stays uncalibrated **for this regime**. Write it up — the question is *answered* for the frozen model, not pending. (Re-training RiboNN on such a panel is a separate, far larger project, not a re-run of this one.) |
 | Ranking works, error bars don't | It orders things usefully but misstates its confidence | Report both halves. Default is still uncalibrated. |
-| Only one protein available | Only a much narrower claim is possible | Report the narrower claim; do not promote |
 
 **Note the asymmetry:** a pass proves something specific and scoped. A fail at 90 rows
 might just be Step 16's coin flip. Check your row count before concluding "no".
@@ -660,8 +785,10 @@ might just be Step 16's coin flip. Check your row count before concluding "no".
 
 ## Step 20 — Record it properly
 
-The only sanctioned way to flip the switch is an **attestation** — a small signed record
-saying "this model passed this test, on this data, in this scope."
+The only sanctioned way to flip the switch is an **attestation** — a small,
+content-hashed record saying "this model passed this test, on this data (bound by the
+panel's SHA-256), in this scope." It is not signed and proves nothing about *who* ran it;
+it binds the claim to exact bytes, not to an identity.
 
 ```python
 # promote.py — run once, on the machine that ran the test.
@@ -683,6 +810,8 @@ att = attest_expression(
 )
 open("ribonn_attestation.json", "w").write(json.dumps(att.to_dict(), indent=2))
 ```
+
+Save that as `promote.py` in your BT4 folder and run `python promote.py`.
 
 ⚠️ **Two things to be careful about here.**
 
@@ -722,8 +851,15 @@ model = verified_predictor(model, load_expression_attestation("ribonn_attestatio
 assert model.calibrated
 ```
 
-Wiring that into BT4's normal paths is **separate work — budget it separately.** (The
-splice side has exactly the same gap, recorded as item 10.)
+Save as `use_it.py` and run `python use_it.py`. This is what a *user* would have to do by
+hand — nothing in BT4 does it for them, which is the whole point of this step.
+
+Wiring that into BT4's normal paths is **separate work — budget it separately.** The
+splice side is *not* in the same position, despite item 10 recording a related gap: its
+`verified_predictor` **is** called from production code behind an explicit opt-in
+(`BT4_SPLICE_USE_ATTESTED` / `--use-attested-splice`), so a committed splice attestation
+does change behaviour for a user who asks for it. The expression side has no caller at
+all.
 
 And keep the claim honest and scoped. An attestation earned on HEK293T does **not**
 certify a model averaging all 78 cell types. The honest sentence is always something like:
@@ -740,14 +876,15 @@ don't exist.
 |---|---|---|
 | 1 | Two Python environments | BT4 loads RiboNN's code *into itself*. Separate environments can never see each other. |
 | 2 | Adding the `[ml]` extra | Pulls in newer PyTorch/NumPy than RiboNN tolerates. |
-| 3 | Weights folder not named `models` | RiboNN hard-codes that name; the fallback needs admin rights on Windows. |
+| 3 | Weights folder not named `models` | RiboNN hard-codes that name; the fallback needs admin rights on Windows. (On Linux/macOS `$BT4_RIBONN_WEIGHTS` lets any name work.) |
+| 3b | `tar -xf weights.zip` on Linux | GNU `tar` cannot read zip. Use `unzip -q weights.zip -d models`. |
 | 4 | Trusting `('null', 'ribonn')` | Only proves two folders exist. Empty folders pass. |
 | 5 | Forgetting `--within-group` | Measures the wrong thing entirely and wastes the run. Warns on stderr only. |
 | 6 | Forgetting `--recalibrate` | Compares two different scales; error bars become garbage. |
 | 7 | Forgetting `--cell-type` | Silently averages 78 cell types. No error, no warning, wrong answer. |
 | 8 | Mismatched FASTA headers in Step 11 | Grouping is "text before the first `|`". Get it wrong and every sequence becomes its own group; the crash message never mentions headers. |
 | 9 | Reading `responds_to_synonymous_change` as biology | It's a one-part-in-a-billion check. |
-| 10 | A 90-row dataset | A good model fails ~56% of the time. See Step 16. |
+| 10 | A 90-row dataset | A good model fails about half the time. See Step 16. |
 | 11 | Re-running with adjusted thresholds | Turns validation into a search. Nothing enforces the "run once" rule. |
 | 12 | Typing a scope in `promote.py` that doesn't match the run | Produces a permanent record that lies, which every later check accepts. |
 | 13 | Expecting a green test suite to mean a real run works | Every RiboNN test uses a stand-in. |
@@ -761,23 +898,26 @@ don't exist.
 Every command in this guide was checked against the source, and several were executed.
 Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
 
-1. **"The adapter reproduces upstream bit-for-bit."** The runbook's summary table marks
-   this ✅ done. **No RiboNN fidelity gate, capture script or attestation exists in the
-   repo** — "bit-for-bit" is the *splice* side's vocabulary, and the expression
-   attestation module explicitly contrasts itself with it. What has been established is
-   that real end-to-end runs happen and produce numbers. That is why the runbook's own
-   Step 1.2 (fold semantics) exists at all. This guide says "it runs", not "it matches".
+1. **"The adapter reproduces upstream bit-for-bit."** The runbook's summary table *used
+   to* mark this ✅ done — **corrected in place** when this guide landed. **No RiboNN
+   fidelity gate, capture script or attestation exists in the repo**; "bit-for-bit" is the
+   *splice* side's vocabulary, and the expression attestation module explicitly contrasts
+   itself with it. What has been established is that real end-to-end runs happen and
+   produce numbers — which is why the runbook's own Stage 1.2 (fold semantics) exists at
+   all. This guide says "it runs", not "it matches".
 2. **`bt4 expression-gate` cannot produce `gate_result.json`.** The runbook offers it as
    an equivalent to the script at Stage 4, but it has **no `--json` flag** (nor
    `--baselines`, `--top-k`, `--batch-size`). Use the script for the record.
 3. **`harness_ok` does not mean "the scores differ substantially".** It is a
    not-equal test at a 1e-9 floor — about six orders of magnitude away from the runbook's
    wording.
-4. **The ~90-row panel floor is too small** — measured above; it fails a good model more
-   often than it passes one. The runbook's own research doc computes ~102 rows for the
-   coverage claim it asks for.
-5. **`$BT4_RIBONN_WEIGHTS` exists** and lets the weights live outside the checkout. It is
-   documented in no markdown file in the repo, only in source and two error messages.
+4. **The ~90-row panel floor is too small** — measured above: it is a coin flip for a
+   genuinely good model, and every failure is the coverage band rather than the ranking.
+   The runbook's own research doc computes ~102 rows, but that counts only test-fold
+   noise; measured end-to-end, ~200 is the pragmatic floor and ~500 is what buys ~94%.
+5. **`$BT4_RIBONN_WEIGHTS` exists** and lets the weights live outside the checkout. Before
+   this guide it appeared in no markdown file in the repo — only in source and two runtime
+   error messages; it is now recorded here and in `CHANGELOG.md`.
 6. **The `max_shift` check passes silently on a wrong path** — an empty match prints
    nothing and exits 0, indistinguishable from "all clear". Fixed in Step 9.
 7. **CPU-only machines may not work at all.** RiboNN calls `torch.load` without
@@ -792,6 +932,14 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
 10. **A missing quote attribution.** "Feeding RiboNN a real UTR makes it runnable. Neither
     is a gate." is credited to `RESEARCH_ribonn_calibration.md`; it is in
     `RESEARCH_codon_optimization_SOTA.md`.
+11. **`tar -xf weights.zip` does not work on Linux.** The runbook gives it in a Windows
+    `cmd.exe` block, where it is correct — Windows and macOS ship a `tar` that reads zip.
+    GNU `tar`, the Linux default, does not, and Linux is the only platform RiboNN is
+    tested on. Use `unzip`.
+12. **The runbook's Stage 1 "free checks" are not free.** All four `--check` modes score
+    through the backend, so every one needs the licensed weights. The genuinely free work
+    — the test suite and a `--backend null` dry run — appears nowhere in the runbook. This
+    guide leads with it (Steps 3–4).
 
 ---
 
@@ -808,8 +956,13 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
 | **Panel** | Your data file of measured sequences. |
 | **Baseline** | A deliberately dumb competitor the model must beat to prove it's adding something. |
 | **Spearman (ρ)** | A score from −1 to +1 for whether two rankings agree. Only cares about order. |
+| **r²** | 0 to 1: how much of the real variation the model's predictions account for. ~0.6 is a useful model; ~0.1 is nearly none. |
+| **GC3** | The G/C content of just the *third* letter of each codon — the letter you are usually free to change without changing the protein. |
+| **CAI** | A simple arithmetic score for how closely a sequence uses an organism's preferred codons. BT4 computes it instantly, in-loop, for free. |
+| **tAI** | A second codon-quality score, weighted by how much of each matching tRNA the cell actually has. |
+| **`top_k`** | How many of RiboNN's ensemble members to average (default 5). It changes the score, and it is not recorded in the gate's output — so write it in your pre-registration file. |
 | **Coverage** | Of everything the model said "I'm 90% sure", how often was it right? |
 | **Conformal interval** | The error bar. Built from how wrong the model was on data it hadn't seen. |
 | **Within-group** | Comparing only spellings of the *same* protein — BT4's actual job, and the strict version of the test. |
 | **Pooled** | Comparing everything at once, including across different proteins — the easy version, and the wrong question. |
-| **Attestation** | The signed record saying a model passed, and in exactly what scope. |
+| **Attestation** | The content-hashed record saying a model passed, and in exactly what scope. Not a signature — it binds to bytes, not to a person. |
