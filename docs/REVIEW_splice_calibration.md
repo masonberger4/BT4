@@ -535,6 +535,86 @@ it is **not a refinement — it changes the answer**, by ~0.19 of median peak sc
 direction that matters at a 0.5 cutoff. A splice number computed on the `N`-padded path
 should be read as a lower bound on that model's response, not as its estimate.
 
+## The detection floor — measured (2026-08-20)
+
+#123 showed the `N`-padding suppresses scores but left the central question open: is
+Pangolin **blind** inside designed coding sequence, or **correctly silent** because a
+clean designed CDS contains no strong splice site? Those produce identical output on a
+label-free panel. The way to separate them is to plant a site whose location you know
+and see whether the model finds it.
+
+Substitution (not insertion) of a 9-mer spanning the junction, so CDS length and reading
+frame are preserved: exon `MAG` | `GTRAGT` intron. Two third-party designed hosts
+(KRas4B, Beclin1 — Ranaghan designs, so **not** BT4 output and therefore not pre-depleted
+by BT4's own `avoid_splice_sites` rule), three plant positions each, real chr1 flank.
+
+| rung | 9-mer | median peak | cleared 0.5 |
+|---|---|---|---|
+| **L0** host, unmodified | — | 0.0524 | 0/6 |
+| **L5** scrambled | `GAAGCTGAT` (composition-matched) | 0.0525 | 0/6 |
+| **L4** GT→CT ablation | `CAGCTAAGT` (7/9 bases = L1) | 0.0543 | 0/6 |
+| **L3** weaker | `AAAGTATCT` | 0.0547 | 0/6 |
+| **L2** weakened consensus | `CAGGTATGT` | **0.3567** | 0/6 |
+| **L1** full consensus | `CAGGTAAGT` | **0.5700** | **5/6** |
+| L1 on the **`N`-padded shipped path** | `CAGGTAAGT` | 0.5328 | 4/6 |
+
+### What this establishes
+
+- **Pangolin is not inert in designed coding sequence.** A planted textbook donor lifts
+  the local peak from 0.052 to 0.570 — about **11×** — and the peak lands on **exactly**
+  the base `CNN_ANCHOR_OFFSETS` predicts (donor = −1) in 5 of 6 plants. The anchor
+  convention, previously established on natural genomic panels, is confirmed to hold in
+  a designed-CDS host.
+- **The response is signal-specific, not change-driven.** Three independent controls all
+  sit at host baseline: a composition-matched scramble (0.0525), a *weaker* motif
+  (0.0547), and — the decisive one — **GT→CT ablation at 0.0543**, which keeps 7 of the
+  9 bases and destroys only the invariant `GT`. Changing one dinucleotide removes the
+  entire signal. The model is reading the splice signal, not reacting to an edit.
+- **There is a real dose-response**: L1 0.570 → L2 0.357 → everything else ≈ 0.053.
+
+### The floor is high, and that is the finding that matters
+
+**L2 — a genuinely weakened but real donor — scores 0.357 and clears nothing.** The
+detection floor at a 0.5 cutoff sits *above* the intermediate-strength sites that cryptic
+splicing actually uses. Only a textbook-perfect consensus is reported. Combined with
+#123's ~0.19 median deflation on the `N`-padded path, the shipped configuration misses
+one plant in six even at full consensus (4/6 vs 5/6).
+
+So the operating point is not merely uncalibrated in the abstract: **it is demonstrably
+above the model's own response to a real site of less-than-textbook strength.**
+
+### What it does NOT establish
+
+- **Not correct silence.** A planted textbook consensus is the *easiest possible*
+  stimulus, and its ground truth is assumed rather than assayed. Detecting it says the
+  model is not inert; it does **not** license "a clean designed CDS is free of cryptic
+  sites". That inference is affirming the consequent, and no label-free panel can supply
+  it.
+- **Not sensitivity.** BT4 can generate unlimited designed sequence; it cannot generate a
+  designed sequence *known* to carry a real cryptic site. This ladder measures response
+  to a site BT4 chose and placed — which bounds inertness from below and nothing else.
+- **Scope:** 2 hosts × 3 positions, donors only, one motif per rung, Pangolin only.
+  Acceptors and SpliceAI are untested here. `L5` had to be chosen from the permutations
+  of `L1` that introduce no in-frame stop **and do not recreate `GT` at the junction** —
+  a first pass used an unconstrained shuffle that hit a stop codon at every plant site
+  and was skipped everywhere, i.e. a control that never ran. That constraint is now
+  enforced in code (`build_scramble`) rather than left to a lucky draw.
+
+The ladder is committed as `scripts/probe_splice_detection_floor.py`, so this is
+re-runnable by anyone holding the weights rather than a one-off. It prints **derived
+scalars only** — peak, offset, threshold-cleared — never per-position arrays, which are
+the licensed model's output. A probe that would introduce an in-frame stop is reported as
+skipped, never dropped silently.
+
+### Where this leaves the "should we train?" question
+
+It substantially supports the **"correct silence"** branch over the **"blind"** branch:
+the models demonstrably detect a strong planted site in this exact regime, so their
+silence on clean designed CDS is not an inability to see. Training was only the right
+instrument under the "blind" branch. What the ladder points at instead is the **operating
+point** — a cutoff sitting above the model's response to a real weakened donor — and
+that is derived on labelled data, not trained.
+
 ## Still to run
 
 - **A specificity panel in BT4's regime**: designed synonymous CDS with *known* splice

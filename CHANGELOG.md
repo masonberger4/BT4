@@ -8,6 +8,29 @@ its first tagged release.
 ## [Unreleased]
 
 ### Measured
+- **The splice CNNs are not blind on designed coding sequence — measured with a graded
+  implantation ladder.** The open question after the `N`-padding result was whether
+  Pangolin is *blind* inside a designed CDS or *correctly silent* because there is no
+  strong site to find; those are indistinguishable on a label-free panel. Planting a
+  9-mer donor consensus by **substitution** (length and reading frame preserved) into two
+  third-party designed hosts at three positions each: host baseline **0.0524** →
+  full consensus **0.5700**, about **11×**, with the peak landing on exactly the base
+  `CNN_ANCHOR_OFFSETS` predicts in 5 of 6 plants. Three controls establish the response is
+  the splice *signal* rather than a reaction to an edit — composition-matched scramble
+  **0.0525**, a weaker motif **0.0547**, and decisively a `GT`→`CT` ablation that keeps 7
+  of the 9 bases and destroys only the invariant dinucleotide, **0.0543**. Graded
+  throughout: 0.570 → 0.357 → ~0.053.
+- **…and the detection floor is high enough to matter.** A *weakened but real* donor
+  scores **0.357** and clears nothing, so BT4's 0.5 cutoff sits **above the
+  intermediate-strength sites cryptic splicing actually uses**; on the `N`-padded shipped
+  path even a full consensus is missed in 1 of 6 plants (4/6 vs 5/6). This **retires the
+  "train the models" framing**: they demonstrably detect a strong site in this exact
+  regime, so silence on clean designed CDS is not an inability to see, and what remains is
+  an operating point — derived on labelled data, never trained. It does **not** establish
+  correct silence: detecting a site BT4 planted is not evidence about sites nobody put
+  there, and no label-free panel can supply that.
+
+### Measured
 - **The splice adapters' `N`-padding is not neutral — it systematically deflates scores
   inside the CDS.** Both wrapped CNNs pad with 5,000 literal `N` (upstream's own
   convention), and nothing had separated "the model sees little on a designed CDS" from

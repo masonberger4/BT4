@@ -69,6 +69,18 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > `ConstructContext` changes the answer rather than refining it. It licenses **no**
 > threshold change — there are no labels, and a higher score is not a more correct one.
 >
+> ✅ **The models are NOT blind in BT4's regime (measured 2026-08-20).** A planted
+> textbook donor lifts the local peak **0.052 → 0.570 (~11×)** at exactly the anchor base
+> `CNN_ANCHOR_OFFSETS` predicts, in a third-party designed CDS host. Signal-specific, not
+> change-driven: composition-matched scramble **0.0525**, `GT`→`CT` ablation keeping 7 of
+> 9 bases **0.0543**, both at host baseline (0.0524). **But the floor is high** — a
+> *weakened* real donor scores **0.357** and clears nothing, so the 0.5 cutoff sits above
+> the intermediate-strength sites cryptic splicing actually uses. This **retires the
+> "train the models" branch**: they detect a strong site in this exact regime, so silence
+> on clean designed CDS is not inability to see. What remains is the **operating point**,
+> which is derived on labelled data, not trained. It does **not** establish correct
+> silence — detecting a site BT4 planted says nothing about sites nobody put there.
+>
 > ✅ **Tier 3 (GenBank I/O) has landed too** — an annotated reader/writer whose
 > `misc_feature` spans put residual violations on the map the user opens, and whose
 > reader turns an existing vector map into a `ConstructContext`. **Tier 4 has now
