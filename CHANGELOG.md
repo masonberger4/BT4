@@ -7,6 +7,26 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Measured
+- **The splice adapters' `N`-padding is not neutral — it systematically deflates scores
+  inside the CDS.** Both wrapped CNNs pad with 5,000 literal `N` (upstream's own
+  convention), and nothing had separated "the model sees little on a designed CDS" from
+  "the input is off-distribution", since a broken input produces a low structureless band
+  too. Four arms over the designed-CDS panel, differing only in the flank, scores sliced
+  back to coding positions: `N`-padding median peak **0.2757**, random uniform ACGT
+  **0.1731**, real human chr1 **0.3691**, composition-matched shuffle **0.4944**. Under
+  real flanks several designed CDSs reach or cross 0.5 that never did padded — so the
+  "everything floors below 0.5" picture is **partly an input artifact**, not purely a
+  misplaced threshold. Replicated over three *different* real regions and three
+  *independent* shuffles because the surprising half rested on one draw: real regions
+  agree to **three decimal places** on every protein (real context is a stable
+  background), while shuffles scatter and run higher in **9 of 9** comparisons
+  (distribution shift, not restored function) — and random ACGT scoring *below* `N` rules
+  out "any real bases beat `N`". **Licenses no threshold change**: there are no labels
+  here, a higher score is not a more correct score, and the honest consequence is that a
+  number from the `N`-padded path is a lower bound while passing a real `ConstructContext`
+  changes the answer rather than refining it.
+
 ### Fixed
 - **Corrected a false claim this project had just written into its own constitution.**
   Nine places across six files asserted that on the designed-CDS panel *"no position on

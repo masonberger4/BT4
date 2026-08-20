@@ -375,7 +375,16 @@ aborting with "no feasible codon".
   measured one, `pool_top_k_logit` is the background-free ranking statistic that
   survives the hinge (**not a risk** — it goes negative and has no calibrated zero),
   and lowering the background to make the signal reappear is forbidden: it is the same
-  uncalibrated knob pointed somewhere more flattering. See
+  uncalibrated knob pointed somewhere more flattering. **And the `N`-padding is not
+  neutral either:** measured, replacing the adapters' 5,000 literal `N` with real human
+  genomic flank raises the median peak score inside the CDS from **0.276 to 0.462**,
+  enough to move designed sequences across the 0.5 cutoff — while three *different* real
+  regions agree to three decimals and a shuffled control (same composition) inflates
+  scores in 9 of 9, so the effect is distribution shift, not "any bases beat `N`". A
+  splice number computed on the `N`-padded path is a **lower bound** on that model's
+  response, not its estimate; supplying the real `ConstructContext` changes the answer
+  rather than refining it. None of this licenses moving the cutoff — there are no labels,
+  and a higher score is not a more correct one. See
   [`docs/REVIEW_splice_calibration.md`](docs/REVIEW_splice_calibration.md). *(License
   correction — the earlier roadmap called Pangolin "MIT"; the upstream repo is in
   fact **GPL-3.0**, and **SpliceAI is more restrictive still — PolyForm Strict

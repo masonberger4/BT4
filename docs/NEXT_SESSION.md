@@ -58,6 +58,17 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > [`REVIEW_splice_calibration.md`](REVIEW_splice_calibration.md). **The operating point
 > itself is still underived** — that is Part B, and it is `BLOCKED-data`.
 >
+> ⚠️ **And the `N`-padding is not neutral (measured 2026-08-20).** Replacing the
+> adapters' 5,000 literal `N` with real human genomic flank raises the median peak score
+> *inside the CDS* from **0.276 → 0.462**, moving designed sequences across the 0.5
+> cutoff. Controls make it interpretable: three **different** real regions agree to three
+> decimals (real context is a stable background), random uniform ACGT scores *below* `N`
+> (so it is not "any bases beat `N`"), and a composition-matched **shuffle inflates
+> scores 9/9** (so the lift is distribution shift, not restored function). Consequence:
+> a splice number from the `N`-padded path is a **lower bound**, and passing a real
+> `ConstructContext` changes the answer rather than refining it. It licenses **no**
+> threshold change — there are no labels, and a higher score is not a more correct one.
+>
 > ✅ **Tier 3 (GenBank I/O) has landed too** — an annotated reader/writer whose
 > `misc_feature` spans put residual violations on the map the user opens, and whose
 > reader turns an existing vector map into a `ConstructContext`. **Tier 4 has now
