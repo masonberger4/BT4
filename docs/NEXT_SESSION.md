@@ -60,8 +60,8 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 >
 > ⚠️ **And the `N`-padding is not neutral (measured 2026-08-20).** Replacing the
 > adapters' 5,000 literal `N` with real human genomic flank raises the median peak score
-> *inside the CDS* from **0.276 → 0.462**, moving designed sequences across the 0.5
-> cutoff. Controls make it interpretable: three **different** real regions agree to three
+> *inside the CDS* from **0.276 → 0.369** (same 9-sequence set), moving designed
+> sequences across the 0.5 cutoff. Controls make it interpretable: three **different** real regions agree to three
 > decimals (real context is a stable background), random uniform ACGT scores *below* `N`
 > (so it is not "any bases beat `N`"), and a composition-matched **shuffle inflates
 > scores 9/9** (so the lift is distribution shift, not restored function). Consequence:
@@ -189,6 +189,17 @@ better than joint folding that does not — so **construct context comes first**
 LinearDesign-class joint design stays a separate track with its own design doc.
 
 ## Next-task queue
+
+> ⚠️ **NEW, unqueued defect (found 2026-08-20): the splice path is organism-blind.**
+> Neither `api.splice_audit` nor `api.splice_crosscheck` takes an organism, so BT4 will
+> run **Pangolin's human heart/liver/brain/testis heads** on an *E. coli* or *B. subtilis*
+> design and print a risk. Bacteria have no spliceosome; the number is not weak evidence,
+> it is **inapplicable**. This got worse in #120, which added *B. subtilis* and
+> *K. phaffii* as selectable organisms. Same shape applies to IVT-mRNA/saRNA delivery,
+> which never enters the nucleus and so never meets the spliceosome. Fix by labelling
+> **inapplicable** rather than deleting — one CDS routinely moves plasmid → mRNA → AAV —
+> but do not print a risk. §5-shaped: an inapplicable model output presented as a result.
+
 
 Ordered. Each item is tagged by precondition. **Pick the first `self-contained`
 item unless you have a reason not to.** Full evidence and file:line anchors for

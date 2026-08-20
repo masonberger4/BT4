@@ -377,8 +377,8 @@ aborting with "no feasible codon".
   and lowering the background to make the signal reappear is forbidden: it is the same
   uncalibrated knob pointed somewhere more flattering. **And the `N`-padding is not
   neutral either:** measured, replacing the adapters' 5,000 literal `N` with real human
-  genomic flank raises the median peak score inside the CDS from **0.276 to 0.462**,
-  enough to move designed sequences across the 0.5 cutoff — while three *different* real
+  genomic flank raises the median peak score inside the CDS from **0.276 to 0.369**
+  on the same 9-sequence set, enough to move designed sequences across the 0.5 cutoff — while three *different* real
   regions agree to three decimals and a shuffled control (same composition) inflates
   scores in 9 of 9, so the effect is distribution shift, not "any bases beat `N`". A
   splice number computed on the `N`-padded path is a **lower bound** on that model's

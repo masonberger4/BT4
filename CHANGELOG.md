@@ -7,6 +7,30 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **Overstated the `N`-padding effect by roughly 2×, via a set mismatch.** `CLAUDE.md` §6,
+  `NEXT_SESSION.md` and the review doc all read *"median peak inside the CDS 0.276 →
+  0.462"*. That paired arm A's median over the **9-sequence** main set with **0.4622**,
+  which is *one protein's* value from the **3-sequence replication** — different sets, and
+  the pairing ran in the flattering direction. The same-set figure is **0.2757 → 0.3691,
+  +0.093**. The finding survives; its magnitude did not.
+
+### Measured
+- **These models do not need 5 kb of flank, and the construct-size objection does not
+  disqualify them.** Receptive field is not requirement: detection of a planted textbook
+  donor **saturates at ~100–250 nt** of real flank (0.5447 at zero → 0.6224 at 250 nt →
+  0.6561 at 5,000 nt; twenty times more context buys ~5%). A 1.5 kb CDS in a 4.7 kb AAV
+  payload sits well past saturation. Independently corroborated by published context
+  ablations — Jaganathan 2019 (top-k 0.57/0.90/0.93/0.95 at 40/200/1,000/5,000 nt per side)
+  and OpenSpliceAI's retrained series, where 80→400 nt is the large gain and 400 nt→10 kb
+  is worth only a few percent.
+- **…and the earlier flank effect was an extreme-value artifact.** On the same unmodified
+  sequences, the model's response at a *given position* is flat to four decimals across
+  the whole flank range (0.0536 at every length from 0 to 5,000), while the maximum over
+  the *whole CDS* climbs 0.2757 → 0.4622. BT4's `pooled_risk` is top-3 over the whole CDS,
+  so **BT4's aggregation is what is flank-sensitive, not the model's detection** — the same
+  shape as the pooling-hinge and saturating-baseline findings.
+
 ### Measured
 - **The splice candidate ranking is reliable; the delivered pick is not.** Before asking
   whether a splice model ranks synonymous candidates *correctly* — which needs labels nobody
