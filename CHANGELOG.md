@@ -7,6 +7,25 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **`--use-attested-splice` was a dead flag on both `optimize` and `validate`.**
+  `_enable_attested_splice` was defined and **never called**, so the flag parsed,
+  appeared in `--help`, and did nothing: a user who asked for the attested backend
+  still got the uncalibrated one, and was told so only by the very tag they had just
+  tried to change. Only `BT4_SPLICE_USE_ATTESTED=1` in the environment worked. A
+  control that no-ops is worse than an absent one, because it reports an opt-in that
+  did not happen. Wired in `main()` rather than per-subcommand — a per-command call
+  site is exactly how it came to be dead on both. Regression-tested through the
+  observable effect (verified to fail before the fix), not by asserting a call.
+- **The cross-check printed the bare word `calibrated`.** Wiring the flag made that tag
+  reachable from the CLI for the first time, and it named the stronger of the two claims
+  BT4 keeps apart: the splice `calibrated` flag is set by a **fidelity** attestation —
+  the adapter reproduces the published model bit-for-bit — and asserts nothing about
+  whether a score of 0.5 means a 50% chance of splicing. It now reads
+  `fidelity-attested (reproduces upstream; NOT statistically calibrated)`. The adjacent
+  `(top-3 log-odds; uncalibrated)` line was already correct and is unchanged: that
+  describes the pooling scale, which is uncalibrated either way.
+
 ### Added
 - **Three industrial expression hosts: CHO, *B. subtilis* and *K. phaffii*** — taking
   BT4 from nine selectable organisms to **twelve**. Each ships a genome-wide codon

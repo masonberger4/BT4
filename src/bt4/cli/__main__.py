@@ -50,6 +50,13 @@ def _enable_attested_splice(args: argparse.Namespace) -> None:
     The flag sets the same environment variable the library consults, so one
     switch governs every path (CLI, api, Studio) rather than each threading its
     own parameter through.
+
+    Called from :func:`main` for every subcommand. It shipped **defined and never
+    called**, so ``--use-attested-splice`` parsed, appeared in ``--help``, and did
+    nothing on both ``optimize`` and ``validate`` -- a user who asked for the
+    attested backend still got the uncalibrated one and was told so only by a tag
+    they had just tried to change. A control that no-ops is worse than an absent
+    one, because it reports an opt-in that did not happen.
     """
     if getattr(args, "use_attested_splice", False):
         os.environ[api.USE_ATTESTED_SPLICE_ENV_VAR] = "1"
@@ -65,7 +72,17 @@ def _print_splice_crosscheck(dna: str, backend: str) -> None:
     """
     cc = api.splice_crosscheck(dna, backend=backend)
     tags = ["network-derived"] if cc.network_derived else ["local"]
-    tags.append("calibrated" if cc.calibrated else "UNCALIBRATED")
+    # NOT the bare word "calibrated". BT4's splice `calibrated` flag is set by a
+    # *fidelity* attestation -- it certifies that the adapter reproduces the
+    # published model bit-for-bit, and says nothing about whether a score of 0.5
+    # means a 50% chance of splicing. The two are different claims, and the shorter
+    # word is the one a reader will take as the stronger. Naming the actual claim
+    # costs three words and removes the only reading that would be false.
+    tags.append(
+        "fidelity-attested (reproduces upstream; NOT statistically calibrated)"
+        if cc.calibrated
+        else "UNCALIBRATED"
+    )
     lines = [
         f"--- splice cross-check [{cc.backend}] ---",
         "  " + ", ".join(tags) + "; advisory only, NOT part of the run manifest",
@@ -1390,6 +1407,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Parse ``argv`` and dispatch a subcommand; return a process exit code."""
     parser = _parser()
     args = parser.parse_args(argv)
+    # Wired here, in `main`, rather than inside each subcommand: the flag exists on
+    # both `optimize` and `validate`, and a per-command call site is exactly how it
+    # came to be dead on both. One call covers every subcommand that declares it,
+    # and any future one, without a second place to forget.
+    _enable_attested_splice(args)
     if getattr(args, "preset", None):
         try:
             _apply_preset_to_args(args, argv)

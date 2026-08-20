@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -279,3 +280,74 @@ def test_organisms_lists_reference_sets(capsys: pytest.CaptureFixture[str]) -> N
         line for line in out.splitlines() if line.startswith("arabidopsis_thaliana")
     )
     assert "highly_expressed" not in arabidopsis
+
+
+# --------------------------------------------------------------------------- #
+# A user-facing flag must actually do something.
+# --------------------------------------------------------------------------- #
+
+
+def test_use_attested_splice_flag_is_wired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--use-attested-splice`` must have an effect, not merely parse.
+
+    It shipped dead: `_enable_attested_splice` was defined and `--use-attested-splice`
+    was advertised in `--help` on both `optimize` and `validate`, but nothing ever
+    called the helper, so the flag silently did nothing and the cross-check kept
+    printing UNCALIBRATED. A control that parses and no-ops is worse than an absent
+    one -- it tells the user they opted in when they did not.
+
+    Asserted through the observable effect (the env var the library actually
+    consults), not by checking that a function was called, so the test survives the
+    wiring being done a different way.
+    """
+    from bt4 import api
+    from bt4.cli.__main__ import _parser, main
+
+    monkeypatch.delenv(api.USE_ATTESTED_SPLICE_ENV_VAR, raising=False)
+
+    for command in ("optimize", "validate"):
+        monkeypatch.delenv(api.USE_ATTESTED_SPLICE_ENV_VAR, raising=False)
+        argv = (
+            ["optimize", "MAAK", "--use-attested-splice"]
+            if command == "optimize"
+            else ["validate", "ATGGCCGCCAAATAA", "--use-attested-splice"]
+        )
+        # Parse-and-dispatch through `main`, which is where the wiring has to live
+        # for BOTH subcommands; a per-command call site would pass one and fail the
+        # other, which is the shape of the original defect.
+        assert main(argv) == 0, command
+        assert os.environ.get(api.USE_ATTESTED_SPLICE_ENV_VAR) == "1", command
+
+    # Absent the flag, the switch stays untouched -- opting in must remain explicit.
+    monkeypatch.delenv(api.USE_ATTESTED_SPLICE_ENV_VAR, raising=False)
+    assert main(["validate", "ATGGCCGCCAAATAA"]) == 0
+    assert api.USE_ATTESTED_SPLICE_ENV_VAR not in os.environ
+
+    # And the flag is genuinely reachable on both parsers (guards a silent rename).
+    parser = _parser()
+    for command in ("optimize", "validate"):
+        args = parser.parse_args(
+            [command, "MAAK" if command == "optimize" else "ATGGCCGCCAAATAA",
+             "--use-attested-splice"]
+        )
+        assert args.use_attested_splice is True, command
+
+
+def test_crosscheck_never_prints_the_bare_word_calibrated() -> None:
+    """A fidelity attestation must not be reported as statistical calibration.
+
+    Wiring `--use-attested-splice` made this reachable for the first time: with the
+    flag dead, a promoted backend's tag could never be printed from the CLI. The tag
+    read simply "calibrated", which is the stronger of the two claims BT4 keeps
+    apart -- the flag is set by a *fidelity* attestation (the adapter reproduces the
+    published model bit-for-bit) and asserts nothing about whether a score of 0.5
+    means a 50% chance of splicing. Naming the weaker claim explicitly is the whole
+    point; a reader who sees one word will take the stronger reading.
+    """
+    from pathlib import Path as _Path
+
+    source = (
+        _Path(__file__).resolve().parent.parent / "src" / "bt4" / "cli" / "__main__.py"
+    ).read_text(encoding="utf-8")
+    assert '"calibrated" if cc.calibrated' not in source
+    assert "fidelity-attested (reproduces upstream; NOT statistically calibrated)" in source
