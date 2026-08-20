@@ -327,10 +327,21 @@ per-position scores are **not** flat and **not** zero:
 | PDE3A design1 | 0.445 | **0** | 0.0000 | 9.97 |
 
 Every position was nonzero and the native differed from its designs by more than
-twofold. **No position on any sequence reached 0.5** — and `pool_log_odds` sums
+twofold. None of these four reached 0.5 — and `pool_log_odds` sums
 `max(0, logit(p) − logit(background))` with `background = DEFAULT_SITE_PROBABILITY =
 0.5`, so the hinge floored every score to zero before the Δ was taken. The zeros were a
 property of BT4's pooling, reported as a property of the CNN.
+
+> **Correction (2026-08-20).** The sentence that stood here — *"No position on any
+> sequence reached 0.5"* — was **wrong**, and it propagated into `CLAUDE.md` §6,
+> `NEXT_SESSION.md`, the `CHANGELOG`, and three docstrings in `base.py`. It was
+> generalized from the four sequences in the table above to all 93, and this document
+> already contradicted it two sections below: PDE3A's Δ spread of `1.0885` is
+> arithmetically impossible under a hinge at 0.5 unless something cleared 0.5. The
+> full-panel count is in the next section. The finding it was offered as evidence for
+> — that the hinge discards the CNN's signal — survives; the universal quantifier did
+> not, and generalizing a spot check is exactly the §5 failure this repo is built to
+> catch.
 
 The same hinge explains the rest of that run: the `+0.000` rank agreements were Spearman
 correlations of constants, and the `0.000` sign agreement on KRas4B was the sign of zero.
@@ -345,6 +356,40 @@ case.
 Note this is *not* suppression of a long tail: with `top_k = 3` only three positions
 ever contribute, so top-k already excludes the tail. The hinge's only effect on those
 three is to floor them — buying non-negativity at the price of blindness below 0.5.
+
+## The full-panel count, and the defect it exposes in the *other* direction
+
+Every sequence in the panel, both backends, counting positions above the 0.5 pooling
+background:
+
+| backend | Beclin1 | KRas4B | PDE3A | total | peak range |
+|---|---|---|---|---|---|
+| **Pangolin** (opt-in CNN) | 0/31 | 0/31 | **6/31** | **6/93** | 0.088 – 0.748 |
+| **PWM baseline** (`default()`) | 31/31 | 31/31 | 31/31 | **93/93** | 0.981 – 1.000 |
+
+Two findings, and the second was not previously recorded anywhere.
+
+**Pangolin is floored, but not uniformly.** All six clearing sequences are *designs*,
+all of one protein; **no native CDS clears 0.5 in any group**. So the hinge silences the
+CNN on two proteins out of three and passes a sparse, erratic signal on the third —
+which is why PDE3A alone showed a nonzero Δ spread (1.0885) and why that spread should
+never have been read as "the responsive group". Six sequences with one or two clearing
+positions each is not a measurement of anything; it is the tail of a distribution
+poking over an arbitrary line. *(With no labels, the tempting reading — designs
+introducing sites their native lacks — is exactly what this panel cannot support.)*
+
+**The shipped default has the inverse defect, and it is arguably worse.** The PWM
+baseline clears 0.5 on **every sequence**, native included, at peaks of 0.981–1.000. Its
+top-`k` contributions are therefore never hinged, its risk and response coincide to four
+decimals, and it flags a site on **100% of designed coding sequences**. A detector that
+fires on everything is uninformative in precisely the way a detector that fires on
+nothing is — and this one is the backend `bt4.biomodels.splice.default()` returns, so it
+is the path most users are on, and it drives Studio's "distinct splice sites" column.
+
+**One constant is standing in for two different score scales.** 0.5 is simultaneously
+too high for the CNNs and too low for the PWM baseline. No single value fixes both,
+which is the concrete reason deriving an operating point needs data per backend rather
+than one better guess.
 
 ## The fix
 

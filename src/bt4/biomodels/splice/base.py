@@ -300,13 +300,13 @@ class PooledRisk:
     * every position scored at or below :attr:`background`, so the pooling hinge
       floored the whole sequence to zero and the risk is zero **by construction**.
 
-    Nothing distinguished them, and in BT4's own regime the second is the universal
-    case. Measured with the hash-verified Pangolin weights on designed coding
-    sequence, **no position on any sequence exceeded the 0.5 background** -- so every
-    pooled risk was ``0.0``, every ``delta_splicing`` was ``0.0``, and the model's
-    scores (which varied more than twofold between the native and the designs) were
-    discarded in full without a word. The rank agreements computed over those deltas
-    were Spearman correlations of constants.
+    Nothing distinguished them, and in BT4's own regime the second is the common case.
+    Measured with the hash-verified Pangolin weights on designed coding sequence,
+    **only 6 of 93 sequences carried any position above the 0.5 background** -- so for
+    two of the three proteins every pooled risk was ``0.0``, every ``delta_splicing``
+    was ``0.0``, and the model's scores (which varied more than twofold between the
+    native and the designs) were discarded in full without a word. The rank agreements
+    computed over those deltas were Spearman correlations of constants.
 
     This type is the fix: the same number, plus the evidence needed to attribute it.
     A consumer that reports a risk should report :attr:`below_background` with it, and

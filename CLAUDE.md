@@ -359,11 +359,17 @@ aborting with "no feasible codon".
   with **top-k / log-odds pooling** (never saturating noisy-OR, §10.14). **That
   pooling is hinged at an uncalibrated background, and the hinge is load-bearing:**
   `pool_log_odds` counts only positions above `DEFAULT_SITE_PROBABILITY = 0.5`, and
-  measured against the hash-verified Pangolin weights on designed coding sequence
-  **no position on any sequence reached 0.5** — so every pooled risk, and every
-  `delta_splicing`, was identically zero while the underlying scores varied more than
-  twofold. BT4's headline splice objective is therefore **structurally mute in BT4's
-  own regime** until Part B derives a real operating point on data. The rule that
+  **that one constant fails in opposite directions for the two backends that use it.**
+  Measured on the 93-sequence designed-CDS panel: the opt-in **Pangolin** clears 0.5 on
+  only **6 of 93** sequences (all six designs of one protein; no native clears it in any
+  group), so for two of three proteins every pooled risk and every `delta_splicing` is
+  identically zero while the underlying scores vary more than twofold — the signal is
+  discarded. The **PWM baseline that `default()` actually returns** clears it on **93 of
+  93**, peaks 0.981–1.000, so its hinge never binds and it flags a site on *every*
+  designed CDS including the natural one — the signal is saturated. BT4's headline
+  splice objective is therefore **mute on one path and indiscriminate on the other**
+  until Part B derives a real operating point on data; one threshold is standing in for
+  two different score scales. The rule that
   follows: **a pooled risk of zero is never reported alone.** `pooled_risk_detail`
   carries `below_background` / `max_score` so a floored zero is distinguishable from a
   measured one, `pool_top_k_logit` is the background-free ranking statistic that
