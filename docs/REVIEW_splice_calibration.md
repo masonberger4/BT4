@@ -465,6 +465,76 @@ PDE3A `0.100` / `0.667`.
 - **This is not the specificity panel.** Whether a model stays correctly silent on a
   clean designed CDS and correctly flags one carrying a cryptic site still needs labels.
 
+## The N-padding is not neutral — measured (2026-08-20)
+
+The open question after the correction above was whether Pangolin's low band on designed
+CDS is the model's view of the sequence or an artifact of the **5,000 literal `N`** both
+adapters pad with (`pangolin.py`, `spliceai.py` — upstream's own documented convention).
+A low structureless band is what a *broken input* produces too, and nothing had
+separated the two.
+
+Four arms, same designed CDSs, differing **only** in what surrounds them. Scores are
+sliced back to the CDS by `score_in_context`, so every number below describes coding
+positions:
+
+| arm | flank | median peak in CDS | range |
+|---|---|---|---|
+| **A** | `N` × 5,000 (shipped default) | 0.2757 | 0.113 – 0.445 |
+| **B** | random uniform ACGT | **0.1731** | 0.059 – 0.391 |
+| **C** | real human chr1, site-free | **0.3691** | 0.125 – 0.749 |
+| **D** | shuffled chr1 (same composition) | 0.4944 | 0.204 – 0.759 |
+
+*(9 sequences: native + 2 designs per protein. Real flank from the 160 kb chr1 window in
+`big_panel.tsv`, from a stretch carrying no annotated site.)*
+
+**Replication**, because the surprise (D > C) rested on one shuffle draw — 3 designs ×
+{3 *different* real regions, 3 *independent* shuffles of one region}:
+
+| protein | real #1 / #2 / #3 | shuffled #1 / #2 / #3 |
+|---|---|---|
+| Beclin1 | 0.4622 / 0.4622 / **0.4638** | 0.5652 / 0.4913 / 0.5070 |
+| KRas4B | 0.3691 / 0.3691 / **0.3644** | 0.5155 / 0.4349 / 0.4718 |
+| PDE3A | 0.5840 / 0.5840 / **0.5855** | 0.6347 / 0.5820 / 0.6821 |
+
+### What this establishes
+
+- **`N`-padding systematically deflates the model's CDS scores.** Median peak 0.276
+  padded vs 0.462 in real genomic context — and under real flanks several designed CDSs
+  reach or cross 0.5 that never did padded. **So the "everything floors below 0.5"
+  picture is partly an input artifact, not purely a misplaced threshold.** The operating
+  point is less absurdly located than it looked; the input was wrong.
+- **Real genomic context behaves like a stable background.** Three *different* 10 kb
+  regions give peak scores agreeing to three decimal places on every protein. That is
+  the behaviour wanted from a model whose score should describe the CDS: the flank
+  supplies context without dictating the answer.
+- **Shuffled sequence inflates scores, in 9 of 9 comparisons.** A permutation of real
+  genomic sequence is *less* biologically realistic than the original, not more, so a
+  higher score there is a distribution-shift response, not better detection. It is the
+  control that rules out "any real bases beat `N`" — random ACGT (arm B) scores *below*
+  `N`, so the effect tracks composition and structure, not mere non-`N`-ness.
+
+### What it does NOT establish
+
+- **Not that real flanks make the model *right*.** There are no labels here. A higher
+  score is not a more correct score, and "real context raises the peak" is equally
+  consistent with it becoming more false-positive-prone. Direction of *correctness* is
+  unmeasurable on this panel — that is the same wall every label-free result here hits.
+- **Not a threshold.** Nothing here licenses moving `DEFAULT_SITE_PROBABILITY`. It says
+  the number that threshold is applied to depends materially on the flank, which is an
+  argument for supplying the **real construct context** (`ConstructContext`), not for
+  moving the cutoff.
+- **Scope:** one locus (three regions of one chr1 window), 9 sequences in the main arm
+  and 3 in the replication, peak score only. The flank/CDS **seam** is a genuine
+  confound — a real construct has such a junction, but the one used here is arbitrary.
+
+### The consequence for BT4
+
+BT4 already has the seam to fix this: `ConstructContext` carries the 5′UTR and backbone,
+and `score_in_context` routes them to the CNNs. What this measurement adds is that using
+it is **not a refinement — it changes the answer**, by ~0.19 of median peak score, in the
+direction that matters at a 0.5 cutoff. A splice number computed on the `N`-padded path
+should be read as a lower bound on that model's response, not as its estimate.
+
 ## Still to run
 
 - **A specificity panel in BT4's regime**: designed synonymous CDS with *known* splice
