@@ -7,6 +7,51 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **The plain-English RiboNN guide, corrected by an adversarial pass over its own claims.**
+  A four-lens review (executable accuracy / overclaim audit / instructional quality /
+  independent statistical re-derivation) found real defects in the version that shipped,
+  now fixed:
+  - **`tar -xf weights.zip -C models` fails on Linux.** It was lifted from the runbook's
+    Windows `cmd.exe` block into a `bash` block; GNU `tar` cannot read a zip archive, so
+    the reader hit `This does not look like a tar archive` at the download step that gates
+    all of Parts 2-6. Now `unzip -q weights.zip -d models`, with
+    `python -m zipfile -e weights.zip models` as the dependency-free fallback. Both
+    verified; so was the failure.
+  - **It stated the exact misreading of RiboNN's attribution that `CLAUDE.md` §9 warns
+    against** -- "most of RiboNN's signal comes from the UTRs", dropping the load-bearing
+    *per-nucleotide* qualifier. Per nucleotide the split is 67/31/2; **length-integrated it
+    is 22/73/5, so the CDS is the majority.** Both numbers now stated.
+  - **The panel-size Monte Carlo was under-powered.** 92 rows is **51.1% +- 2.5%**
+    (1,500 trials), not the 44% first reported from 200 -- a coin flip, not majority-fail.
+    Table corrected throughout, ~500 rows added as what actually buys ~94%, and the
+    "agrees with the research doc's ~102 rows" claim withdrawn: that figure counts only
+    test-fold noise and ignores the calibration fold's own uncertainty in the conformal
+    width, so it is a lower bound rather than a matching computation.
+  - **The weights are ~200 MB, not ~3 GB** -- an invented figure that appeared in no
+    source.
+  - **The Ranaghan panel was misdescribed** as "31 different ways by real commercial
+    codon-optimization tools". It is 1 native CDS + **three anonymized algorithms run ten
+    times each**, and the panel's own `.LICENSE.md` explicitly forbids mapping them to
+    named commercial tools.
+  - **Two beginner hard-stops:** four `.fa` UTR files were referenced as if they already
+    existed, with no guidance on obtaining them (RiboNN refuses to run without real UTRs);
+    and the decision point gating an afternoon against a research grant gave no numbers.
+    Both fixed -- a "getting your sequences" step with an Ensembl walkthrough, and explicit
+    pre-committed thresholds (`within_over_between` >= 0.2, `median_abs_gc3_spearman`
+    <= 0.7) labelled as BT4's own pre-commitment, not a standard.
+  - Plus: the licence is purpose **and** affiliation (not affiliation instead of purpose);
+    the `max_shift` check now honours `$BT4_RIBONN_WEIGHTS` instead of hard-coding a path
+    it had just told the reader they could change; a one-protein panel now carries a
+    pre-flight stop (the gate exits 2 with `needs at least two distinct groups`, so the
+    outcome row describing it was unreachable); the attestation is **content-hashed, not
+    "signed"**; the r2 = 0.17-0.19 figure regained its "0.49-0.50 after fine-tuning"
+    clause (a reverse overclaim -- it made a null result look more terminal than the
+    evidence supports); the splice side was wrongly described as having "exactly the same
+    gap" when its `verified_predictor` *is* called behind an opt-in; three off-by-one step
+    cross-references and one dead anchor; and glossary entries for r2, GC3, CAI, tAI and
+    `top_k`, each of which had been used as load-bearing content while undefined.
+
 ### Added
 - **A plain-English walkthrough for the RiboNN calibration job**
   (`docs/GUIDE_ribonn_calibration.md`). `DESIGN_ribonn_calibration.md` is an expert
