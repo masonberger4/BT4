@@ -498,9 +498,17 @@ positions:
 
 ### What this establishes
 
-- **`N`-padding systematically deflates the model's CDS scores.** Median peak 0.276
-  padded vs 0.462 in real genomic context — and under real flanks several designed CDSs
-  reach or cross 0.5 that never did padded. **So the "everything floors below 0.5"
+- **`N`-padding systematically deflates the model's CDS scores.** On the **same
+  9-sequence set**, median peak **0.2757 padded vs 0.3691** in real genomic context
+  (+0.093) — and under real flanks several designed CDSs reach or cross 0.5 that never
+  did padded (arm C's range extends to 0.749, arm A's stops at 0.445).
+
+  > **Correction (2026-08-20).** This bullet, and the copies in `CLAUDE.md` §6 and
+  > `NEXT_SESSION.md`, previously read **"0.276 → 0.462"**. That paired arm A's median
+  > over the **9-sequence** main set with **0.4622**, which is *one protein's* value from
+  > the **3-sequence replication** below — a set mismatch, and in the flattering
+  > direction, roughly doubling the stated effect. The same-set figure is **+0.093**. The
+  > finding survives; its magnitude was overstated. **So the "everything floors below 0.5"
   picture is partly an input artifact, not purely a misplaced threshold.** The operating
   point is less absurdly located than it looked; the input was wrong.
 - **Real genomic context behaves like a stable background.** Three *different* 10 kb
@@ -707,6 +715,67 @@ If splice Δ were ever routed into candidate *selection*, the delivered sequence
 with a retrained Pangolin or a different tissue in 2 of 3 proteins here. That is an argument
 for reporting the ranking with its near-ties visible — not for treating the argmax as a
 decision.
+
+## How much flank do these models actually need? — measured (2026-08-20)
+
+Prompted by a design question: gene-therapy payloads cap at ~4.7 kb (AAV) to ~10 kb (LVV),
+so if a model with a 10,000 nt receptive field *requires* 5,000 nt each side, it is the
+wrong tool for BT4. **Receptive field is not requirement**, and the difference is testable.
+
+Detection of a planted textbook donor (the #124 ladder) against available real flank:
+
+| flank/side | host baseline | planted donor | lift |
+|---|---|---|---|
+| **0** (`N`-padded, shipped) | 0.0532 | 0.5447 | 10.2× |
+| 100 | 0.0539 | 0.6042 | 11.2× |
+| 250 | 0.0538 | 0.6224 | 11.6× |
+| 1,000 | 0.0532 | 0.6129 | 11.5× |
+| **1,500** (AAV-scale) | 0.0528 | 0.6216 | 11.8× |
+| 5,000 | 0.0522 | 0.6561 | 12.6× |
+
+**Detection saturates around 100–250 nt.** Twenty times more context (250 → 5,000) buys
+about 5%. A 1.5 kb CDS inside a 4.7 kb AAV payload has ~1.6 kb of real promoter/UTR/polyA
+on each side — comfortably past saturation.
+
+**Independently corroborated by published ablations**, which BT4 had not previously cited:
+Jaganathan et al. 2019 trained SpliceAI at 40 / 200 / 1,000 / 5,000 nt per side for top-k
+**0.57 / 0.90 / 0.93 / 0.95**; OpenSpliceAI (Chao et al., eLife 2025) retrained at all four
+lengths and reports 80→400 nt as the large gain (+62% donors / +74% acceptors) with
+400 nt→2 kb and 2 kb→10 kb each worth only ~3–4%. *(Cited from a literature sweep, not
+verified against the primary sources here — check before relying on the exact figures.)*
+
+### And the earlier flank effect was an extreme-value artifact, not a change in response
+
+Two statistics on the *same unmodified sequences*:
+
+| flank/side | **LOCAL** (max over a 13 nt window) | **GLOBAL** (max over the whole CDS) |
+|---|---|---|
+| 0 | 0.0536 | 0.2757 |
+| 250 | 0.0535 | 0.3666 |
+| 1,500 | 0.0537 | 0.4333 |
+| 5,000 | 0.0536 | 0.4622 |
+
+**The model's response at any given position is flat to four decimal places across the
+entire flank range.** What moves is the maximum over hundreds of positions — an
+extreme-value statistic, which a small distribution shift relocates substantially. BT4's
+`pooled_risk` is top-3 over the whole CDS, so **it is BT4's aggregation that is
+flank-sensitive, not the model's detection.** Same shape as the pooling-hinge and
+saturating-baseline findings above: the defect is in what BT4 computes from the scores.
+
+### Consequence for tool fit
+
+The 10 kb receptive field exists to model **gene architecture** — pairing a donor with an
+acceptor across a long intron, using exon/intron context to reject decoys. BT4 does not ask
+that question. It asks *"did my redesign create something that looks like a splice site?"*,
+which is **local** and saturates well inside any construct BT4 will ever design.
+
+So the construct-size objection does not disqualify these models for **site localization**.
+It does bear on the whole-CDS pooled risk, which was already the part with no defensible
+operating point.
+
+**Caveat:** n=4 per flank length (2 hosts × 2 positions), planted positives only. The
+saturation point is approximate; the qualitative conclusion — well below 5 kb — is robust
+across every host and position tried.
 
 ## Still to run
 
