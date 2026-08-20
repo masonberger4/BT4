@@ -8,6 +8,30 @@ its first tagged release.
 ## [Unreleased]
 
 ### Fixed
+- **Corrected a false claim this project had just written into its own constitution.**
+  Nine places across six files asserted that on the designed-CDS panel *"no position on
+  any of 93 sequences reached 0.5"* — `CLAUDE.md` §6, `docs/NEXT_SESSION.md` (×2), the
+  `CHANGELOG`, `docs/REVIEW_splice_calibration.md`, and three docstrings in
+  `biomodels/splice/base.py`. It was **generalized from a four-sequence spot check to all
+  93**, and the review document already contradicted it two sections later: PDE3A's Δ
+  spread of `1.0885` is arithmetically impossible under a hinge at 0.5 unless something
+  cleared 0.5. Re-measured against the hash-verified weights, the true count is **6 of
+  93** (all six designs of one protein; no native clears it in any group). The finding
+  the claim was offered as evidence for — that the hinge discards the CNN's signal —
+  survives; the universal quantifier did not.
+- **And the same measurement surfaced the inverse defect in the shipped default, which
+  nothing had recorded.** The PWM baseline `bt4.biomodels.splice.default()` returns
+  clears 0.5 on **93 of 93** designed sequences, native included, at peaks of
+  **0.981–1.000** — so its hinge never binds, its risk and response coincide to four
+  decimals, and it **flags a splice site on 100% of designed coding sequences**. A
+  detector that fires on everything is uninformative in exactly the way one that fires on
+  nothing is, and this is the path most users are on: it drives Studio's "distinct splice
+  sites" column. So `DEFAULT_SITE_PROBABILITY = 0.5` is simultaneously **too high for the
+  opt-in CNNs and too low for the shipped baseline** — one constant standing in for two
+  different score scales, which is the concrete reason an operating point has to be
+  derived per backend on data rather than nudged.
+
+### Fixed
 - **`--use-attested-splice` was a dead flag on both `optimize` and `validate`.**
   `_enable_attested_splice` was defined and **never called**, so the flag parsed,
   appeared in `--help`, and did nothing: a user who asked for the attested backend
@@ -77,7 +101,8 @@ its first tagged release.
   against the hash-verified Pangolin weights on the designed-CDS panel, **no position on
   any of the 93 sequences reached 0.5** — peak scores ran 0.128–0.445 and differed more
   than twofold between a native CDS and its synonymous redesigns, and every one of them
-  pooled to a risk of exactly `0.0`. So `delta_splicing` was identically zero for every
+  pooled to a risk of exactly `0.0`. *(Corrected below: that count was generalized from a
+  four-sequence spot check and is wrong — the true figure is 6 of 93.)* So `delta_splicing` was identically zero for every
   candidate, the cross-backend rank agreements computed from those deltas were Spearman
   correlations of constants, and none of it was visible: a pooled risk of `0.0` meant
   either "no risk" or "nothing cleared an uncalibrated cutoff", with nothing telling the

@@ -43,8 +43,11 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > ⚠️ **BT4's splice risk pooling was structurally mute in BT4's own regime, and is now
 > honest about it (2026-08-19).** `pool_log_odds` counts only positions above
 > `DEFAULT_SITE_PROBABILITY = 0.5`; measured against the hash-verified Pangolin weights
-> on the designed-CDS panel, **no position on any of 93 sequences reached 0.5**, so every
-> `delta_splicing` was identically zero while the raw scores varied more than twofold.
+> on the designed-CDS panel, **only 6 of 93 sequences carry any position above 0.5**
+> (all six designs of one protein), so `delta_splicing` was identically zero for two of
+> three proteins while the raw scores varied more than twofold — and the **PWM baseline
+> `default()` returns clears 0.5 on 93 of 93**, peaks 0.981–1.000, so the same constant
+> saturates the shipped path while flooring the opt-in one.
 > The background was **deliberately not lowered** (same uncalibrated knob, better view).
 > Landed instead: `pool_top_k_logit` (background-free ranking statistic, **not a risk**),
 > `PooledRisk` / `pooled_risk_detail` (a zero is now attributable), pooling coupled to
@@ -382,8 +385,10 @@ items 1–3 are in
     **Part B now has a concrete, measured stake beyond "the score is uncalibrated".**
     The shipped operating point does not merely risk being *wrong* — at `0.5` it makes
     BT4's entire splice objective **inert in BT4's own regime**. Measured with the
-    hash-verified Pangolin weights on the designed-CDS panel, no position on any of 93
-    sequences reached 0.5, so every `delta_splicing` was exactly zero. That is now
+    hash-verified Pangolin weights on the designed-CDS panel, only 6 of 93 sequences
+    carry a position above 0.5, so `delta_splicing` was exactly zero for two of the
+    three proteins — while the PWM baseline clears 0.5 on all 93, so the one constant
+    floors the CNN and saturates the default. That is now
     *reported* honestly (`pool_top_k_logit`, `PooledRisk.below_background`; see
     [`REVIEW_splice_calibration.md`](REVIEW_splice_calibration.md)) but not *fixed* — a
     defensible replacement cannot be picked without labeled data, which is what makes
