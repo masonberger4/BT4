@@ -615,6 +615,99 @@ instrument under the "blind" branch. What the ladder points at instead is the **
 point** — a cutoff sitting above the model's response to a real weakened donor — and
 that is derived on labelled data, not trained.
 
+## Is the candidate ranking signal or ensemble noise? — measured (2026-08-20)
+
+Step 4. BT4 hands the user **one** candidate. Before asking whether a splice model ranks
+*correctly* — which needs labels nobody has — there is a prior question that needs none:
+**is the ranking stable at all, or is it ensemble noise?** A ranking that changes with the
+training seed cannot be right even in principle, and that is refutable without ground truth.
+
+Pangolin's prediction is the mean of **12 members = 3 CV folds × 4 tissues**. Those tracks
+were retained separately (the adapter averages them at `pangolin.py:511-514` and exposes no
+per-member seam) and scored under real chr1 flank, per #123.
+
+**A naive split-half was the wrong design and was discarded.** Folds are re-training
+replicates — their disagreement is *noise*. Tissues are different biological targets —
+their disagreement is *signal about heterogeneity*. A random 6/6 split averages the two
+into an uninterpretable number. The correct instrument is a **two-facet generalizability
+study** that separates them.
+
+### Floor census — why the ranking statistic had to change first
+
+| protein | (candidate, member) cells floored by the 0.5 hinge | candidates floored on **all 12** members |
+|---|---|---|
+| KRas4B | 242/360 (67.2%) | 7/30 |
+| Beclin1 | 204/360 (56.7%) | 5/30 |
+| PDE3A | 138/360 (38.3%) | 6/30 |
+
+Between a third and two thirds of every measurement is destroyed by the hinge, and 5–7
+candidates per protein are identically zero on every member. Nothing can be ranked on that.
+All statistics below use the background-free `pool_top_k_logit`.
+
+### Variance components and the generalizability coefficient
+
+`y_ift = μ + a_i + φ_f + τ_t + (aφ)_if + (aτ)_it + (φτ)_ft + e_ift`, n=30 designs, 3 folds,
+4 tissues, one observation per cell. `Eρ² = σ²_a / (σ²_a + σ²_δ)`.
+
+| protein | σ²_a (candidate) | σ²_a×fold | σ²_a×tissue | σ²_res | **Eρ² U1** | **Eρ² U2** |
+|---|---|---|---|---|---|---|
+| KRas4B | 2.4984 | 0.0811 | 0.1737 | 0.4300 | 0.975 | **0.959** |
+| Beclin1 | 1.6203 | 0.2125 | 0.3466 | 0.2363 | 0.947 | **0.901** |
+| PDE3A | 1.7866 | 0.1020 | 0.2267 | 0.2249 | 0.971 | **0.942** |
+
+*U1 = retraining universe (tissue fixed); **U2 = tissue-general**, the headline, because BT4
+never asks the user for a tissue and so implicitly claims tissue-generality.*
+
+**The ranking is not noise.** True candidate variance exceeds every error term by 5–10×, and
+Eρ² = 0.90–0.96 under the stricter universe. Corroborated by the structured splits, which
+are reported instead of a random one: **fold-vs-fold Spearman +0.861 to +0.970** (three
+pairwise, each half holding all four tissues), **tissue-vs-tissue median +0.827 to +0.891**
+(range down to +0.685). Tissue disagreement exceeds fold disagreement in all three proteins
+— σ²_a×tissue is about **2× σ²_a×fold** — which is heterogeneity behaving like heterogeneity,
+not a defect.
+
+*(A Jensen check: pooling is convex, so average-then-pool and pool-then-average need not
+agree. Here they do — Spearman +0.989 to +0.996 — so the ordering does not depend on which
+was used.)*
+
+### But the delivered **pick** is not stable, and that is what BT4 ships
+
+A reliable ordering does not imply a stable winner, because the top candidates are near-ties:
+
+| protein | pick changes across 3 folds? | across 4 tissues? | where those picks sit in the full ensemble's own ranking |
+|---|---|---|---|
+| KRas4B | **yes**, 2 distinct | **yes**, 2 distinct | ranks 0–1 of 30 |
+| Beclin1 | **yes**, 3 distinct | **yes**, 3 distinct | ranks 0, 2, **6, 7** of 30 |
+| PDE3A | no — stable | no — stable | rank 0 |
+
+In 2 of 3 proteins the candidate BT4 would deliver **depends on Pangolin's fold and tissue
+configuration**. Beclin1 is the worst case and also the lowest Eρ² (0.901): under one tissue
+the winner is a sequence the full ensemble ranks **7th of 30**.
+
+### What this establishes, and what it does not
+
+- **Establishes:** the instrument is not noise-limited. One failure mode — "the ranking is
+  ensemble noise" — is **excluded**, and no assay was needed to exclude it.
+- **Sharpens an earlier result:** the low cross-backend agreement with the PWM baseline
+  (+0.614 / +0.195 / +0.162) cannot be explained by Pangolin being unstable, since Pangolin's
+  own ranking is highly reliable. The two backends genuinely disagree, and **one of them is
+  wrong** — with the prior against the baseline that flags a site every ~14 nt and rates the
+  natural gene worst.
+- **Does NOT establish that the ranking is correct.** Reliability is not validity: a ranking
+  can be perfectly reproducible and perfectly wrong. Every member shares an architecture and
+  most of its training data, so a shared blind spot is invisible to all of this.
+- **Scope:** Pangolin only (SpliceAI is not installed on this machine), 3 proteins × 30
+  designs, one flank locus, donors and acceptors pooled. Aggregating Eρ² across only three
+  protein clusters is not meaningful, so per-protein values are reported and no pooled CI is
+  offered.
+
+### Consequence
+
+If splice Δ were ever routed into candidate *selection*, the delivered sequence would change
+with a retrained Pangolin or a different tissue in 2 of 3 proteins here. That is an argument
+for reporting the ranking with its near-ties visible — not for treating the argmax as a
+decision.
+
 ## Still to run
 
 - **A specificity panel in BT4's regime**: designed synonymous CDS with *known* splice

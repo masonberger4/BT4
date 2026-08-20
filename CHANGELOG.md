@@ -8,6 +8,33 @@ its first tagged release.
 ## [Unreleased]
 
 ### Measured
+- **The splice candidate ranking is reliable; the delivered pick is not.** Before asking
+  whether a splice model ranks synonymous candidates *correctly* — which needs labels nobody
+  has — there is a prior question needing none: is the ranking stable, or ensemble noise? A
+  ranking that changes with the training seed cannot be right even in principle. Pangolin's
+  12 members (3 CV folds × 4 tissues) were retained separately and analysed as a **two-facet
+  generalizability study**; a naive split-half was designed, critiqued, and **discarded**,
+  because folds are re-training replicates (noise) while tissues are different biological
+  targets (signal), and a random split averages the two into an uninterpretable number.
+  Result: **Eρ² = 0.959 / 0.901 / 0.942** (tissue-general universe) across the three
+  proteins, with true candidate variance exceeding every error term by 5–10×; fold-vs-fold
+  Spearman +0.861 to +0.970, tissue-vs-tissue median +0.827 to +0.891, and σ²(candidate ×
+  tissue) about **2×** σ²(candidate × fold) — heterogeneity behaving like heterogeneity.
+  **One failure mode is excluded with no assay required.**
+- **…but a reliable ordering does not give a stable winner.** The top candidates are
+  near-ties, and in **2 of 3 proteins the argmax changes** with the fold or tissue used;
+  Beclin1's worst case delivers a sequence the full 12-member ensemble ranks **7th of 30**.
+  If splice Δ were routed into candidate *selection*, the delivered sequence would depend on
+  Pangolin's configuration. This also sharpens the earlier low agreement with the PWM
+  baseline: Pangolin's own ranking is stable, so the disagreement is substantive rather than
+  Pangolin being noisy, and one of the two is wrong. **Reliability is not validity** — a
+  ranking can be perfectly reproducible and perfectly wrong; every member shares an
+  architecture and most of its training data, so a shared blind spot is invisible to all of
+  this. A **floor census** justifies the statistic switch: the 0.5 hinge destroys 38–67% of
+  all (candidate, member) cells and floors 5–7 of 30 candidates on **every** member, so
+  nothing can be ranked on the hinged risk.
+
+### Measured
 - **The splice CNNs are not blind on designed coding sequence — measured with a graded
   implantation ladder.** The open question after the `N`-padding result was whether
   Pangolin is *blind* inside a designed CDS or *correctly silent* because there is no

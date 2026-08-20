@@ -81,6 +81,17 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > which is derived on labelled data, not trained. It does **not** establish correct
 > silence — detecting a site BT4 planted says nothing about sites nobody put there.
 >
+> ✅ **The candidate ranking is reliable, but the delivered PICK is not (measured
+> 2026-08-20).** A two-facet generalizability study over Pangolin's 12 members (3 folds ×
+> 4 tissues) — the fold/tissue split matters, folds are re-training noise while tissues are
+> biology, so a random split-half is uninterpretable — gives **Eρ² = 0.959 / 0.901 / 0.942**
+> under the tissue-general universe. Candidate variance beats every error term 5–10×, so
+> **"the ranking is ensemble noise" is excluded without any labels**. But the top candidates
+> are near-ties: in **2 of 3 proteins the argmax changes** with fold or tissue, and Beclin1's
+> worst case delivers a sequence the full ensemble ranks **7th of 30**. Also sharpens the
+> low PWM agreement: Pangolin is *stable*, so the disagreement is substantive and one of the
+> two is wrong. **Reliability is not validity** — a ranking can be reproducible and wrong.
+>
 > ✅ **Tier 3 (GenBank I/O) has landed too** — an annotated reader/writer whose
 > `misc_feature` spans put residual violations on the map the user opens, and whose
 > reader turns an existing vector map into a `ConstructContext`. **Tier 4 has now
