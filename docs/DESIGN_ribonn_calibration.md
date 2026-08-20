@@ -5,6 +5,14 @@
 > claim here lives in
 > [`RESEARCH_ribonn_calibration.md`](RESEARCH_ribonn_calibration.md); this file is
 > the runbook. Live status stays in [`NEXT_SESSION.md`](NEXT_SESSION.md), not here.
+>
+> **New to this job? Read [`GUIDE_ribonn_calibration.md`](GUIDE_ribonn_calibration.md)
+> instead** — the same procedure in plain language, step by step, with the free checks
+> pulled to the front. Every command in it was verified against the code (several were
+> executed), and its **Appendix B** lists the places where this file is wrong or
+> under-specified — including a `bt4 expression-gate` invocation that cannot produce the
+> record it asks you to keep, and a panel-size floor at which a *good* head fails more
+> often than it passes.
 
 ## Context
 
@@ -33,7 +41,7 @@ if job 2 succeeds.
 
 | # | Question | Plain meaning | Status |
 |---|---|---|---|
-| 1 | **Runnable / faithful?** | Does BT4's wrapper reproduce RiboNN's own numbers? | ✅ done — the adapter reproduces upstream bit-for-bit |
+| 1 | **Runnable?** | Does BT4's wrapper drive RiboNN and get numbers out of it? | ✅ real end-to-end runs happen against the licensed weights. **Not** a fidelity claim — unlike the splice side there is no RiboNN fidelity gate, capture script or attestation, so "reproduces upstream bit-for-bit" is *not* established (Stage 1.2 exists precisely because the fold semantics are unproven) |
 | 2 | **Discriminating?** | Within one protein, UTRs fixed, does its ordering of synonymous variants match reality? | ❓ **the real question** |
 | 3 | **Calibrated (strict)?** | When it emits a number, is its error bar honestly right ~90% of the time? | ❓ needs #2 first |
 

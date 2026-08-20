@@ -559,7 +559,14 @@ items 1–3 are in
     is [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md)** (Windows/WSL
     install, the free Stage-1 checks, the panel hunt, pre-registration, the gate
     command, and the decision tree), backed by the evidence and corrections in
-    [`RESEARCH_ribonn_calibration.md`](RESEARCH_ribonn_calibration.md). **Remaining
+    [`RESEARCH_ribonn_calibration.md`](RESEARCH_ribonn_calibration.md). **Start instead
+    from [`GUIDE_ribonn_calibration.md`](GUIDE_ribonn_calibration.md)** — the same
+    procedure in plain language with every command verified against the code, the
+    free/weights-free steps pulled to the front, and an Appendix B of the runbook's
+    measured defects (the `bt4 expression-gate` shortcut cannot emit `gate_result.json`;
+    the "~90 rows" panel floor fails a good head **56%** of the time, all of it on the
+    coverage band, so size for **~200**; `$BT4_RIBONN_WEIGHTS` is undocumented anywhere
+    else; and the job-1 "bit-for-bit" ✅ was an overclaim, now corrected). **Remaining
     (human):** run the free sanity checks against the licensed weights, obtain a
     licence-clean regime-matched **CDS-variant** panel — no public dataset fully
     qualifies today, so read §4 of the research doc before spending anything — then
