@@ -1021,3 +1021,69 @@ what `default()` returns today.
   0.3, it is not.
 - **The GC3 correction is measured on one protein with a saturated instrument**, and does
   not license the opposite claim either.
+
+## The one published family that *does* threshold an absolute score with no reference
+
+MaxEntScan's de-novo-creation rules are the only surveyed precedent for BT4's actual
+question — *did this edit create a site?* — scored without a reference model output:
+
+| rule | form |
+|---|---|
+| created site where none existed | `ALT >= 4 bits` (REF = 0) |
+| strengthened existing site | **`ALT >= 1.25 x REF`** |
+| VEP plugin bands | high > 8.5, moderate 6.2–8.5, low < 6.2 bits |
+| MES-NCSS | does the created site **beat the nearest native site**? |
+
+The numeric bit values cannot be copied onto a 0–1 pseudo-probability, but **the structure
+transfers, and it is the same structure the measurements above arrived at independently**:
+a *relative* criterion — score against a local reference — rather than a bare absolute
+constant. It also structurally forbids the tempting cheat of lowering the background to
+make signal reappear, because the reference moves with it.
+
+## Panels, ranked by fit — and the regime gap that none of them close
+
+**No published synonymous-CDS-in-fixed-vector splice panel exists.** Every option is
+regime-*transferred*, and BT4 designs in the models' weakest regime (exonic prAUC 0.419).
+
+| # | panel | N | why it ranks here | licence posture |
+|---|---|---|---|---|
+| 1 | **MaPSy** (Soemedi 2017) | 4,964 exonic | best exonic + **full WT/MT 170-mer sequence pairs**; ~10% splice-altering; 81% patient-tissue concordance | subscription supplement — hash-pin, don't vendor |
+| 2 | **Vex-seq** (Adamson 2018) | 2,059 | **CC BY 4.0** with oligo sequences in Table S1 — the only legally bundleable one | bundle |
+| 3 | **Rosenberg** (2015) | >2M synthetic | the sequence *is* the read; continuous inclusion ratio; fully synthetic | hash-pin |
+| 4 | **MFASS** (Cheung 2019) | 27,733 | 3.8% SDV, 83% outside canonical — but the label is exon **skipping**, the inverse of BT4's cryptic-site **gain** | no LICENSE file — hash-pin |
+| 5 | **SpliceVarDB** (Sullivan 2024) | 50,715 | coordinates + label, **not the tested sequence** | external check only |
+| 6 | **BRCA1-SGE** (Findlay 2018) | ~4,000 | label conflates splicing with protein LoF + NMD | weak fit |
+
+## The perturbation ladder, completed
+
+The donor arm exists (#124) and the acceptor arm is measured above. Two rungs the
+literature says are load-bearing and BT4 does not yet have:
+
+- **`GT`→`GC` (+2 T>C) — the graded rung.** 15–18% of canonical `GT` donors converted to
+  `GC` remain functional, producing 1–84% of normal transcripts (Lin et al., *Hum Mutat*
+  2019). Its true effect is **partial**, so it tests whether the model responds in a graded
+  rather than binary way — and a fixed cutoff that mis-calls the ~1-in-6 functional `GC`
+  sites fails exactly the hazard this document is about.
+- **Polypyrimidine-tract disruption with the `AG` left intact.** Measured above (A3, 0.0856,
+  1.6×): Pangolin *is* sensitive to it. A model responding only to the `AG` and blind to
+  C/T-richness would be under-reading what these CNNs were shown to use.
+
+Correct readout for the whole panel: near-ceiling at planted consensus anchors,
+**monotonically decreasing** consensus → weakened → knockout, **graded** at the `GT`→`GC`
+and PPT rungs, collapse at the `+1` and `AG` knockouts, and **flat at negative controls**.
+Failure of monotonicity or gradedness is a red flag with no wet-lab label required.
+
+**Flanks must be held fixed across the panel.** Flank content is a measured
+distribution-shift source in both directions — real genomic flank raises the peak, more
+designed CDS lowers it — so varying it within a panel confounds every rung.
+
+## Numbers this document must not cite as fact
+
+Surfaced by adversarial verification of the literature sweep:
+
+- **"SpliceAI 0.5 ≈ 5% false-positive rate" is unsupported.** The paper reports a
+  validation rate (~75%) and sensitivity (71% near-exon, 41% deep-intronic), not an FPR.
+- **"8,451 true donors" is a transcription error for 8,415** (Yeo & Burge 2004; 179,438
+  decoys, so the decoy:true ratio is ~21:1).
+- **MaxEntScan "weak < 6 / strong > 8 bits" is an informal heuristic**, not a primary
+  convention; wild-type donors run ~8 ± 2 bits.
