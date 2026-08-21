@@ -509,8 +509,11 @@ the `all_calibrated is False` assertions stay green.
 - `default()` **still** returns `ConsensusPwmSplicePredictor` — the test that proves
   promotion stayed opt-in.
 
-`tests/test_splice_attestation.py` hardcodes `_VERSION = "0.4.0"`; make it read
-`bt4.__version__` so it does not rot at the next bump.
+`tests/test_splice_attestation.py` used to hardcode `_VERSION = "0.4.0"`; it now reads
+`bt4.__version__`, so the synthetic attestations these tests build do not rot at a
+release. (Done in v0.5.0 — the bump that would have rotted them. The *bundled*
+attestations legitimately keep the version that produced them: rewriting that field to
+match the running build would falsify the one thing it records.)
 
 **Docs** — CLAUDE.md §6 and [`NEXT_SESSION.md`](NEXT_SESSION.md) in the *same*
 change (§10.11): item #10 comes off `[BLOCKED-human]`, the CNN status-board row

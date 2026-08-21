@@ -19,6 +19,7 @@ import json
 
 import pytest
 
+import bt4
 from bt4.biomodels.splice import (
     AttestationError,
     ConsensusPwmSplicePredictor,
@@ -34,7 +35,14 @@ from bt4.biomodels.splice import (
 from bt4.biomodels.splice.pangolin import PINNED_WEIGHT_SHA256 as PANGOLIN_PINS
 from bt4.biomodels.splice.spliceai import PINNED_WEIGHT_SHA256 as SPLICEAI_PINS
 
-_VERSION = "0.4.0"
+_VERSION = bt4.__version__
+"""The producing version stamped into the *synthetic* attestations these tests build.
+
+Read from the package rather than hardcoded, so it does not rot at a release
+(`docs/DESIGN_splice_cnn_calibration.md` asked for exactly this). Nothing here pins a
+content hash to a literal -- the hash tests compare attestations to each other -- so
+the value is free to move with the version.
+"""
 
 
 def _passing_pangolin_attestation() -> FidelityAttestation:
