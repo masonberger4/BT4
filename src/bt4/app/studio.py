@@ -3650,9 +3650,10 @@ def main() -> int:
         # Headless startup check used by the packaging CI. Constructing
         # StudioWindow already exercised the things that break a frozen bundle --
         # bundled-resource loading (available_organisms), the Qt platform plugin,
-        # and pyqtgraph -- so flush pending events, then run one real design
-        # (_self_test_engine, which raises on failure) and exit 0 without entering
-        # the blocking event loop. Lets CI assert the packaged app opens AND works.
+        # and pyqtgraph -- so flush pending events, then design a real sequence
+        # (_self_test_engine: two solves that must differ, plus the bundled
+        # attestations; it raises on failure) and exit 0 without entering the
+        # blocking event loop. Lets CI assert the packaged app opens AND works.
         app.processEvents()
         _self_test_engine()
         return 0
