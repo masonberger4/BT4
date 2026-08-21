@@ -196,10 +196,42 @@ From here on you need the licence from Step 1. The weights themselves are about
 RiboNN is a research codebase from Sanofi. You do **not** need to run its `Makefile`;
 BT4 loads it directly.
 
-> **First you need `mamba`.** It is a package manager for scientific Python. Check with
-> `mamba --version`; if that errors, install
-> [Miniforge](https://github.com/conda-forge/miniforge), close your terminal, and open a
-> new one.
+> **You need conda, and you probably already have it.** Miniconda, Anaconda and Miniforge
+> all work. Check with `conda --version`; if that errors, install
+> [Miniforge](https://github.com/conda-forge/miniforge) or Miniconda, close your terminal,
+> and open a new one.
+>
+> **Which one you have changes two small things.** Miniforge sets conda-forge as its
+> default *and only* channel and ships `mamba` already, so a Miniforge user can skip the
+> next paragraph. On Miniconda/Anaconda the `defaults` channel is still consulted when
+> creating an environment from a file — RiboNN's `environment.yml` lists `conda-forge` but
+> no `nodefaults` — so if you would rather not involve Anaconda's channel at all, add a
+> `- nodefaults` line to its `channels:` list before running `conda env create`. Either
+> way the packages you get come from conda-forge.
+>
+> **`mamba` is optional.** It is a faster drop-in for `conda`, and RiboNN's own docs
+> assume it. If `mamba --version` errors, either use `conda` wherever this guide says
+> `mamba` — the commands are otherwise identical — or install it once with
+> `conda install -n base -c conda-forge mamba -y`. You are not missing speed by using
+> `conda`: since **conda 23.10** the libmamba solver is conda's default ("With this
+> 23.10.0 release we are changing the default solver of conda to conda-libmamba-solver!"),
+> so a current conda already solves the way mamba does. Only on an older conda is it worth
+> running `conda install -n base -c conda-forge conda-libmamba-solver -y` and
+> `conda config --set solver libmamba`.
+
+> ⚠️ **Do not reuse an environment you built for Pangolin or SpliceAI.** RiboNN's
+> `environment.yml` pins **torch 1.13.1** and **numpy 1.22.4** exactly, while BT4's
+> `splice-pangolin` extra declares **torch >= 2.2** — so installing that extra here would
+> upgrade torch straight off RiboNN's pin. (Upstream Pangolin itself declares no torch
+> floor at all; `torch>=2.2` is BT4's own, shared with the `[ml]` extra. Whether Pangolin
+> runs on torch 1.13.1 is untested — nobody has tried, so treat "they cannot share an
+> environment" as the safe arrangement rather than a measured impossibility.) RiboNN gets
+> its own environment: that is what the `-n RiboNN` below is for, not tidiness. You will install BT4 into this new environment as well as
+> the old one (Step 7); an editable install points both at the same source folder, so
+> nothing is duplicated except the dependency set. The consequence to know: inside the
+> `RiboNN` environment the wrapped splice CNNs are simply not available and BT4 falls back
+> to its PWM baseline, so a single run cannot use Pangolin *and* RiboNN. Run them
+> separately and compare.
 
 ```bash
 git clone https://github.com/Sanofi-Public/RiboNN.git ~/RiboNN
@@ -208,6 +240,15 @@ mamba env create -f environment.yml -y     # if you have an NVIDIA GPU
 conda activate RiboNN
 pip install "setuptools<82"                # works around an upstream bug
 ```
+
+> ⚠️ **Windows: clone into your home folder, not `C:\`.** Use
+> `cd %USERPROFILE%` then `git clone https://github.com/Sanofi-Public/RiboNN.git RiboNN`,
+> giving `C:\Users\<you>\RiboNN`. Step 9's check defaults to `~/RiboNN/models`, so a
+> clone at `C:\RiboNN` makes it look in the wrong place — and that check is the one whose
+> whole job is to fail loudly rather than find nothing. Use **Anaconda Prompt** (or
+> Miniforge Prompt) from the Start menu, not PowerShell: `conda activate` is wired up
+> there and may not be elsewhere. The `\` line continuations below are bash — in
+> `cmd.exe`, put the command on one line.
 
 **No NVIDIA GPU?** Use this instead of the `mamba env create` line:
 
@@ -246,6 +287,19 @@ The zip contains `human/` and `mouse/` at its top level, which is why it is extr
 > `unzip`? Install it (`sudo apt install unzip`), or use
 > `python -m zipfile -e weights.zip models`, which needs nothing extra.
 
+> **Windows form of the same block**, in `cmd.exe`. `tar` and `curl` both ship with
+> Windows 10 and later, so the Linux `tar` caveat above does not apply to you:
+>
+> ```
+> cd %USERPROFILE%\RiboNN
+> mkdir models
+> curl -L -o weights.zip "https://zenodo.org/records/17258709/files/weights.zip?download=1"
+> tar -xf weights.zip -C models
+> dir models\human
+> ```
+>
+> If `tar` complains, `python -m zipfile -e weights.zip models` works anywhere Python does.
+
 > **If you must keep the weights elsewhere** (a different drive, say), point BT4 at them
 > with the `BT4_RIBONN_WEIGHTS` environment variable — an escape hatch that appears in no
 > other document. On Linux and macOS the folder can then have any name; BT4 bridges the
@@ -261,7 +315,7 @@ different Python environments, they can never see each other.
 With the `RiboNN` environment still active:
 
 ```bash
-export BT4_RIBONN_DIR=~/RiboNN          # Windows: set BT4_RIBONN_DIR=C:\RiboNN
+export BT4_RIBONN_DIR=~/RiboNN   # Windows: set BT4_RIBONN_DIR=%USERPROFILE%\RiboNN
 cd /path/to/BT4
 pip install -e ".[expression-ribonn,dev]"
 ```
@@ -284,7 +338,28 @@ check that `~/RiboNN/src/` and `~/RiboNN/models/human/` both exist.
 
 > **Every step from here on runs inside this environment.** If you open a new terminal,
 > run `conda activate RiboNN` and set `BT4_RIBONN_DIR` again before doing anything else —
-> otherwise you are silently running against a different Python.
+> otherwise you are silently running against a different Python. On Windows the variable
+> is set with `set BT4_RIBONN_DIR=%USERPROFILE%\RiboNN` (no spaces around the `=`), and
+> `set` lasts only for that window; `setx BT4_RIBONN_DIR "%USERPROFILE%\RiboNN"` makes it
+> permanent but does **not** affect the window you type it in, so open a new one.
+
+> **If a tool or agent is running these commands for you**, note that `conda activate`
+> changes shell state, and anything that starts a fresh shell per command will silently
+> lose it — running Step 8 against the wrong Python and reporting a confusing error. The
+> stateless form works everywhere and is worth preferring in that setting:
+>
+> ```bash
+> BT4_RIBONN_DIR=~/RiboNN conda run -n RiboNN --no-capture-output python -c "..."
+> ```
+>
+> **Both** pieces of state have to ride along, which is easy to get half-right: `conda
+> run` fixes the interpreter, but it inherits the parent process environment, so a shell
+> that lost the `conda activate` lost the `export` too — and the command then runs the
+> right Python against an unset `BT4_RIBONN_DIR`, failing with "RiboNN clone not found"
+> for a reason that looks nothing like the cause. On Windows, set the variable
+> permanently once (`setx BT4_RIBONN_DIR "%USERPROFILE%\RiboNN"`, then open a new
+> terminal) so every shell inherits it. `--no-capture-output` is what lets you see
+> progress while it runs rather than only at the end.
 
 ### First: getting the sequences you'll need
 
@@ -953,9 +1028,11 @@ proteins that don't exist.
 | # | Trap | Why it hurts |
 |---|---|---|
 | 1 | Two Python environments | BT4 loads RiboNN's code *into itself*. Separate environments can never see each other. |
+| 1b | Reusing your Pangolin/SpliceAI environment | RiboNN pins torch 1.13.1; `splice-pangolin` needs torch >= 2.2. Build RiboNN its own, and install BT4 into both. |
 | 2 | Adding the `[ml]` extra | Pulls in newer PyTorch/NumPy than RiboNN tolerates. |
 | 3 | Weights folder not named `models` | RiboNN hard-codes that name; the fallback needs admin rights on Windows. (On Linux/macOS `$BT4_RIBONN_WEIGHTS` lets any name work.) |
-| 3b | `tar -xf weights.zip` on Linux | GNU `tar` cannot read zip. Use `unzip -q weights.zip -d models`. |
+| 3b | `tar -xf weights.zip` on Linux | GNU `tar` cannot read zip. Use `unzip -q weights.zip -d models`. (Windows `tar` reads zip fine.) |
+| 3c | Cloning to `C:\RiboNN` on Windows | Step 9 defaults to `~/RiboNN/models`, so it looks somewhere else and reports it cannot find `runs.csv`. Clone into `%USERPROFILE%` instead. |
 | 4 | Trusting `('null', 'ribonn')` | Only proves two folders exist. Empty folders pass. |
 | 5 | Forgetting `--within-group` | Measures the wrong thing entirely and wastes the run. Warns on stderr only. |
 | 6 | Forgetting `--recalibrate` | Compares two different scales; error bars become garbage. |
@@ -968,6 +1045,7 @@ proteins that don't exist.
 | 13 | Expecting a green test suite to mean a real run works | Every RiboNN test uses a stand-in. |
 | 14 | Comparing against raw protein output | Re-introduces the exact quantity RiboNN's output divides out. |
 | 15 | Expecting a pass to change things for users *automatically* | It doesn't, by design — but the opt-in exists now (`BT4_EXPRESSION_USE_ATTESTED`, or the Studio checkbox), and a head outside the attested scope is refused rather than quietly downgraded. |
+| 15b | An agent or script running the commands for you | `conda activate` is shell state; a fresh shell per command loses it. Use `conda run -n RiboNN --no-capture-output ...`. |
 | 16 | Committing an attestation for a private panel | It carries the panel hash and a hash per UTR context; a *short* UTR is brute-forceable from its hash. Use `$BT4_EXPRESSION_ATTESTATION` locally instead. |
 
 ---
@@ -1029,7 +1107,23 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
     cross-checks against the panel's own columns where it has them. The gate additionally
     refuses a cell-type or species mismatch *before* it scores, so the run-once budget is
     not spent on a wrong-scope answer. Steps 18 and 20 are rewritten accordingly.
-14. **"Nothing calls `verified_predictor`"** — true when this guide landed, and the reason
+14. **Windows guidance was thinner than the Linux path, and one line of it was wrong.**
+    Verified against the code while walking a maintainer through a real Windows install:
+    Step 7's inline comment suggested `C:\RiboNN`, which puts the weights outside the
+    `~/RiboNN/models` that Step 9's check defaults to — so the very check written to fail
+    loudly would instead report that it could not find `runs.csv`. Steps 5–7 now carry
+    `cmd.exe` forms, the `%USERPROFILE%` clone path, `set` vs `setx`, and the
+    `conda run -n RiboNN --no-capture-output` form for anything running commands in a
+    fresh shell each time.
+15. **Miniforge was presented as a prerequisite.** It is not: Miniconda and Anaconda work
+    identically here, because every command names its channel explicitly and RiboNN's own
+    `environment.yml` pins `conda-forge` itself. `mamba` is a speed convenience, not a
+    requirement — `conda` runs the same commands.
+16. **The Pangolin/RiboNN environment conflict was recorded nowhere.** RiboNN pins torch
+    1.13.1 and `numpy<2`; BT4's `splice-pangolin` extra needs torch >= 2.2. A maintainer
+    who already had a Pangolin environment would reasonably try to reuse it. Step 5 now
+    says not to, and says what the separation costs (no CNN splice audit in the same run).
+17. **"Nothing calls `verified_predictor`"** — true when this guide landed, and the reason
     old Step 21 was titled "the part that still won't work". No longer: the promotion seam
     ships (`BT4_EXPRESSION_USE_ATTESTED`, `$BT4_EXPRESSION_ATTESTATION`, a BT4 Studio
     toggle), and `run_expression_gate.py --attest` writes the record from the same
