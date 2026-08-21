@@ -198,6 +198,12 @@ class RiboNNExpressionModel:
         fidelity_verified: Whether this instance passed the CDS-variant acceptance
             gate; mirrored by :attr:`calibrated`. ``False`` by default and in every
             shipped configuration.
+        attestation_sha256: Content hash of the attestation that promoted this head,
+            or ``""`` when it is uncalibrated. Set **only** by
+            :func:`~bt4.biomodels.expression.attestation.verified_predictor`, and folded
+            into the run manifest so a result steered by a calibrated head records
+            *which* claim authorized it -- two runs promoted by different attestations
+            must not share a provenance stamp (invariant #9).
     """
 
     species: str = "human"
@@ -210,6 +216,7 @@ class RiboNNExpressionModel:
     num_workers: int = 0
     cell_types: tuple[str, ...] = ()
     fidelity_verified: bool = field(default=False)
+    attestation_sha256: str = ""
 
     def __post_init__(self) -> None:
         if self.species not in _SPECIES:

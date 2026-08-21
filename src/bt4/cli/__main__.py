@@ -653,6 +653,7 @@ def _cmd_expression_gate(args: argparse.Namespace) -> int:
         ),
         species=args.species,
         cell_types=tuple(args.cell_types or ()),
+        top_k=args.top_k,
         num_workers=args.num_workers,
         organism=args.organism,
         reference_set=args.reference_set,
@@ -667,10 +668,19 @@ def _cmd_expression_gate(args: argparse.Namespace) -> int:
 
     summary = panel.describe()
     flag = "calibrated" if comparison.backend_calibrated else "UNCALIBRATED"
+    scope = comparison.scope
+    cells = ", ".join(scope.cell_types) or "ALL cell types (no selection)"
     print(f"panel:    {summary['n_rows']} rows / {summary['n_groups']} groups")
     print(f"          sha256 {comparison.panel_hash[:16]}...")
     print(f"backend:  {comparison.backend}  [{flag}]")
     print(f"mode:     {'within-protein' if args.within_group else 'POOLED'}")
+    # The scope is printed because it is part of the result: the same panel scored
+    # against one cell line and against the mean of 78 are different numbers.
+    print(
+        f"scope:    species={scope.species}  cell types={cells}  top_k={scope.top_k}  "
+        f"UTR contexts={len(scope.utr_context_sha256)}"
+    )
+    print(f"readout:  {scope.readout or '(panel declares none, or several)'}")
     print()
     print(f"{'':<14}{'spearman':>10}{'CI low':>9}{'coverage':>10}{'width/IQR':>11}")
     rows = [("HEAD", comparison.head), *((f"  {n}", r) for n, r in comparison.baselines)]
@@ -1211,6 +1221,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     p_gate.add_argument(
         "--bootstrap-resamples", type=int, default=1000, dest="bootstrap_resamples"
+    )
+    p_gate.add_argument(
+        "--top-k", type=int, default=5, dest="top_k",
+        help="cross-validation runs to ensemble; part of the scope an attestation "
+             "binds, so a promotion refuses a head configured differently",
     )
     p_gate.add_argument("--num-workers", type=int, default=0, dest="num_workers")
     p_gate.add_argument("--organism", default="homo_sapiens")

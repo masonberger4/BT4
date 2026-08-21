@@ -36,6 +36,9 @@ from bt4.biomodels.expression import (
 from bt4.biomodels.expression.attestation import _ALLOWED_FIELDS, _pinned_weights
 from bt4.pipeline.expression_gate import GateSettings, run_panel_gate
 
+PANEL_UTR5 = "GCCACC"
+PANEL_UTR3 = "GCTAAT"
+
 
 def _panel(n_groups: int = 10, n_variants: int = 6) -> object:
     """A panel whose within-protein driver is the variant index, not codon content."""
@@ -49,15 +52,20 @@ def _panel(n_groups: int = 10, n_variants: int = 6) -> object:
                     variant_id=f"g{g}v{v}",
                     cds="ATG" + body + "TAA",
                     measured=100.0 * g + v,
-                    utr5="GCCACC",
-                    utr3="GCTAAT",
+                    utr5=PANEL_UTR5,
+                    utr3=PANEL_UTR3,
                 )
             )
     return panel_from_rows(rows)
 
 
-def _passing_comparison() -> object:
-    """An oracle head, gated within-group with a tolerance loose enough to pass."""
+def _passing_comparison(cell_types: tuple[str, ...] = ("HEK293T",)) -> object:
+    """An oracle head, gated within-group with a tolerance loose enough to pass.
+
+    ``cell_types`` is passed to the *gate*, not just declared afterwards: the scope an
+    attestation records is now the run's, so a helper that scored every cell type could
+    no longer file the result as HEK293T.
+    """
     panel = _panel()
     oracle = [row.measured for row in panel.rows]  # type: ignore[attr-defined]
     return run_panel_gate(
@@ -69,6 +77,7 @@ def _passing_comparison() -> object:
             coverage_tolerance=MAX_ATTESTATION_COVERAGE_TOLERANCE,
             bootstrap_resamples=200,
         ),
+        cell_types=cell_types,
         head_scores=oracle,
     )
 
@@ -246,12 +255,12 @@ def test_promotion_refuses_a_different_cell_type_selection() -> None:
     # An attestation earned on HEK293T does not certify a head averaging all 78 cell
     # types -- those are different quantities.
     attestation = _attestation()
-    all_cell_types = RiboNNExpressionModel(species="human", utr5="A", utr3="C")
+    all_cell_types = RiboNNExpressionModel(species="human", utr5=PANEL_UTR5, utr3=PANEL_UTR3)
     with pytest.raises(ExpressionAttestationError, match="different quantity"):
         verified_predictor(all_cell_types, attestation)
 
     other_line = RiboNNExpressionModel(
-        species="human", utr5="A", utr3="C", cell_types=("HeLa",)
+        species="human", utr5=PANEL_UTR5, utr3=PANEL_UTR3, cell_types=("HeLa",)
     )
     with pytest.raises(ExpressionAttestationError, match="attestation covers cell types"):
         verified_predictor(other_line, attestation)
@@ -260,7 +269,7 @@ def test_promotion_refuses_a_different_cell_type_selection() -> None:
 def test_promotion_refuses_a_different_species() -> None:
     attestation = _attestation()
     mouse = RiboNNExpressionModel(
-        species="mouse", utr5="A", utr3="C", cell_types=("HEK293T",)
+        species="mouse", utr5=PANEL_UTR5, utr3=PANEL_UTR3, cell_types=("HEK293T",)
     )
     with pytest.raises(ExpressionAttestationError, match="covers species 'human'"):
         verified_predictor(mouse, attestation)
@@ -271,7 +280,7 @@ def test_promotion_refuses_mismatched_weight_hashes() -> None:
         _attestation(), weight_sha256=(("human/fake/state_dict.pth", "0" * 64),)
     )
     model = RiboNNExpressionModel(
-        species="human", utr5="A", utr3="C", cell_types=("HEK293T",)
+        species="human", utr5=PANEL_UTR5, utr3=PANEL_UTR3, cell_types=("HEK293T",)
     )
     with pytest.raises(ExpressionAttestationError, match="weight hashes do not match"):
         verified_predictor(model, attestation)
@@ -281,7 +290,7 @@ def test_promotion_refuses_a_hand_edited_pooled_or_slack_attestation() -> None:
     # The floors are re-checked at promotion, so editing the JSON after the fact does
     # not buy a calibration.
     model = RiboNNExpressionModel(
-        species="human", utr5="A", utr3="C", cell_types=("HEK293T",)
+        species="human", utr5=PANEL_UTR5, utr3=PANEL_UTR3, cell_types=("HEK293T",)
     )
     base = _attestation()
 

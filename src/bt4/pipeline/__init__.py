@@ -18,6 +18,7 @@ from bt4.pipeline.construct import ConstructAudit, EnzymeOccurrence, audit_const
 from bt4.pipeline.expression_gate import (
     BASELINES,
     GateComparison,
+    GateScope,
     GateSettings,
     run_panel_gate,
     score_panel,
@@ -83,6 +84,7 @@ __all__ = [
     "EnzymeOccurrence",
     "FrontierResult",
     "GateComparison",
+    "GateScope",
     "GateSettings",
     "InfeasibleError",
     "LibraryResult",

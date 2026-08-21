@@ -418,6 +418,181 @@ def test_candidates_worker_forwards_the_predictor() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Expression attestation (the seam that lets an earned calibration reach the UI)
+# --------------------------------------------------------------------------- #
+
+
+def _attestation() -> api.ExpressionAttestation:
+    """A passing attestation for a HEK293T panel, built the only sanctioned way."""
+    rows = [
+        api.PanelRow(
+            group=f"P{g:02d}",
+            variant_id=f"g{g}v{v}",
+            cds="ATG" + ("AAA" * (v + 1)) + ("AAG" * (6 - v)) + "TAA",
+            measured=100.0 * g + v,
+            utr5="GCCACC",
+            utr3="GCTAAT",
+        )
+        for g in range(10)
+        for v in range(6)
+    ]
+    panel = api.panel_from_rows(rows)
+    comparison = api.expression_gate(
+        panel,
+        "null",
+        settings=api.GateSettings(
+            within_group=True, recalibrate=True, coverage_tolerance=0.10,
+            bootstrap_resamples=200,
+        ),
+        cell_types=("HEK293T",),
+        head_scores=[row.measured for row in panel.rows],
+    )
+    return api.attest_expression(
+        comparison, readout="mean_ribosome_load", bt4_version="0.0.0-test"
+    )
+
+
+def test_attestation_toggle_is_disabled_and_explains_what_is_missing() -> None:
+    """With no attestation resolvable, the toggle says why rather than doing nothing."""
+    window = StudioWindow()
+    assert window._expr_attestation is None
+    assert not window.expr_attested_check.isEnabled()
+    tip = window.expr_attested_check.toolTip()
+    # The dead-control rule: name the missing thing AND how to supply it.
+    assert "no expression attestation is available" in tip.lower()
+    assert api.EXPRESSION_ATTESTATION_ENV_VAR in tip
+
+
+def test_attestation_toggle_lights_up_and_names_its_scope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A resolvable attestation enables the toggle and shows what it covers."""
+    import json
+
+    path = tmp_path / "ribonn_attestation.json"
+    path.write_text(json.dumps(_attestation().to_dict()), encoding="utf-8")
+    monkeypatch.setenv(api.EXPRESSION_ATTESTATION_ENV_VAR, str(path))
+
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+
+    assert window._expr_attestation is not None
+    assert window.expr_attested_check.isEnabled()
+    tip = window.expr_attested_check.toolTip()
+    # The scope IS the claim, so it is on the control, not buried in a doc.
+    assert "HEK293T" in tip
+    assert "mean_ribosome_load" in tip
+    assert "REFUSED" in tip
+
+    # And on the page, not only in a tooltip -- plus the species control is pinned to
+    # the attestation while it is honoured, so the form cannot show one scope while the
+    # run uses another.
+    window.expr_attested_check.setChecked(True)
+    assert "HEK293T" in window.expr_scope_label.text()
+    assert window.ribonn_species_combo.currentText() == "human"
+    assert not window.ribonn_species_combo.isEnabled()
+
+    window.expr_attested_check.setChecked(False)
+    assert window.expr_scope_label.text() == ""
+    assert window.ribonn_species_combo.isEnabled()
+
+
+def test_attestation_toggle_promotes_the_head_it_covers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Opting in promotes RiboNN -- but only when configured inside the scope."""
+    import json
+
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(_attestation().to_dict()), encoding="utf-8")
+    monkeypatch.setenv(api.EXPRESSION_ATTESTATION_ENV_VAR, str(path))
+
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+    window.expr_attested_check.setEnabled(True)
+    window.expr_attested_check.setChecked(True)
+    window.utr5_edit.setText("GCCACC")
+    window.utr3_edit.setText("GCTAAT")
+
+    ok, predictor = window._prepare_predictor()
+    assert ok is True
+    assert predictor is not None
+    assert predictor.calibrated is True
+    # The head is built to the attestation's scope, not to whatever the form defaulted
+    # to: averaging all 78 cell types is a different quantity from the one measured.
+    assert predictor.cell_types == ("HEK293T",)
+    assert predictor.species == "human"
+    assert predictor.top_k == 5
+
+
+def test_a_head_outside_the_attested_scope_is_refused_not_downgraded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A UTR context the attestation never covered stops the run and says so.
+
+    Silently handing back an uncalibrated head to someone who ticked "calibrated
+    ranking" is the exact failure this layer exists to prevent, so the run is refused
+    with the mismatch named.
+    """
+    import json
+
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(_attestation().to_dict()), encoding="utf-8")
+    monkeypatch.setenv(api.EXPRESSION_ATTESTATION_ENV_VAR, str(path))
+
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+    window.expr_attested_check.setEnabled(True)
+    window.expr_attested_check.setChecked(True)
+    window.utr5_edit.setText("AAAAAA")  # not the panel's context
+    window.utr3_edit.setText("TTTTTT")
+
+    ok, predictor = window._prepare_predictor()
+    assert ok is False
+    assert predictor is None
+    assert "UTR context" in window.statusBar().currentMessage()
+
+
+def test_the_banner_names_the_scope_when_the_ranking_is_calibrated() -> None:
+    """A calibrated set flips the banner to a ranking -- and says what it covers."""
+    window = StudioWindow()
+    window._expr_attestation = _attestation()
+
+    worker = CandidatesWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        steps=5,
+        n=6,
+        repeat_variants=0,
+        include_cnns=False,
+    )
+    uncalibrated = worker.compute().candidate_set
+    # Re-label the same set as if a promoted head had produced it, so this test pins the
+    # RENDERING rule without needing the licensed weights a real promotion would score
+    # with (the promotion path itself is covered in test_expression_promotion.py).
+    import dataclasses
+
+    calibrated = dataclasses.replace(
+        uncalibrated, calibrated=True, order_basis="expression_rank"
+    )
+    window._render_candidates(calibrated)
+    text = window.cand_banner.text()
+    assert "Ranked by predicted expression" in text
+    assert "HEK293T" in text
+    assert "mean_ribosome_load" in text
+    assert "not a ranking" not in text
+
+    window._render_candidates(uncalibrated)
+    assert "not a ranking" in window.cand_banner.text().lower()
+
+
+# --------------------------------------------------------------------------- #
 # ASSP cross-check (offline fixtures; never a live call)
 # --------------------------------------------------------------------------- #
 

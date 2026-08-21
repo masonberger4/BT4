@@ -195,7 +195,9 @@ The machinery this document motivated has landed and is described in `CHANGELOG.
 | Variants of one protein are a dependent cluster | cluster bootstrap over whole groups |
 | A head must beat CAI to have added anything | `bt4.pipeline.expression_gate.BASELINES` |
 | A result must bind to exact bytes | `ExpressionPanel.content_hash()` |
-| A claim is scoped, not a bare boolean | `ExpressionAttestation` (species/cell types/readout) |
+| A claim is scoped, not a bare boolean | `ExpressionAttestation` (species / cell types / readout / `top_k` / UTR context) |
+| A declared scope must be the run's, not the caller's | `GateScope` + `attest_expression`'s cross-check refusal |
+| A passing gate must reach a user, but only on request | `promote_if_attested`, `BT4_EXPRESSION_USE_ATTESTED` |
 | Is it even worth buying a panel? | `scripts/ribonn_sensitivity.py` |
 
 **The honest prior remains that this gate fails.** RiboNN scores r² = 0.62 on natural

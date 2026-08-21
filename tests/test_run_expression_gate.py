@@ -272,6 +272,127 @@ def test_cli_warns_when_run_in_pooled_mode(
     assert "NOT the regime BT4 deploys in" in capsys.readouterr().err
 
 
+def test_cli_records_the_scope_it_ran_with(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The record used to omit the cell-type selection, top_k and the UTR context
+    # entirely, so a finished run could not be reconstructed from its own output -- and
+    # an attestation could later declare a scope the record had no way to contradict.
+    path = tmp_path / "panel.tsv"
+    lines = ["group\tvariant_id\tcds\tmeasured\tutr5\tutr3"]
+    for g in range(4):
+        for v in range(4):
+            lines.append(
+                f"P{g}\tg{g}v{v}\tATG{'AAA' * (v + 1)}TAA\t{10.0 * g + v}\tGCCACC\tGCTAAT"
+            )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    code = rg.main(
+        ["--panel", str(path), "--backend", "null", "--within-group",
+         "--cell-type", "HEK293T", "--top-k", "3",
+         "--bootstrap-resamples", "50", "--json"]
+    )
+    assert code == 0
+    scope = json.loads(capsys.readouterr().out)["scope"]
+    assert scope["cell_types"] == ["HEK293T"]
+    assert scope["top_k"] == 3
+    assert len(scope["utr_context_sha256"]) == 1  # one (utr5, utr3) pair in this panel
+    assert scope["scoring_source"] == "gate"
+
+
+def test_attest_refuses_a_run_that_is_not_promotable(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # --attest is not a way to record a verdict you did not get.
+    path = tmp_path / "panel.tsv"
+    lines = ["group\tvariant_id\tcds\tmeasured\tutr5\tutr3"]
+    for g in range(4):
+        for v in range(4):
+            lines.append(
+                f"P{g}\tg{g}v{v}\tATG{'AAA' * (v + 1)}TAA\t{10.0 * g + v}\tGCCACC\tGCTAAT"
+            )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out = tmp_path / "attestation.json"
+
+    code = rg.main(
+        ["--panel", str(path), "--backend", "null", "--within-group",
+         "--bootstrap-resamples", "50", "--attest", str(out)]
+    )
+    assert code == 3
+    assert "not promotable" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_attest_writes_the_scope_the_comparison_actually_used(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The success path of --attest, driven without licensed weights.
+
+    The CLI cannot reach it (the placeholder backend can never be promotable), so the
+    helper is called directly against an oracle comparison. What this pins is the point
+    of the whole change: the record's scope comes from the comparison, so it cannot be
+    typed into disagreeing with the run.
+    """
+    panel = _panel(n_groups=10)
+    comparison = run_panel_gate(
+        panel,  # type: ignore[arg-type]
+        "null",
+        # The module-wide _SETTINGS run at coverage_tolerance=0.20, which is looser than
+        # the attestation layer's own floor -- so a record built from them is refused.
+        # That refusal is correct and load-bearing, hence a tighter tolerance here.
+        settings=GateSettings(
+            within_group=True, recalibrate=True, coverage_tolerance=0.10,
+            bootstrap_resamples=200,
+        ),
+        cell_types=("HEK293T",),
+        top_k=3,
+        head_scores=[row.measured for row in panel.rows],  # type: ignore[attr-defined]
+    )
+    assert comparison.promotable is True
+
+    out = tmp_path / "attestation.json"
+    assert rg._attest(comparison, str(out), readout="mean_ribosome_load") == 0
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["cell_types"] == ["HEK293T"]
+    assert record["top_k"] == 3
+    assert record["panel_sha256"] == comparison.panel_hash
+    assert record["scoring_source"] == "caller_supplied"
+    assert "$BT4_EXPRESSION_ATTESTATION" in capsys.readouterr().err
+    # This panel declares no readout column, so the readout was taken on the
+    # maintainer's word -- and the record SAYS so rather than implying it was checked.
+    assert record["verified_against_panel"] == []
+
+    # Give the panel its own readout column and a disagreeing declaration is refused
+    # rather than written.
+    declared = panel_from_rows(
+        [
+            PanelRow(
+                group=row.group, variant_id=row.variant_id, cds=row.cds,
+                measured=row.measured, utr5=row.utr5, utr3=row.utr3,
+                readout="mean_ribosome_load",
+            )
+            for row in panel.rows  # type: ignore[attr-defined]
+        ]
+    )
+    checked = run_panel_gate(
+        declared,
+        "null",
+        settings=GateSettings(
+            within_group=True, recalibrate=True, coverage_tolerance=0.10,
+            bootstrap_resamples=200,
+        ),
+        cell_types=("HEK293T",),
+        head_scores=[row.measured for row in declared.rows],
+    )
+    other = tmp_path / "lie.json"
+    assert rg._attest(checked, str(other), readout="something_else") == 3
+    assert not other.exists()
+    assert rg._attest(checked, str(other), readout=None) == 0
+    assert json.loads(other.read_text(encoding="utf-8"))["verified_against_panel"] == [
+        "readout"
+    ]
+
+
 def test_cli_refuses_an_unknown_baseline(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "panel.tsv"
     path.write_text(

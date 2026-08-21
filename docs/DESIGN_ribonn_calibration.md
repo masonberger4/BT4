@@ -406,29 +406,55 @@ att = attest_expression(
 open("ribonn_attestation.json", "w").write(json.dumps(att.to_dict(), indent=2))
 ```
 
+**Simpler, and preferred:** pass `--attest ribonn_attestation.json --readout
+mean_ribosome_load` to `scripts/run_expression_gate.py` itself. That records the
+attestation from the *same* comparison the verdict was read off — no second scoring pass,
+and no chance of configuring the second invocation differently from the first.
+
 A user then opts in for their own session:
 
-```python
-from bt4.biomodels.expression import (
-    RiboNNExpressionModel, load_expression_attestation, verified_predictor,
-)
-model = RiboNNExpressionModel(species="human", utr5="...", utr3="...",
-                              cell_types=("HEK293T",))
-model = verified_predictor(model, load_expression_attestation("ribonn_attestation.json"))
-assert model.calibrated  # refuses on any species / cell-type / weight-hash mismatch
+```bash
+export BT4_EXPRESSION_ATTESTATION=/path/to/ribonn_attestation.json
+export BT4_EXPRESSION_USE_ATTESTED=1
 ```
 
-## The wiring caveat (read before promising users anything)
+or explicitly, per call:
 
-`verified_predictor` is the seam, but **nothing in `src/` calls it yet** — outside its
-own tests, no default path constructs a verified head. So even a committed, passing
-attestation changes nothing for users until that wiring lands (the same gap
-`NEXT_SESSION.md` item 10 records for the splice side). The scope is also strict by
-design: an attestation earned on HEK293T does **not** certify a head averaging all 78
-cell types, and the honest claim is always scoped — "calibrated for ranking synonymous
-variants of a known protein, cell type X, readout Y". The cross-protein / novel-CDS
-regime cannot be honestly gated at all: it needs ~100 held-out proteins that do not
-exist.
+```python
+from bt4 import api
+model = api.resolve_expression_backend(
+    "ribonn", species="human", utr5="...", utr3="...",
+    cell_types=("HEK293T",), use_attested=True,
+)
+assert model.calibrated  # refuses on species / cell-type / top_k / UTR / weight mismatch
+```
+
+## The wiring (landed 2026-08) and the scope it binds
+
+**Superseded caveat, kept for the record:** this section used to read *"`verified_predictor`
+is the seam, but nothing in `src/` calls it yet"* — so even a committed, passing
+attestation changed nothing for users. That is no longer true.
+`bt4.biomodels.expression.attestations.promote_if_attested` is called from
+`resolve_backend`, gated on `BT4_EXPRESSION_USE_ATTESTED` (or an explicit
+`use_attested=`), and BT4 Studio carries a per-run toggle on the Candidates tab that
+displays the attestation's scope and pins the head to it. A promoted head reorders the
+candidate set and re-picks the delivered sequence, and its attestation's content hash
+enters the run manifest.
+
+`$BT4_EXPRESSION_ATTESTATION` reads a maintainer's own record, because an expression
+attestation is earned against a measured panel that is often unpublished — and the record
+carries the panel hash plus a hash per UTR context, from which a *short* UTR is
+brute-forceable. **Nothing is bundled**: no expression head has passed its gate, and
+shipping a record for one that has not would be CLAUDE.md §10.6's fabricated placeholder.
+
+The scope is strict by design, and is now taken from the run rather than declared:
+`attest_expression` derives species / cell types / readout from `GateComparison.scope`
+and refuses a declaration that disagrees, while `verified_predictor` binds `top_k` and
+the UTR context in addition to species, cell types and the weight hashes. An attestation
+earned on HEK293T does **not** certify a head averaging all 78 cell types, and the honest
+claim is always scoped — "calibrated for ranking synonymous variants of a known protein,
+cell type X, readout Y, UTR context Z". The cross-protein / novel-CDS regime cannot be
+honestly gated at all: it needs ~100 held-out proteins that do not exist.
 
 ---
 
@@ -452,8 +478,9 @@ a blind backend as blind and a GC3-only backend as a GC detector.
 2. Stage 0.3 prints all-zero `max_shift`.
 3. Stage 1.1 `harness_ok: true`; Stage 1.2 held-out r² ≈ 0.62.
 4. Determinism (invariant #7): the same panel scored twice is byte-identical.
-5. If `promotable`, `promote.py` writes an attestation and `verified_predictor` flips
-   the flag; a deliberately wrong `cell_types` on the model makes it *refuse*.
+5. If `promotable`, `--attest` writes the attestation and the opt-in flips the flag; a
+   deliberately wrong `cell_types`, `top_k` or UTR context on the model makes it
+   *refuse* rather than hand back an uncalibrated head.
 
 # What not to do
 
@@ -468,3 +495,7 @@ a blind backend as blind and a GC3-only backend as a GC detector.
   (the §10.5 magic-scalar trap).
 - **Do not flip `calibrated=True` by hand.** `dataclasses.replace(..., fidelity_verified=True)`
   bypasses every floor and scope check; `verified_predictor` is the only sanctioned path.
+- **Do not commit an attestation for a panel you cannot publish** — the record binds the
+  panel's hash and each UTR context's hash. Use `$BT4_EXPRESSION_ATTESTATION` instead.
+- **Do not bundle an attestation that has not been earned** to demonstrate the calibrated
+  path. Test doubles belong in tests; a committed artifact is a claim.

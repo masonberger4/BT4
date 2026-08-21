@@ -133,6 +133,8 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | **ASSP cross-check (opt-in, out-of-loop network validator)** | DONE | `network_derived`, not calibrated | `biomodels/splice/assp.py`, `pipeline/splice_crosscheck.py` |
 | Expression: `ExpressionPredictor` + `NullExpressionModel` + rerank hook | GROUNDWORK | placeholder=no | `biomodels/expression/`, `pipeline/rerank.py` |
 | Expression: wrapped RiboNN (Sanofi non-commercial) | GROUNDWORK | **no** (acceptance gate pending) | `biomodels/expression/ribonn.py` |
+| **Expression promotion seam** (`promote_if_attested`, `BT4_EXPRESSION_USE_ATTESTED`, `$BT4_EXPRESSION_ATTESTATION`, Studio toggle + scope display) | **DONE and wired** — `verified_predictor` now has production callers | n/a (carries a claim, cannot make one). **No attestation is bundled**: none has been earned | `biomodels/expression/attestations.py`, `app/studio.py` |
+| Expression attestation **scope binding** (species/cell types/readout derived from the run; `top_k` + UTR context bound; gate record reconstructable) | DONE | n/a | `biomodels/expression/attestation.py`, `pipeline/expression_gate.py::GateScope` |
 | Candidate-set assembly + expression rerank | DONE | calibrated-gated | `pipeline/candidates.py`, `bt4.api.candidates` |
 | Library / degenerate-design (SAMPLED) mode | DONE | n/a (sampler, not optimizer) | `optimize/sample.py`, `pipeline/library.py` |
 | Restriction catalog (584 enzymes, REBASE-derived + content-hashed) | DONE | n/a | `constraints/restriction.py`, `constraints/data/` |
@@ -543,7 +545,9 @@ items 1–3 are in
     natural sites); resolving the **7 positions both models call that the panel does not
     annotate** (non-MANE isoform sites, or shared false positives — opposite implications,
     and this panel cannot separate them); deciding whether the attested-promotion opt-in
-    should become the default; and a Studio checkbox for it.
+    should become the default; and a Studio checkbox for it. *(The splice side already
+    has one — `splice_attested_check`; what is missing is the CLI/promotion-default
+    decision, not the control. The expression side's equivalent landed 2026-08.)*
 
     **The SpliceAI tooling proved out on first contact with real weights.**
     `scripts/capture_spliceai_panel.py` ships alongside the Pangolin one (same
@@ -582,10 +586,18 @@ items 1–3 are in
     (human):** run the free sanity checks against the licensed weights, obtain a
     licence-clean regime-matched **CDS-variant** panel — no public dataset fully
     qualifies today, so read §4 of the research doc before spending anything — then
-    pre-register thresholds and run the gate **once**. **Same wiring caveat as item
-    10:** `verified_predictor` is the seam, but nothing in `src/` calls it yet, so a
-    passing gate changes nothing for users until an attestation is committed and
-    loaded. Reproducing RiboNN faithfully is **not** calibration for BT4's
+    pre-register thresholds and run the gate **once**. **The wiring caveat is GONE
+    (2026-08):** `promote_if_attested` now has production callers behind
+    `BT4_EXPRESSION_USE_ATTESTED` / `$BT4_EXPRESSION_ATTESTATION` and a BT4 Studio
+    toggle, so a passing gate plus an attestation **does** change what a user gets —
+    a ranked candidate set with the delivered pick chosen by the head, banner-led with
+    the scope it was earned in. Nothing is bundled, so today it promotes nothing. Two
+    things the run itself must now satisfy, both enforced rather than documented: the
+    gate **refuses** a head configured to average every cell type against a panel that
+    declares one (the old silent `--cell-type` trap, now caught *before* the scoring
+    pass), and `attest_expression` **derives** the scope from the run instead of
+    accepting it as free text, so a declared `cell_types` that disagrees is a refusal.
+    Reproducing RiboNN faithfully is **not** calibration for BT4's
     CDS-variant regime — RiboNN **has never been shown to discriminate synonymous
     CDS variants of the same protein under a fixed UTR**, which is exactly the
     regime BT4 operates in. (Do *not* justify this with "only ~31% of signal is in
@@ -594,7 +606,11 @@ items 1–3 are in
     not relabel a hand-weighted composite as "calibrated".
 12. **[BLOCKED until #10/#11] Design-flow step 6** — targeted synonymous splice
     **auto-edit** and RiboNN **auto-select**, each unlocked only once its backend
-    passes its gate.
+    passes its gate. *(The delivery half of RiboNN auto-select is in fact already
+    built and tested: a promoted head reorders the candidate set and re-picks
+    `chosen`. What is still blocked is the only part that matters — a head that has
+    **earned** the promotion. The remaining work here is therefore the splice
+    auto-edit, plus whatever auto-select needs beyond re-picking.)*
 13. **[long-horizon, demoted] Tier 5 — LinearDesign-class joint codon +
     secondary-structure optimization.** Previously ranked first; the 2026
     verification sweep does not support that. Its headline number is antibody titre

@@ -18,7 +18,8 @@ before writing code, and keep it current as the architecture evolves.
 > should be written in both places.
 >
 > **Current phase (one line):** Phases 0–2 complete · Phase 3 groundwork landed ·
-> Phase 4 **app polish landed**, learned head still calibration-blocked · Phase 5
+> Phase 4 **app polish + the expression promotion seam landed**, learned head still
+> calibration-blocked (no attestation is bundled, because none has been earned) · Phase 5
 > open, with **declared CAI reference sets** (highly-expressed by default) landed.
 > The honest exact-DP + Pareto core, the Rust trellis port, the
 > wrapped-but-**uncalibrated** RiboNN/SpliceAI/Pangolin models, the opt-in
@@ -1138,6 +1139,34 @@ control.
   [`docs/RESEARCH_ribonn_calibration.md`](docs/RESEARCH_ribonn_calibration.md).
   RiboNN remains **`calibrated=False`** — none of this is a claim, it is only the
   apparatus that could earn one.
+  **The seam that would let such a claim reach a user has now landed too, and its
+  scope is bound rather than declared.** `verified_predictor` was the sanctioned way
+  to flip `calibrated`, but **nothing in `src/` called it** — so a passing gate and a
+  committed record would have changed nothing for anyone, unlike the splice side,
+  whose `promote_if_attested` has been wired into production behind
+  `BT4_SPLICE_USE_ATTESTED` since #121. `biomodels/expression/attestations.py`
+  mirrors it: `BT4_EXPRESSION_USE_ATTESTED` (or an explicit `use_attested=` on
+  `api.resolve_expression_backend`) honours a resolvable attestation, `default()`
+  still returns the neutral placeholder, and **nothing auto-promotes**. Because an
+  expression attestation is earned against a *maintainer's own measured panel* rather
+  than published weights, `$BT4_EXPRESSION_ATTESTATION` reads a local record, so using
+  a result never requires committing the panel's identity; a mis-pointed path
+  **refuses** rather than falling back, since a typo would otherwise be
+  indistinguishable from "no attestation". **No attestation is bundled** — none has
+  been earned, and shipping one that had not is exactly §10.6's fabricated
+  placeholder. BT4 Studio carries the opt-in per run (never by mutating process env),
+  shows the attestation's **scope on the page** (species / cell types / readout /
+  `top_k` / UTR contexts / panel hash), **pins the head to that scope** while it is
+  honoured, and flips the Candidates banner from *discovery order, NOT a ranking* to a
+  ranking **with its scope named**. **And the scope is now the run's, not the
+  caller's:** `attest_expression` derives species / cell types / readout from
+  `GateComparison.scope` and treats a declared value as a cross-check that **refuses**
+  on mismatch — a gate run averaging all 78 cell types can no longer be filed as a
+  HEK293T result — while `verified_predictor` additionally binds `top_k` and the UTR
+  context, and deliberately does **not** bind `batch_size` / `num_workers`, which
+  provably cannot change a score. A promoted head carries the attestation's content
+  hash into the manifest, so two runs steered by different claims cannot share a stamp
+  (invariant #9).
 - **Phase 5 — Scale & ecosystem.** 🔶 **Opened.** **Library / degenerate-design
   mode has landed** (`optimize/sample.py` + `pipeline/library.py`, exposed as
   `api.library` and `bt4 library PROTEIN --n N`): instead of a single MFC

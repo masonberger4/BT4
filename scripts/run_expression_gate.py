@@ -64,6 +64,11 @@ def build_report(comparison: api.GateComparison) -> dict[str, object]:
             "calibrated": comparison.backend_calibrated,
         },
         "settings": asdict(comparison.settings),
+        # How the run was CONFIGURED, not just what it demanded. Without this the record
+        # omitted the cell-type selection, top_k and the UTR context entirely, so a
+        # finished run could not be reconstructed from its own output -- and a later
+        # attestation could declare a scope the record had no way to contradict.
+        "scope": asdict(comparison.scope),
         "notes": list(comparison.notes),
         "head": asdict(comparison.head),
         "baselines": {name: asdict(report) for name, report in comparison.baselines},
@@ -103,11 +108,22 @@ def _render(report: Mapping[str, object]) -> str:
     flag = "calibrated" if backend["calibrated"] else "UNCALIBRATED"
     panel_hash = report["panel_hash"]
     assert isinstance(panel_hash, str)
+    scope = report["scope"]
+    assert isinstance(scope, dict)
+    cells = ", ".join(scope["cell_types"]) or "ALL cell types (no selection)"
     lines = [
         f"panel:    sha256 {panel_hash[:16]}...",
         f"backend:  {backend['name']}  [{flag}]",
         f"mode:     {mode}"
         + (", link fitted on calibration fold" if settings["recalibrate"] else ""),
+        f"scope:    species={scope['species']}  cell types={cells}  "
+        f"top_k={scope['top_k']}  UTR contexts={len(scope['utr_context_sha256'])}",
+        f"readout:  {scope['readout'] or '(panel declares none, or several)'}"
+        + (
+            ""
+            if scope["scoring_source"] == "gate"
+            else f"  [scoring: {scope['scoring_source']}]"
+        ),
         "",
         f"{'':<14}{'spearman':>10}{'CI low':>9}{'CI high':>9}{'coverage':>10}"
         f"{'width/IQR':>11}",
@@ -177,6 +193,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--organism", default="homo_sapiens")
     parser.add_argument("--reference-set", default=None)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--attest", default=None, metavar="OUT.json",
+        help="if the run is promotable, write the attestation from THIS comparison. "
+             "Doing it here rather than in a second script is what removes the "
+             "re-scoring pass -- and, more importantly, the chance of typing different "
+             "settings the second time",
+    )
+    parser.add_argument(
+        "--readout", default=None,
+        help="what the panel measured (e.g. mean_ribosome_load); required by --attest "
+             "unless the panel's own readout column declares exactly one",
+    )
     args = parser.parse_args(argv)
 
     baselines = [name.strip() for name in args.baselines.split(",") if name.strip()]
@@ -219,7 +247,52 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
 
+    if args.attest is not None:
+        code = _attest(comparison, args.attest, readout=args.readout)
+        if code:
+            return code
+
     print(json.dumps(report, indent=2, sort_keys=True) if args.json else _render(report))
+    return 0
+
+
+def _attest(comparison: api.GateComparison, path: str, *, readout: str | None) -> int:
+    """Write the attestation for a promotable comparison, or explain the refusal.
+
+    Kept in the same process as the gate deliberately. The alternative -- a second
+    script that re-runs ``expression_gate`` -- pays for another full scoring pass and,
+    worse, lets the second invocation be configured differently from the one whose
+    verdict was read. The scope is taken from this comparison, so it cannot be.
+
+    Returns:
+        ``0`` on success, or an exit code on a refusal (already reported to stderr).
+    """
+    import bt4
+
+    if not comparison.promotable:
+        print(
+            "error: --attest given but the run is not promotable on this panel; "
+            "nothing to record. This is a result, not a failure: write it up.",
+            file=sys.stderr,
+        )
+        return 3
+    try:
+        attestation = api.attest_expression(
+            comparison, readout=readout, bt4_version=bt4.__version__
+        )
+    except api.ExpressionAttestationError as exc:
+        print(f"error: refusing to attest: {exc}", file=sys.stderr)
+        return 3
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(attestation.to_dict(), handle, indent=2, sort_keys=True)
+    print(f"wrote {path} (content hash {attestation.content_hash()[:16]}...)", file=sys.stderr)
+    print(
+        "That record carries the scope THIS run used; it is not signed and proves "
+        "nothing about who ran it. To use it, point $BT4_EXPRESSION_ATTESTATION at it "
+        "and set BT4_EXPRESSION_USE_ATTESTED=1 (or tick the attestation box in BT4 "
+        "Studio).",
+        file=sys.stderr,
+    )
     return 0
 
 

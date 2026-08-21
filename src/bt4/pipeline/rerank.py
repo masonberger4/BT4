@@ -88,6 +88,9 @@ def rerank_by_expression(
                 **dict(result.manifest.extra),
                 "expression_model": backend.name,
                 "expression_calibrated": "True",
+                # Which attestation authorized the calibration that steered this pick;
+                # two heads promoted by different claims must stamp differently.
+                "expression_attestation": getattr(backend, "attestation_sha256", ""),
             },
         )
 

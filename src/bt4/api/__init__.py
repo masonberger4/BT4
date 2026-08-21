@@ -25,15 +25,33 @@ from bt4.biomodels.codon.tables import (
 )
 from bt4.biomodels.codon.tai import available_tai_organisms
 from bt4.biomodels.expression import (
+    ATTESTATION_PATH_ENV_VAR as EXPRESSION_ATTESTATION_ENV_VAR,
+)
+from bt4.biomodels.expression import (
+    USE_ATTESTED_ENV_VAR as USE_ATTESTED_EXPRESSION_ENV_VAR,
+)
+from bt4.biomodels.expression import (
+    ExpressionAttestation,
+    ExpressionAttestationError,
     ExpressionPanel,
     ExpressionPredictor,
     ExpressionResult,
     PanelRow,
+    attest_expression,
+    attested_expression_backends,
+    load_expression_attestation,
+    panel_from_rows,
     read_panel,
+)
+from bt4.biomodels.expression import (
+    attested_promotion_enabled as attested_expression_promotion_enabled,
 )
 from bt4.biomodels.expression import available_backends as available_expression_backends
 from bt4.biomodels.expression import default as expression_model
 from bt4.biomodels.expression import resolve_backend as resolve_expression_backend
+from bt4.biomodels.expression import (
+    resolve_expression_attestation as expression_attestation,
+)
 from bt4.biomodels.splice import (
     DEFAULT_SITE_PROBABILITY,
     USE_ATTESTED_SPLICE_ENV_VAR,
@@ -101,6 +119,7 @@ from bt4.pipeline import (
     EnzymeOccurrence,
     FrontierResult,
     GateComparison,
+    GateScope,
     GateSettings,
     InfeasibleError,
     LibraryResult,
@@ -149,12 +168,14 @@ __all__ = [
     "APPLICATION_PRESETS",
     "CNN_ANCHOR_OFFSETS",
     "DEFAULT_SITE_PROBABILITY",
+    "EXPRESSION_ATTESTATION_ENV_VAR",
     "GENOME_WIDE",
     "HIGHLY_EXPRESSED",
     "MIN_SPLICE_MOTIF_CONSISTENCY",
     "PACKAGING_LIMITS",
     "REFERENCE_SETS",
     "SPLICE_BASELINES",
+    "USE_ATTESTED_EXPRESSION_ENV_VAR",
     "USE_ATTESTED_SPLICE_ENV_VAR",
     "AlignmentDiagnostic",
     "ApplicationPreset",
@@ -164,12 +185,15 @@ __all__ = [
     "ConstructContext",
     "CrossCheckSite",
     "EnzymeOccurrence",
+    "ExpressionAttestation",
+    "ExpressionAttestationError",
     "ExpressionPanel",
     "ExpressionPredictor",
     "ExpressionResult",
     "ForbiddenPreset",
     "FrontierResult",
     "GateComparison",
+    "GateScope",
     "GateSettings",
     "GenBankFeature",
     "GenBankRecord",
@@ -196,7 +220,10 @@ __all__ = [
     "Violation",
     "apply_preset",
     "assemble_and_rank_candidates",
+    "attest_expression",
     "attested_backends_available",
+    "attested_expression_backends",
+    "attested_expression_promotion_enabled",
     "attested_splice_promotion_enabled",
     "audit_candidate_set",
     "audit_construct",
@@ -217,13 +244,16 @@ __all__ = [
     "designed_cds_probe",
     "enzyme_provenance",
     "enzyme_suggestions",
+    "expression_attestation",
     "expression_gate",
     "expression_model",
     "frontier",
     "library",
+    "load_expression_attestation",
     "load_provenance",
     "optimize",
     "packaging_report",
+    "panel_from_rows",
     "parse_fasta",
     "parse_genbank",
     "read_designed_cds_panel",

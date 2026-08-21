@@ -37,6 +37,7 @@ from bt4.biomodels.expression import (
     ExpressionPanel,
     PanelRow,
     resolve_backend,
+    utr_context_sha256,
 )
 from bt4.biomodels.expression.gate import (
     ExpressionEvalCase,
@@ -47,6 +48,7 @@ from bt4.biomodels.expression.gate import (
 __all__ = [
     "BASELINES",
     "GateComparison",
+    "GateScope",
     "GateSettings",
     "baseline_scores",
     "run_panel_gate",
@@ -86,6 +88,57 @@ class GateSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class GateScope:
+    """How the run was actually configured -- the record that makes a claim checkable.
+
+    :class:`GateSettings` says what the gate *demanded*; this says what it *scored*. The
+    distinction is load-bearing, because everything here changes the number and none of
+    it used to survive the run: an attestation's ``species`` and ``cell_types`` were
+    caller-declared free text, and the JSON record omitted the cell types, ``top_k`` and
+    the UTR context entirely, so a finished run could not be reconstructed from its own
+    output. :func:`~bt4.biomodels.expression.attest_expression` now derives its scope from
+    this object and refuses any declaration that disagrees with it.
+
+    The ``panel_*`` fields are what the *panel* declares about itself, kept separate from
+    what the run was configured with precisely so the two can be compared rather than
+    conflated.
+
+    Attributes:
+        species: The weight set scored.
+        cell_types: The cell-type selection averaged, sorted. Empty means every one of
+            them, which is a different quantity from any single cell line.
+        top_k: Cross-validation runs ensembled.
+        batch_size: Inference batch size. Recorded for reconstructability only -- it
+            cannot change a score (RiboNN pads to a fixed width, ``shuffle=False``), so
+            no attestation binds it.
+        num_workers: DataLoader workers. Recorded, not bound, for the same reason.
+        readout: The panel's own declared readout when it declares exactly one, else
+            ``""`` (zero or several, so the caller must name it).
+        utr_context_sha256: One hash per distinct ``(utr5, utr3)`` context in the panel,
+            sorted -- the transcript contexts the measurement was made in.
+        panel_species: Distinct non-empty ``species`` values the panel declares.
+        panel_cell_types: Distinct non-empty ``cell_type`` values the panel declares.
+        panel_readouts: Distinct non-empty ``readout`` values the panel declares.
+        scoring_source: ``"gate"`` when this module invoked the backend, or
+            ``"caller_supplied"`` when ``head_scores`` were handed in. The point at which
+            the link between the named backend and the numbers stops being mechanical, so
+            it is recorded rather than assumed away.
+    """
+
+    species: str
+    cell_types: tuple[str, ...]
+    top_k: int
+    batch_size: int
+    num_workers: int
+    readout: str
+    utr_context_sha256: tuple[str, ...]
+    panel_species: tuple[str, ...]
+    panel_cell_types: tuple[str, ...]
+    panel_readouts: tuple[str, ...]
+    scoring_source: str
+
+
+@dataclass(frozen=True, slots=True)
 class GateComparison:
     """A head's gate report, every baseline's, and the verdict built from them.
 
@@ -101,6 +154,9 @@ class GateComparison:
         beats_every_baseline: Head's CI lower bound above the best baseline's estimate.
         interval_is_informative: Median interval width below the label IQR.
         promotable: All three conditions held **on this panel**. Not a promotion.
+        scope: How the run was configured (:class:`GateScope`), so the result is
+            reconstructable from its own output and a later scope declaration can be
+            checked against it rather than believed.
         notes: Human-readable notes (e.g. how many backend invocations were needed).
     """
 
@@ -108,6 +164,7 @@ class GateComparison:
     backend: str
     backend_calibrated: bool
     settings: GateSettings
+    scope: GateScope
     head: ExpressionGateReport
     baselines: tuple[tuple[str, ExpressionGateReport], ...]
     best_baseline: str
@@ -159,6 +216,10 @@ def score_panel(
             batch_size=batch_size,
             num_workers=num_workers,
             cell_types=cell_types,
+            # Never honour a standing $BT4_EXPRESSION_USE_ATTESTED here: the gate is
+            # what *decides* promotion, so scoring with an already-promoted head would
+            # let a prior attestation colour the run that judges the next one.
+            use_attested=False,
         )
         dnas = [row.cds for row in rows]
         if isinstance(predictor, BatchExpressionPredictor):
@@ -266,13 +327,17 @@ def run_panel_gate(
 
     Raises:
         ValueError: On an unknown backend or baseline, a length mismatch in
-            ``head_scores``, or any refusal from the gate itself (too few groups, an
-            empty fold, no rankable group in within-group mode).
+            ``head_scores``, a configuration that contradicts what the panel declares it
+            measured (see :func:`_refuse_scope_mismatch` -- checked **before** the
+            scoring pass, because this is a run-once procedure), or any refusal from the
+            gate itself (too few groups, an empty fold, no rankable group in within-group
+            mode).
     """
     settings = settings or GateSettings()
     unknown = [name for name in baselines if name not in BASELINES]
     if unknown:
         raise ValueError(f"unknown baseline(s) {unknown}; choose from {list(BASELINES)}")
+    _refuse_scope_mismatch(panel, species=species, cell_types=cell_types)
 
     if head_scores is None:
         scores, notes = score_panel(
@@ -291,7 +356,7 @@ def run_panel_gate(
             )
         scores, notes = list(head_scores), ["scores supplied by the caller"]
 
-    probe = resolve_backend(backend, species=species)
+    probe = resolve_backend(backend, species=species, use_attested=False)
     table = load_table(organism, reference_set=reference_set)
 
     head = _gate(panel.rows, scores, settings)
@@ -319,6 +384,15 @@ def run_panel_gate(
         backend=probe.name,
         backend_calibrated=probe.calibrated,
         settings=settings,
+        scope=_scope(
+            panel,
+            species=species,
+            cell_types=cell_types,
+            top_k=top_k,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            scoring_source="caller_supplied" if head_scores is not None else "gate",
+        ),
         head=head,
         baselines=reports,
         best_baseline=best_name,
@@ -327,4 +401,83 @@ def run_panel_gate(
         interval_is_informative=informative,
         promotable=bool(head.passed and beats and informative),
         notes=tuple(notes),
+    )
+
+
+def _panel_column(panel: ExpressionPanel, attribute: str) -> tuple[str, ...]:
+    """Return the distinct non-empty values of one optional panel column, sorted."""
+    return tuple(
+        sorted({value for value in (getattr(row, attribute) for row in panel.rows) if value})
+    )
+
+
+def _refuse_scope_mismatch(
+    panel: ExpressionPanel, *, species: str, cell_types: tuple[str, ...]
+) -> None:
+    """Refuse a run whose configuration contradicts what the panel says it measured.
+
+    The trap this closes is silent and expensive: leave ``--cell-type`` off and RiboNN
+    averages all 78 human cell types, which against a single-cell-line panel is a
+    different quantity entirely -- no error, no warning, and a clean run to a wrong
+    verdict. The gate is meant to be run **once**, so the check belongs here, before the
+    scoring pass, not at promotion time after the budget is spent.
+
+    Only what the panel actually declares is checked; a panel without ``species`` /
+    ``cell_type`` columns declares nothing and is run as configured (with the gap
+    recorded in :class:`GateScope`, not hidden). A maintainer who deliberately wants the
+    all-cell-type average against a single-line panel drops the column -- which changes
+    the panel hash, so the record stays honest about being a different panel.
+
+    Raises:
+        ValueError: On a declared/configured mismatch, naming what to pass instead.
+    """
+    declared_species = _panel_column(panel, "species")
+    if declared_species and declared_species != (species,):
+        raise ValueError(
+            f"panel declares species {list(declared_species)} but the head is "
+            f"configured for {species!r}; RiboNN's human and mouse weights are "
+            "different models. Pass the matching --species."
+        )
+    declared_cells = _panel_column(panel, "cell_type")
+    selection = tuple(sorted(cell_types))
+    if declared_cells and declared_cells != selection:
+        shown = list(selection) if selection else "every cell type (no selection)"
+        raise ValueError(
+            f"panel was measured in {list(declared_cells)} but the head would score "
+            f"{shown}. Averaging every cell type against a single-cell-line measurement "
+            f"is a scope error, not a rounding one: pass "
+            + " ".join(f"--cell-type {name}" for name in declared_cells)
+            + " (or drop the panel's cell_type column if the all-tissue average really "
+            "is what you mean)."
+        )
+
+
+def _scope(
+    panel: ExpressionPanel,
+    *,
+    species: str,
+    cell_types: tuple[str, ...],
+    top_k: int,
+    batch_size: int,
+    num_workers: int,
+    scoring_source: str,
+) -> GateScope:
+    """Build the :class:`GateScope` recording how this run was configured."""
+    readouts = _panel_column(panel, "readout")
+    return GateScope(
+        species=species,
+        cell_types=tuple(sorted(cell_types)),
+        top_k=top_k,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        # One readout is unambiguous and can be carried; zero or several means the
+        # caller has to name it, so the attestation never guesses the assay.
+        readout=readouts[0] if len(readouts) == 1 else "",
+        utr_context_sha256=tuple(
+            sorted(utr_context_sha256(utr5, utr3) for utr5, utr3 in panel.contexts())
+        ),
+        panel_species=_panel_column(panel, "species"),
+        panel_cell_types=_panel_column(panel, "cell_type"),
+        panel_readouts=readouts,
+        scoring_source=scoring_source,
     )
