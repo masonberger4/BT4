@@ -243,12 +243,14 @@ def promote_if_attested(
 def _attestable_backend(predictor: Any) -> str | None:
     """Return the backend id for an attestable head, else ``None``.
 
-    Mirrors ``attestation.verified_predictor``'s type check but *reports* rather than
-    raises: this runs on every head a caller might hand over, where "not attestable"
-    (the placeholder) is the normal case and not an error.
+    Reports rather than raises -- this runs on every head a caller might hand over, where
+    "not attestable" (the placeholder) is the normal case and not an error. It uses
+    ``isinstance`` for the same reason
+    :func:`~bt4.biomodels.expression.attestation.verified_predictor` does: a class-name
+    comparison would disagree with it on a *subclass*, so this layer would quietly skip
+    promotion for a head the seam itself considers attestable -- a silent downgrade in
+    the one place that must never produce one.
     """
-    return "ribonn" if type(predictor).__name__ == "RiboNNExpressionModel" else None
+    from bt4.biomodels.expression.ribonn import RiboNNExpressionModel
 
-
-# Re-exported so callers handling promotion failures need only this module.
-_ = ExpressionAttestationError
+    return "ribonn" if isinstance(predictor, RiboNNExpressionModel) else None

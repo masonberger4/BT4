@@ -101,6 +101,20 @@ its first tagged release.
   attestation must not colour them.
 - **A `schema_version` 1 record was refused with a bare field list.** It now says which
   fields schema 2 added and why they cannot be filled in afterwards.
+- **Studio downgraded silently if the attestation stopped resolving mid-session.** The
+  toggle was read at window-open; if the record was deleted or corrupted before Run, the
+  head was built uncalibrated with no warning -- answering "give me a calibrated ranking"
+  with an uncalibrated one, which is the failure the layer exists to prevent. It now
+  refuses the run and names what happened.
+- **`promote_if_attested` gated on a class name where `verified_predictor` uses
+  `isinstance`**, so a *subclassed* head would be skipped here and accepted there --
+  a silent downgrade in the one place that must never produce one.
+- **`content_hash` moved when a record's JSON lists were reordered**, which a content
+  hash must not do; `from_dict` now sorts the same tuples `attest_expression` writes.
+- **The docs claimed the environment variable alone made `api.candidates` rank.** It does
+  not, and should not: the opt-in governs *promotion*, not *selection*, so a script that
+  never asked for RiboNN cannot have its behaviour changed by an exported variable. The
+  head must be handed to `api.candidates(..., predictor=head)`.
 - **`bt4 expression-gate` ignored `--top-k`** (it had no such flag and always used 5,
   while the script did forward it). The flag now exists and is forwarded; since `top_k`
   is part of the scope an attestation binds, a promotion refuses a differently-sized

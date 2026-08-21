@@ -485,8 +485,12 @@ def test_attestation_toggle_lights_up_and_names_its_scope(
 
     window = StudioWindow()
     window._ribonn_available = True
+    # CI has no RiboNN checkout, so the offerability probe says no; the attestation half
+    # is what this test is about.
+    window._expr_attestable = True
     window.ribonn_check.setEnabled(True)
     window.ribonn_check.setChecked(True)
+    window._update_ribonn_enabled(True)
 
     assert window._expr_attestation is not None
     assert window.expr_attested_check.isEnabled()
@@ -574,6 +578,45 @@ def test_a_head_outside_the_attested_scope_is_refused_not_downgraded(
     assert ok is False
     assert predictor is None
     assert "UTR context" in window.statusBar().currentMessage()
+
+
+def test_losing_the_attestation_before_a_run_refuses_rather_than_downgrading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The window opened with a record; by Run time it is gone. Refuse, do not downgrade.
+
+    Building an uncalibrated head here would answer "give me a calibrated ranking" with
+    an uncalibrated one and say nothing -- the failure this whole layer exists to
+    prevent, and one the user has no way to notice from the run itself.
+    """
+    import json
+
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(_attestation().to_dict()), encoding="utf-8")
+    monkeypatch.setenv(api.EXPRESSION_ATTESTATION_ENV_VAR, str(path))
+
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+    window.expr_attested_check.setEnabled(True)
+    window.expr_attested_check.setChecked(True)
+    window.utr5_edit.setText("GCCACC")
+    window.utr3_edit.setText("GCTAAT")
+    assert window._prepare_predictor()[0] is True  # it works while the record is there
+
+    path.unlink()
+    ok, predictor = window._prepare_predictor()
+    assert ok is False
+    assert predictor is None
+    assert "not a readable file" in window.statusBar().currentMessage()
+
+    # A corrupt record is refused the same way, and named.
+    path.write_text("{not json", encoding="utf-8")
+    ok, predictor = window._prepare_predictor()
+    assert ok is False
+    assert predictor is None
+    assert "not valid JSON" in window.statusBar().currentMessage()
 
 
 def test_the_banner_names_the_scope_when_the_ranking_is_calibrated() -> None:

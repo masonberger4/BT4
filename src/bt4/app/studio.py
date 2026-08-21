@@ -475,6 +475,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         # the Candidates tab's expression group is built; declared here so nothing can
         # read it before that.
         self._expr_attestation: api.ExpressionAttestation | None = None
+        self._expr_attestable = False
         # Content hash of the attestation that promoted the head behind the CURRENT
         # candidate set (empty when none did). The banner names a scope only when this
         # matches the attestation it is about to describe, so a record edited on disk
@@ -1528,6 +1529,11 @@ class StudioWindow(QtWidgets.QMainWindow):
             "Honor an expression acceptance-gate attestation"
         )
         self._expr_attestation = _resolve_expression_attestation()
+        # The api-level "is this offerable here" probe (installed AND carrying a
+        # resolvable record), evaluated once. The window also holds the attestation
+        # itself, because it has to display the scope -- but the offer/don't-offer
+        # decision goes through the same public predicate any other frontend would use.
+        self._expr_attestable = "ribonn" in api.attested_expression_backends()
         self.expr_attested_check.toggled.connect(self._update_expr_attested)
         self._add_row(
             form, "Attestation", self.expr_attested_check,
@@ -1599,9 +1605,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         """
         for widget in (self.utr5_edit, self.utr3_edit):
             widget.setEnabled(checked and self._ribonn_available)
-        self.expr_attested_check.setEnabled(
-            checked and self._ribonn_available and self._expr_attestation is not None
-        )
+        self.expr_attested_check.setEnabled(checked and self._expr_attestable)
         # Delegated, so the species control has exactly one owner: it is the user's
         # while the head is uncalibrated and the attestation's while it is honoured.
         self._update_expr_attested(self.expr_attested_check.isChecked())
@@ -1652,10 +1656,35 @@ class StudioWindow(QtWidgets.QMainWindow):
         # failure the attestation layer exists to prevent.
         # Re-resolve at run time: the file may have appeared, changed or gone since the
         # window opened, and the promotion below reads it again anyway.
-        if self.expr_attested_check.isChecked():
-            self._expr_attestation = _resolve_expression_attestation()
+        wants_attested = self.expr_attested_check.isChecked()
+        if wants_attested:
+            try:
+                self._expr_attestation = api.expression_attestation("ribonn")
+            except (api.ExpressionAttestationError, OSError) as exc:
+                self._expr_attestation = None
+                self._warn(
+                    "That attestation can no longer be read",
+                    str(exc),
+                    "It resolved when this window opened. Fix or remove the file, or "
+                    "untick the attestation to run RiboNN uncalibrated.",
+                )
+                self._update_expr_attested(True)
+                return False, None
         attestation = self._expr_attestation
-        use_attested = self.expr_attested_check.isChecked() and attestation is not None
+        if wants_attested and attestation is None:
+            # Ticked, but nothing resolves any more. Building an uncalibrated head here
+            # would answer "give me a calibrated ranking" with an uncalibrated one and
+            # say nothing -- the exact failure this whole layer exists to prevent.
+            self._warn(
+                "No attestation to honor",
+                "The attestation that was available when this window opened no longer "
+                "resolves, so RiboNN cannot be promoted for this run.",
+                "Untick the attestation to run RiboNN uncalibrated (annotation only), "
+                f"or point ${api.EXPRESSION_ATTESTATION_ENV_VAR} at a valid record.",
+            )
+            self._update_expr_attested(True)
+            return False, None
+        use_attested = wants_attested and attestation is not None
         # Under promotion the scope is the attestation's, not the form's: the gate
         # measured one species / cell-type selection / ensemble size and certifies that
         # one, so the head is built to match rather than being built loosely and then

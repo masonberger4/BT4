@@ -274,11 +274,11 @@ def test_the_placeholder_can_never_be_promoted() -> None:
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
-        ({"top_k": 7}, "top_k"),
-        ({"utr5": "AAAAAA"}, "UTR context"),
-        ({"utr3": "TTTTTT"}, "UTR context"),
-        ({"species": "mouse"}, "covers species"),
-        ({"cell_types": ("HeLa",)}, "attestation covers cell types"),
+        ({"top_k": 7}, r"earned at top_k=5, predictor ensembles top_k=7"),
+        ({"utr5": "AAAAAA"}, "not one this attestation covers"),
+        ({"utr3": "TTTTTT"}, "not one this attestation covers"),
+        ({"species": "mouse"}, "covers species 'human', predictor is 'mouse'"),
+        ({"cell_types": ("HeLa",)}, r"covers cell types \['HEK293T'\]"),
         ({"cell_types": ()}, "different quantity"),
     ],
 )
@@ -292,6 +292,49 @@ def test_promotion_refuses_every_scope_mismatch(
         promote_if_attested(
             _head(**overrides), enabled=True, attestation=_attestation()
         )
+
+
+def test_promotion_refuses_an_attestation_for_another_backend() -> None:
+    # Reachable only from a hand-edited record, since attest_expression derives the
+    # backend from the run -- which is exactly why promotion re-checks it.
+    edited = dataclasses.replace(_attestation(), backend="something_else")
+    with pytest.raises(ExpressionAttestationError, match="attestation is for"):
+        promote_if_attested(_head(), enabled=True, attestation=edited)
+
+
+def test_a_record_whose_backend_and_species_disagree_is_refused() -> None:
+    # "ribonn[mouse]" scored, "human" recorded: the record would name neither.
+    comparison = _as_ribonn_run(_comparison(), species="mouse")
+    with pytest.raises(ExpressionAttestationError, match="but recorded species"):
+        attest_expression(comparison, readout="mrl", bt4_version="0.0.0-test")
+
+
+def test_a_subclassed_head_is_promoted_rather_than_silently_skipped() -> None:
+    # promote_if_attested's gate and verified_predictor's must agree: a class-name
+    # comparison would skip a subclass here while the seam accepted it, which is a
+    # silent downgrade in the one place that must never produce one.
+    class _Subclassed(RiboNNExpressionModel):
+        pass
+
+    head = _Subclassed(
+        species="human", utr5=PANEL_UTR5, utr3=PANEL_UTR3, cell_types=CELL_TYPES
+    )
+    promoted = promote_if_attested(head, enabled=True, attestation=_attestation())
+    assert promoted.calibrated is True
+
+
+def test_a_reordered_record_is_the_same_record() -> None:
+    # content_hash is a *content* hash: reordering a JSON list must not move it, and
+    # verified_predictor compares these tuples exactly.
+    payload = _attestation().to_dict()
+    payload["verified_against_panel"] = list(
+        reversed(payload["verified_against_panel"])
+    )
+    payload["weight_sha256"] = list(reversed(payload["weight_sha256"]))
+    assert (
+        ExpressionAttestation.from_dict(payload).content_hash()
+        == _attestation().content_hash()
+    )
 
 
 def test_promotion_refuses_mismatched_weight_hashes() -> None:
@@ -329,20 +372,32 @@ def test_the_record_carries_the_configuration_the_run_used() -> None:
 def test_a_declared_cell_type_the_gate_did_not_score_is_refused() -> None:
     # The sharpest edge in the old procedure: run the gate across all 78 cell types,
     # then declare HEK293T, and every later check accepts the lie. It is now a refusal.
-    comparison = run_panel_gate(
-        _panel(),  # type: ignore[arg-type]
-        "null",
-        settings=GateSettings(
-            within_group=True,
-            recalibrate=True,
-            coverage_tolerance=MAX_ATTESTATION_COVERAGE_TOLERANCE,
-            bootstrap_resamples=200,
-        ),
-        head_scores=[row.measured for row in _panel().rows],  # type: ignore[attr-defined]
+    panel = _panel()
+    comparison = _as_ribonn_run(
+        run_panel_gate(
+            panel,  # type: ignore[arg-type]
+            "null",
+            settings=GateSettings(
+                within_group=True,
+                recalibrate=True,
+                coverage_tolerance=MAX_ATTESTATION_COVERAGE_TOLERANCE,
+                bootstrap_resamples=200,
+            ),
+            head_scores=[row.measured for row in panel.rows],  # type: ignore[attr-defined]
+        )
     )
-    with pytest.raises(ExpressionAttestationError, match="declared cell types"):
+    # Built OUTSIDE the raises block: a fixture that raised the matching error would
+    # make this pass while `attest_expression` did nothing at all. And it must succeed
+    # when nothing is declared, so the refusal below is attributable to the declaration.
+    assert attest_expression(
+        comparison, readout="mrl", bt4_version="0.0.0-test"
+    ).cell_types == ()
+
+    with pytest.raises(
+        ExpressionAttestationError, match=r"declared cell types \['HEK293T'\]"
+    ):
         attest_expression(
-            _as_ribonn_run(comparison),
+            comparison,
             cell_types=("HEK293T",),
             readout="mrl",
             bt4_version="0.0.0-test",
@@ -463,6 +518,11 @@ def test_a_corrupt_attestation_refuses_rather_than_reading_as_absent(
     monkeypatch.setenv(ATTESTATION_PATH_ENV_VAR, str(path))
     with pytest.raises(ExpressionAttestationError, match="not valid JSON"):
         resolve_expression_attestation("ribonn")
+
+    # And the "is this offerable" probe reports it as absent rather than propagating --
+    # forced past the RiboNN-availability short-circuit, which in CI would otherwise
+    # answer () before an attestation was ever consulted.
+    monkeypatch.setattr(RiboNNExpressionModel, "available", lambda self: True)
     assert attested_expression_backends() == ()
 
 
@@ -513,11 +573,15 @@ def test_a_promoted_head_reorders_and_repicks(monkeypatch: pytest.MonkeyPatch) -
     assert scores == sorted(scores, reverse=True)
     assert all(c.expression_calibrated for c in cand_set.candidates)
 
-    # Invariant #9: the head that chose WHICH sequence ships enters the stamp, and so
-    # does the attestation that authorized it -- an uncalibrated run over the same
-    # protein must not share a config hash with this one.
-    plain = assemble_and_rank_candidates(_PROTEIN, steps=5, predictor=_head())
-    assert cand_set.manifest.config_hash != plain.manifest.config_hash
+    # Invariant #9, pinned so it cannot pass for the wrong reason. Comparing against an
+    # UNCALIBRATED run proves nothing here: `predictor_calibrated` alone already moves
+    # the hash, so that assertion held with the attestation key deleted. Two runs that
+    # are calibrated by DIFFERENT attestations isolate the claim.
+    other = dataclasses.replace(_attestation(), panel_sha256="0" * 64)
+    assert other.content_hash() != _attestation().content_hash()
+    second = promote_if_attested(_head(), enabled=True, attestation=other)
+    other_set = assemble_and_rank_candidates(_PROTEIN, steps=5, predictor=second)
+    assert cand_set.manifest.config_hash != other_set.manifest.config_hash
 
 
 def test_promotion_does_not_change_what_the_head_computes(

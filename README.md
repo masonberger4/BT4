@@ -360,8 +360,11 @@ results. SpliceAI's and RiboNN's weights are noncommercial-licensed.
 CDS-variant acceptance gate yourself and it passes
 ([`docs/GUIDE_ribonn_calibration.md`](docs/GUIDE_ribonn_calibration.md)), point
 `$BT4_EXPRESSION_ATTESTATION` at the record and set `BT4_EXPRESSION_USE_ATTESTED=1`
-(or tick the box on BT4 Studio's Candidates tab) and the candidate set is then **ranked**
-by predicted expression, with the delivered pick chosen by the head. BT4 bundles no
+(or tick the box on BT4 Studio's Candidates tab). `api.resolve_expression_backend("ribonn",
+...)` then returns a **calibrated** head, and passing it to `api.candidates(...,
+predictor=head)` makes the set a real **ranking** with the delivered pick chosen by the
+head. (The environment variable governs promotion, not selection: `api.candidates` still
+defaults to the neutral placeholder unless you hand it a head.) BT4 bundles no
 expression attestation — none has been earned — so by default the head annotates and
 never steers. A promotion is bound to the exact scope the gate measured (species,
 cell-type selection, `top_k`, UTR context, weight hashes); a head outside it is
