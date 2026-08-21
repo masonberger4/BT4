@@ -699,7 +699,10 @@ QT_QPA_PLATFORM=offscreen python -m pytest tests/ -p no:cacheprovider
 ## RiboNN environment gotchas (learned on real hardware)
 
 Point `$BT4_RIBONN_DIR` at the user's own RiboNN checkout. Its stack needs
-`numpy<2` (torch 1.13.1 ABI) and `setuptools<82` (its older `pytorch_lightning`
+`numpy<2` (torch 1.13.1 ABI — note that is BT4's derived *ceiling*; upstream's
+`environment.yml` pins numpy to 1.22.4 exactly, so this shorthand understates it and must
+not be used as evidence about what else could share the environment) and
+`setuptools<82` (its older `pytorch_lightning`
 calls `pkg_resources`; upstream issue #10 / PR #11), and the Zenodo `weights.zip`
 (record 17258709) extracted **into** a directory literally named `models/` under
 `$BT4_RIBONN_DIR` — the zip's root holds `human/` and `mouse/`, so `-C models` is
@@ -728,32 +731,34 @@ Three more, learned from reading upstream rather than from a crash:
   Note `src/predict.py` calls `torch.load` with **no `map_location`**, so if the
   released state dicts carry CUDA tensors they will refuse to load on a CPU-only
   box — that is an upstream property, not a BT4 bug.
-  **Clone into `%USERPROFILE%`, not `C:\`** — the guide's Step 9 `max_shift` check
-  defaults to `~/RiboNN/models`, so a `C:\RiboNN` clone makes the one check written to
-  fail loudly instead report that it cannot find `runs.csv`.
 
-Three more, learned while walking a maintainer through a real Windows install (2026-08):
+Four more, learned while walking a maintainer through a real Windows install (2026-08):
 
-- **RiboNN and the splice CNNs should not share an environment.** RiboNN's
-  `environment.yml` pins torch **1.13.1** and numpy **1.22.4** exactly (fetched from
-  upstream, not paraphrased — BT4's own shorthand `numpy<2` understates it); the
-  `splice-pangolin` extra declares torch **>= 2.2**, so installing it here would upgrade
-  torch off that pin. Note the floor is **BT4's**: upstream Pangolin declares no
-  `install_requires` at all, and nothing in BT4 checks `torch.__version__` at runtime, so
-  "cannot coexist" is the safe arrangement rather than a measured impossibility. So a
-  maintainer with a working Pangolin environment must build a second one and
-  `pip install -e` BT4 into both — safe, because BT4's core has **zero** dependencies and
+- **Clone into `%USERPROFILE%`, not `C:\`.** The guide's Step 9 `max_shift` check defaults
+  to `~/RiboNN/models`, so a `C:\RiboNN` clone makes the one check written to fail loudly
+  instead report that it cannot find `runs.csv`.
+- **RiboNN and Pangolin should not share an environment** — installing `[splice-pangolin]`
+  into RiboNN's env would upgrade torch off RiboNN's pin. The versions, and the fact that
+  the `torch>=2.2` floor is **BT4's own** rather than an upstream Pangolin requirement,
+  are stated in the guide's Step 5 and deliberately **not** repeated here: an earlier
+  draft of this bullet restated them, and the copies drifted apart inside a single commit.
+  The repo-side facts worth holding here are that nothing checks `torch.__version__` at
+  runtime, and that the SpliceAI half is a *separate, untested* question (its extra is
+  TensorFlow-only). A maintainer with a working Pangolin environment builds a second one
+  and `pip install -e` BT4 into both — safe, because BT4's core has **zero** dependencies and
   the `expression-ribonn` extra is floors (`torch>=1.13`, `pandas>=1.5`), not pins, so it
   upgrades nothing already present. The consequence to state rather than let someone
   discover: inside the RiboNN environment the wrapped splice CNNs are unavailable and the
   audit falls back to the PWM baseline, so **one run cannot use both**.
-- **Miniforge is not a prerequisite.** Miniconda/Anaconda are equivalent here: every
-  command in the guide names its channel, and RiboNN's own `environment.yml` pins
-  `conda-forge` (verified against upstream). `mamba` is a speed convenience; `conda` runs
-  the same commands.
-- **`conda activate` is shell state, which agent-driven shells lose.** Anything starting
-  a fresh shell per command silently runs against the wrong Python and then reports a
-  confusing downstream error. Use `conda run -n RiboNN --no-capture-output ...` there.
+- **Miniforge is not a prerequisite;** Miniconda/Anaconda work, and `mamba` is a speed
+  convenience. The one real difference is that `conda env create -f environment.yml` names
+  no channel, so `defaults` is consulted unless `nodefaults` is added to RiboNN's file —
+  an earlier draft claimed "every command names its channel", which is false for the one
+  command that matters most.
+- **`conda activate` *and* `$BT4_RIBONN_DIR` are both shell state, and agent-driven shells
+  lose both.** `conda run` replaces only the first — it inherits the parent environment —
+  so a half-fix runs the right Python against an unset variable and fails with "RiboNN
+  clone not found", which looks nothing like the cause. Guide Step 7 has the full form.
 
 ## Splice CNN environment gotchas (learned on real hardware)
 
