@@ -70,13 +70,18 @@ tandem/inverted repeats, forbidden & restriction motifs, internal ATG / Kozak /
 uORF, CpG budget, cryptic splice sites, 5′ mRNA folding).
 
 **Scope, stated honestly (§10.6 applied to BT4's own framing).** BT4 optimizes a
-**coding sequence**, and today it optimizes it **in isolation**: no field carries
-the 5′UTR, the vector backbone, or any sequence outside the CDS, so folding sees
-only `CDS[0:48]`, the splice CNNs see the CDS padded with literal `N`, and the
-initiator Kozak context is unreachable. "Expression-relevant objectives" is
-therefore the accurate claim — a validated *expression outcome* is not one BT4 can
-make, and must not be written as though it were. Making the design
-**construct-aware** is the standing architectural gap; see
+**coding sequence**. It no longer optimizes it *in isolation*: `ConstructContext`
+carries the 5′UTR and vector backbone, `SeededConstraint` makes every LOCAL rule
+junction-correct, `junction_window()` folds the initiation region, and
+`api.audit_construct` audits the assembled construct — so the initiator Kozak
+context is reachable and a junction defect is visible. **What has not changed is
+the claim BT4 is entitled to make.** Supplying context is optional and often
+omitted, and on the bare-CDS path folding still sees only `CDS[0:48]` and the
+splice CNNs still see the CDS padded with literal `N` — a measured *lower bound* on
+those models' response, not their estimate (§6). Real flanks for the wrapped splice
+CNNs remain unbuilt. So "expression-relevant objectives" stays the accurate claim —
+a validated *expression outcome* is not one BT4 can make, and must not be written
+as though it were. For the measured evidence behind the context work, see
 [`docs/REVIEW_2026-08_expression_and_context.md`](docs/REVIEW_2026-08_expression_and_context.md)
 for the measured evidence and
 [`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md) for the queue.

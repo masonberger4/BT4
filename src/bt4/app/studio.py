@@ -33,7 +33,7 @@ from itertools import pairwise
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from bt4 import api
+from bt4 import __version__, api
 from bt4.app import theme
 from bt4.app.worker import (
     CandidatesResult,
@@ -1897,7 +1897,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         box.setIcon(QtWidgets.QMessageBox.Icon.Information)
         box.setWindowTitle("About BT4 Studio")
         box.setText(
-            "BT4 Studio designs a coding sequence by constrained, "
+            f"BT4 Studio {__version__} -- designs a coding sequence by constrained, "
             "multi-objective optimization over a codon trellis."
         )
         box.setInformativeText(
@@ -2290,8 +2290,12 @@ class StudioWindow(QtWidgets.QMainWindow):
             "avoid_uorf": lambda v: self.uorf_check.setChecked(bool(v)),
             "inverted_stem": lambda v: self.inverted_spin.setValue(int(v)),  # type: ignore[arg-type]
             "inverted_loop": lambda v: self.inverted_loop_spin.setValue(int(v)),  # type: ignore[arg-type]
-            "refine": lambda v: None,  # no refinement control in the app yet
         }
+        # Deliberately NOT a no-op entry per unsupported field. `refine` used to sit in
+        # this table mapped to `lambda v: None`, which kept it out of `unmapped` and so
+        # out of the message below -- the IVT mRNA preset asks for refinement, the app
+        # has no refinement control, and the user was told nothing. A field with no
+        # control belongs in `unmapped`, which is exactly what the guard is for.
         unmapped = sorted(set(preset.overrides) - set(setters))
         for field, value in preset.overrides.items():
             setter = setters.get(field)
@@ -2299,8 +2303,11 @@ class StudioWindow(QtWidgets.QMainWindow):
                 setter(value)
         message = f"Applied preset '{preset.label}'. Change anything below - your edits win."
         if unmapped:
-            # Never let a preset silently set something with no visible control.
-            message += f" (Not shown in this panel: {', '.join(unmapped)}.)"
+            # Never let a preset silently set something with no visible control. These
+            # fields are not applied at all -- the run is built from the controls -- so
+            # say that, rather than the weaker "not shown", which reads as "applied,
+            # just invisible".
+            message += f" (Not applied - this panel has no control for: {', '.join(unmapped)}.)"
         self.statusBar().showMessage(message)
 
     def _read_cpb(self) -> tuple[float, tuple[str, ...]]:
@@ -3593,40 +3600,91 @@ def main() -> int:
     return app.exec()
 
 
+# The self-test's design case. The unconstrained optimum of this 74-residue albumin
+# leader *contains* SacII's CCGCGG, and the same solve under the SacII rule does not --
+# so asking for the rule genuinely changes the delivered sequence. That is what makes
+# the check non-vacuous, and _self_test_engine re-establishes it on every run rather
+# than trusting this comment.
+_SELF_TEST_PROTEIN = "MKWVTFISLLFLFSSAYSRGVFRRDAHKSEVAHRFKDLGEENFKALVLIAFAQYLQQCPFEDHVKLVNEVTEFAK"
+_SELF_TEST_ENZYME = "SacII"
+_SELF_TEST_SITE = "CCGCGG"
+
+
 def _self_test_engine() -> None:
-    """Run one real design, so a bundle that *opens* but cannot *work* fails here.
+    """Run two real designs, so a bundle that *opens* but cannot *work* fails here.
 
-    Opening the window proves the Qt stack and the codon tables the organism picker
-    reads are present. It does not prove the packaged app can design anything: a data
-    file reachable only from a run -- the REBASE enzyme catalog is the likeliest to be
-    missed by packaging, since nothing loads it until a rule needs it -- would
-    otherwise ship and surface as a crash on the user's first click. This is the only
-    check that runs the engine inside the frozen bundle.
+    Opening the window proves the Qt stack, the imports, and the packaged tables that
+    load with them. It does not prove the packaged app can design anything -- and the
+    v0.5.0 bundle defect (a data file absent from the freeze) showed that a from-source
+    suite cannot see the difference.
 
-    Deliberately silent on success (only ``cli`` prints, CLAUDE.md section 3); a
-    failure raises, and the non-zero exit is the signal CI reads.
+    So this designs the same protein twice: once plainly, and once under a restriction
+    rule. It then requires the rule to have *changed the answer* -- the unconstrained
+    solve must carry the site and the guarded one must not. A check that only asserted
+    "the delivered sequence lacks CCGCGG" would pass just as happily if the rule were
+    silently dropped, which is exactly the failure worth catching; requiring the pair to
+    differ is what makes it real, and it is re-established here on every run rather than
+    assumed. If a future codon table makes the unguarded optimum clean, this fails
+    loudly and asks for a new pair instead of quietly going vacuous.
+
+    Deliberately silent on success (only ``cli`` prints, CLAUDE.md section 3); a failure
+    raises, and the non-zero exit is the signal CI reads.
 
     Raises:
-        RuntimeError: If the design does not come back well-formed, or carries the
-            very site it was told to avoid.
+        RuntimeError: If either design comes back malformed, if the restriction rule did
+            not remove the site, or if the case has gone vacuous.
     """
-    protein = "MKWVTFISLL"
-    result = api.optimize(
-        protein,
-        api.OptimizeConfig(
-            organism="homo_sapiens",
-            restriction_enzymes=("EcoRI",),
-            max_homopolymer=5,
-            seed=0,
-        ),
+    plain = api.OptimizeConfig(organism="homo_sapiens", max_homopolymer=5, seed=0)
+    guarded = api.OptimizeConfig(
+        organism="homo_sapiens",
+        max_homopolymer=5,
+        seed=0,
+        restriction_enzymes=(_SELF_TEST_ENZYME,),
     )
-    expected_nt = 3 * (len(protein) + 1)  # the CDS plus its stop codon
-    if len(result.dna) != expected_nt:
+    unguarded_dna = api.optimize(_SELF_TEST_PROTEIN, plain).dna
+    guarded_dna = api.optimize(_SELF_TEST_PROTEIN, guarded).dna
+
+    expected_nt = 3 * (len(_SELF_TEST_PROTEIN) + 1)  # the CDS plus its stop codon
+    for label, dna in (("unguarded", unguarded_dna), ("guarded", guarded_dna)):
+        if len(dna) != expected_nt:
+            raise RuntimeError(
+                f"self-test: {label} design is {len(dna)} nt for a "
+                f"{len(_SELF_TEST_PROTEIN)}-residue protein, expected {expected_nt}"
+            )
+    if _SELF_TEST_SITE not in unguarded_dna:
         raise RuntimeError(
-            f"self-test: designed {len(result.dna)} nt for a {len(protein)}-residue "
-            f"protein, expected {expected_nt}"
+            f"self-test has gone vacuous: the unguarded optimum no longer contains "
+            f"{_SELF_TEST_ENZYME}'s {_SELF_TEST_SITE}, so removing it proves nothing. "
+            f"Pick a new protein/enzyme pair whose unguarded solve carries the site."
         )
-    if "GAATTC" in result.dna:
-        raise RuntimeError("self-test: the EcoRI site the run was told to avoid is present")
-    if not api.available_organisms():
-        raise RuntimeError("self-test: no organism tables resolved from the bundle")
+    if _SELF_TEST_SITE in guarded_dna:
+        raise RuntimeError(
+            f"self-test: the {_SELF_TEST_ENZYME} site {_SELF_TEST_SITE} survived a run "
+            f"that asked for it to be avoided"
+        )
+    _self_test_bundled_attestations()
+
+
+def _self_test_bundled_attestations() -> None:
+    """Require the committed splice attestations to be readable from the bundle.
+
+    The v0.5.0 packaging defect had two halves. The loud one crashed the app at launch.
+    The quiet one was worse: the committed fidelity attestations were absent from the
+    bundle too, and an absent attestation file legitimately reads as *"no attestation
+    ships for this backend"* -- so the packaged app would have disclaimed two gates that
+    had in fact passed, and said nothing was wrong. Only a check that asks for them by
+    name catches a failure whose signature is silence.
+
+    Raises:
+        RuntimeError: If a backend whose attestation is committed in the source tree
+            cannot load it from this build.
+    """
+    from bt4.biomodels.splice.attestations import bundled_attestation
+
+    for backend in ("pangolin", "spliceai"):
+        if bundled_attestation(backend) is None:
+            raise RuntimeError(
+                f"self-test: no bundled attestation for {backend}. One is committed in "
+                f"the source tree, so this build is missing it -- and a missing "
+                f"attestation reads as 'never gated', which is a false disclaimer."
+            )

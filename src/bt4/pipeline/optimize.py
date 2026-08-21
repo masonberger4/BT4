@@ -838,6 +838,19 @@ def _make_result(
     )
 
 
+def _cpsat_available() -> bool:
+    """Return whether the optional OR-Tools CP-SAT backend can actually be imported.
+
+    Checked rather than assumed because the answer differs between a developer
+    checkout with ``bt4[ilp]`` installed and the shipped BT4 Studio bundle, which
+    carries no OR-Tools at all. Uses importlib rather than a try/except import so the
+    probe cannot leave a half-imported module behind.
+    """
+    from importlib.util import find_spec
+
+    return find_spec("ortools") is not None
+
+
 def _solve_with_gc_budget(
     residues: Sequence[str],
     active: Sequence[tuple[ObjectiveTerm, float]],
@@ -856,11 +869,22 @@ def _solve_with_gc_budget(
     ``BEAM_TRUNCATED`` when a beam truncates a layer -- the budget stays exact
     either way). Both backends recompute the delivered metrics from the DNA, so a
     budget is always honestly reported.
+
+    **When OR-Tools is absent the Lagrangian backend takes the pure-additive case
+    too.** CP-SAT lives behind the optional ``bt4[ilp]`` extra, and the packaged BT4
+    Studio bundle deliberately does not carry it -- so without this fallback a user of
+    the shipped app who set a GC budget with every local rule switched off got a raw
+    ``ModuleNotFoundError: No module named 'ortools'`` from a control the app offers
+    them, with no way to install anything. The Lagrangian backend needs nothing beyond
+    the pure core and solves that case exactly, so the feature works instead of
+    failing. It is not a silent downgrade: the fallback fires only when OR-Tools cannot
+    be imported at all, and the certificate the run reports comes from whichever
+    backend actually ran.
     """
     non_local = any(
         term.scope() is Scope.PAIRWISE or term.context_len() > 0 for term, _ in active
     )
-    if constraints or non_local:
+    if constraints or non_local or not _cpsat_available():
         # Local constraints and pairwise terms are exactly what CP-SAT drops; the
         # Lagrangian backend keeps them by dualizing the budget into the exact DP.
         from bt4._accel import gc_count  # lazy: matches the accel import site

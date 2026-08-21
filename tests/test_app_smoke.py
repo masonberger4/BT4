@@ -22,6 +22,7 @@ pytest.importorskip("PySide6")
 
 from PySide6 import QtGui, QtWidgets
 
+import bt4
 from bt4 import api
 from bt4.app import studio
 from bt4.app.studio import SequenceViewer, StudioWindow
@@ -1573,35 +1574,120 @@ def test_metrics_table_grows_with_the_audit() -> None:
 
 
 def test_self_test_engine_runs_a_real_design() -> None:
-    """``--self-test`` designs a real sequence, not just a window.
+    """``--self-test`` designs real sequences, not just a window.
 
-    This is the check that runs inside the *frozen* bundle, where a data file the
-    engine loads lazily (the REBASE catalog) is absent unless packaging collected it.
+    This is the check that runs inside the *frozen* bundle, where the v0.5.0 defect
+    (a packaged data file absent from the freeze) lived, invisible to a suite that
+    reads the same files straight off the source tree.
     """
     studio._self_test_engine()  # raises on failure; silent on success
 
 
-def test_self_test_engine_rejects_a_malformed_design(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The self-test is not vacuous: a bad design fails it.
+def test_self_test_case_is_not_vacuous() -> None:
+    """The rule under test must actually change the delivered sequence.
 
-    Pins the guard itself. A smoke check that passes whatever the engine returns
-    would have let the broken bundle through just as quietly as no check at all.
+    The first version of this check asked only whether the delivered DNA lacked an
+    EcoRI site -- and the unguarded optimum for its protein never contained one, so it
+    passed identically whether or not the restriction rule was applied at all. That is
+    the failure mode worth pinning: assert here that the pair is live, so the day a
+    codon-table change makes it vacuous, this says so rather than the self-test quietly
+    proving nothing.
+    """
+    plain = api.OptimizeConfig(organism="homo_sapiens", max_homopolymer=5, seed=0)
+    guarded = api.OptimizeConfig(
+        organism="homo_sapiens",
+        max_homopolymer=5,
+        seed=0,
+        restriction_enzymes=(studio._SELF_TEST_ENZYME,),
+    )
+    unguarded_dna = api.optimize(studio._SELF_TEST_PROTEIN, plain).dna
+    guarded_dna = api.optimize(studio._SELF_TEST_PROTEIN, guarded).dna
+    assert studio._SELF_TEST_SITE in unguarded_dna
+    assert studio._SELF_TEST_SITE not in guarded_dna
+    assert unguarded_dna != guarded_dna
+
+
+def test_self_test_engine_rejects_a_malformed_design(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bad design fails the self-test.
+
+    Pins the guard itself. A smoke check that passes whatever the engine returns would
+    have let the broken bundle through just as quietly as no check at all.
     """
 
     class _Stub:
-        dna = "ATG"  # far too short for a 10-residue protein
+        dna = "ATG"  # far too short for the self-test protein
 
     monkeypatch.setattr(studio.api, "optimize", lambda *a, **k: _Stub())
-    with pytest.raises(RuntimeError, match="expected 33"):
+    with pytest.raises(RuntimeError, match="expected 228"):
         studio._self_test_engine()
 
 
-def test_self_test_engine_rejects_an_unavoided_site(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A design carrying the site it was told to avoid fails the self-test."""
+def test_self_test_engine_rejects_an_unremoved_site(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A guarded design still carrying the site fails the self-test."""
+    real = api.optimize
 
-    class _Stub:
-        dna = "ATGAAGTGGGTGACCTTCATCTCCGAATTC"[:30] + "TAA"
+    def _ignore_the_rule(protein: str, config: object = None) -> object:
+        # Both solves come back unguarded -- i.e. the restriction rule did nothing.
+        return real(protein, studio.api.OptimizeConfig(
+            organism="homo_sapiens", max_homopolymer=5, seed=0
+        ))
 
-    monkeypatch.setattr(studio.api, "optimize", lambda *a, **k: _Stub())
-    with pytest.raises(RuntimeError, match="EcoRI"):
+    monkeypatch.setattr(studio.api, "optimize", _ignore_the_rule)
+    with pytest.raises(RuntimeError, match="survived a run"):
         studio._self_test_engine()
+
+
+def test_self_test_engine_reports_a_vacuous_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the unguarded optimum stops carrying the site, the self-test says so.
+
+    The check must fail *loudly* when it can no longer prove anything, rather than
+    passing on a comparison that has become trivially true.
+    """
+    real = api.optimize
+
+    def _always_guarded(protein: str, config: object = None) -> object:
+        return real(protein, studio.api.OptimizeConfig(
+            organism="homo_sapiens",
+            max_homopolymer=5,
+            seed=0,
+            restriction_enzymes=(studio._SELF_TEST_ENZYME,),
+        ))
+
+    monkeypatch.setattr(studio.api, "optimize", _always_guarded)
+    with pytest.raises(RuntimeError, match="gone vacuous"):
+        studio._self_test_engine()
+
+
+def test_preset_reports_a_field_it_cannot_apply() -> None:
+    """A preset field with no control is named as *not applied*, never silently dropped.
+
+    `refine` used to be registered with a no-op setter, which kept it out of the
+    "unmapped" list and so out of the message -- so choosing the IVT mRNA preset, which
+    asks for refinement, produced a design without it and said nothing. The app's own
+    rule is that a preset never sets something invisibly; a no-op setter is the one way
+    to defeat it.
+    """
+    window = StudioWindow()
+    ivt = next(
+        (i for i in range(window.preset_combo.count())
+         if "mRNA" in window.preset_combo.itemText(i)),
+        None,
+    )
+    assert ivt is not None, "no IVT mRNA preset in the combo"
+    window.preset_combo.setCurrentIndex(ivt)
+    window._on_preset_chosen(ivt)
+    message = window.statusBar().currentMessage()
+    assert "Not applied" in message
+    assert "refine" in message
+
+
+def test_about_box_names_the_version() -> None:
+    """A released app must be able to say which release it is.
+
+    Without it, a user reporting "the app does X" gives no way to tell which build
+    they are on -- and 0.5.0 changed what the engine delivers by default (the CAI
+    reference set), so the answer matters.
+    """
+    window = StudioWindow()
+    window._show_about()
+    assert bt4.__version__ in window._msgbox.text()
