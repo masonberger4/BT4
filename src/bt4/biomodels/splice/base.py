@@ -98,13 +98,15 @@ point is the job of the statistical-calibration gate
 would move.
 
 **Measured consequence, no longer hypothetical.** Run against the hash-verified
-Pangolin weights on designed coding sequence -- BT4's own regime -- **no position on
-any sequence exceeded 0.5**, across a native CDS and thirty synonymous redesigns of
-each of three proteins. Peak scores ran 0.128 to 0.445 and differed more than twofold
-between the native and its designs, and every one of them pooled to a risk of exactly
-``0.0``. So ``delta_splicing`` was identically zero for every candidate, the rank
-agreements computed from those deltas were Spearman correlations of constants, and
-none of it was visible in the output.
+Pangolin weights on designed coding sequence -- BT4's own regime, a native CDS and
+thirty synonymous redesigns of each of three proteins (93 sequences) -- **only 6 of
+those 93 carried any position above 0.5**, and all six were designs of a single
+protein; for the other two proteins no sequence, native or designed, cleared the
+background at any position. Peak scores ran 0.128 to 0.445 and differed more than
+twofold between the native and its designs, yet every sub-background sequence pooled
+to a risk of exactly ``0.0``. So ``delta_splicing`` was identically zero for those
+candidates, the rank agreements computed from those deltas were Spearman correlations
+of constants, and none of it was visible in the output.
 
 Lowering this constant is **not** the fix, and must not be done to make the signal
 reappear: that is the same uncalibrated knob pointed somewhere more flattering, and
