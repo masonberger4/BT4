@@ -704,9 +704,15 @@ width_rule:           median error-bar width ÷ spread of the data must be < 1.0
 runs_permitted:       1
 ```
 
-Because the gate's own record is thin, **also write down here**: which cell types you
-used, your `top_k` setting, and which UTR files. None of those appear in the output file,
-and you will not remember them later.
+The gate now records the rest of the scope itself — `gate_result.json` carries a `scope`
+block with the cell types, `top_k`, the species and a content hash per UTR context, and
+`bt4 expression-gate` prints the same line. **Where the two disagree, `scope` is the
+record**: it is what the run was configured with, and it is what an attestation is
+derived from, so a note here that contradicts it is refused rather than believed.
+
+One thing the record genuinely cannot hold: it stores a *hash* of each UTR context, not
+a filename. **Write down which UTR files you used**, so that hash can be resolved back to
+something you can find again.
 
 ## Step 18 — Run the test. Once.
 
@@ -726,6 +732,9 @@ python scripts/run_expression_gate.py \
     --baselines permutation,cai,gc3,length,constant \
     --num-workers 0 --json > gate_result.json
 ```
+
+(Step 20 adds one flag to this same command, so you may prefer to jump ahead and run the
+final form once rather than scoring twice.)
 
 ### The three flags you must not forget
 

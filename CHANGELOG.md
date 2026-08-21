@@ -7,6 +7,27 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Fixed
+- **Two promotion tests passed while the code they name was never called.** Both built
+  their fixture *inside* `pytest.raises`, and `attest_expression` and
+  `verified_predictor` share the phrases `"different quantity"` and `"not an attestable
+  expression head"` -- so a fixture that raised satisfied the assertion. Proven by
+  mutation: sabotaging `attest_expression` to raise a colliding message left
+  `test_promotion_refuses_every_scope_mismatch[cell_types=()]` and
+  `test_promotion_refuses_a_non_attestable_predictor` **green** with the cell-type
+  binding and the non-attestable type check completely dead. Fixtures are hoisted out,
+  every `match` is now a clause unique to the promotion path, and a new guard
+  (`test_the_scope_matches_cannot_be_satisfied_by_the_attest_side`) asserts against the
+  shared constant that the collision cannot return. The same mutation now fails the
+  tests, which is the check that was missing.
+- **The RiboNN guide told the reader the gate's record was thin.** Step 17 still said
+  "which cell types you used, your `top_k` setting, and which UTR files ... None of those
+  appear in the output file" -- the exact omission the `GateScope` work removed, and the
+  opposite of what Steps 18/20/21 of the same guide now say. Verified by running the
+  gate: the report carries `scope` with all of them. Rewritten to say `scope` is
+  authoritative where a hand-written note disagrees, keeping the one part that is still
+  true -- the record holds a UTR *hash*, not a filename, so note the files.
+
 ### Added
 - **The expression head can finally be promoted -- and BT4 Studio can use it.**
   `verified_predictor` has existed since the attestation apparatus landed, but **nothing
