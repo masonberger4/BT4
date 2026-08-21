@@ -227,11 +227,15 @@ def _expression_scope_line(attestation: api.ExpressionAttestation) -> str:
     shown what they are trusting rather than just the word "calibrated".
     """
     cells = ", ".join(attestation.cell_types) or "all cell types"
+    # Which parts of that scope the panel independently confirmed, and which were the
+    # maintainer's word. Showing only the scope would present the two as equivalent.
+    checked = ", ".join(attestation.verified_against_panel) or "none"
     return (
         f"{attestation.species} weights - {cells} - {attestation.readout} - "
         f"top_k={attestation.top_k} - "
         f"{len(attestation.utr_context_sha256)} UTR context(s) - "
-        f"panel {attestation.panel_sha256[:12]}..."
+        f"panel {attestation.panel_sha256[:12]}... - "
+        f"verified against the panel: {checked}"
     )
 
 
@@ -471,6 +475,11 @@ class StudioWindow(QtWidgets.QMainWindow):
         # the Candidates tab's expression group is built; declared here so nothing can
         # read it before that.
         self._expr_attestation: api.ExpressionAttestation | None = None
+        # Content hash of the attestation that promoted the head behind the CURRENT
+        # candidate set (empty when none did). The banner names a scope only when this
+        # matches the attestation it is about to describe, so a record edited on disk
+        # mid-session cannot make the UI attribute one calibration's scope to another.
+        self._run_attestation_sha = ""
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls_scroll = QtWidgets.QScrollArea()
@@ -1464,9 +1473,11 @@ class StudioWindow(QtWidgets.QMainWindow):
                 "Annotate every candidate with the wrapped RiboNN translation-"
                 "efficiency model (your own checkout and weights, hash-verified "
                 "before loading). Runs once over the whole set, off the GUI thread. "
-                "RiboNN is UNCALIBRATED for BT4's CDS-variant regime, so it only "
-                "annotates: the table stays in discovery order and the solver's "
-                "pick stays delivered. Requires the 5'/3' UTR context below."
+                "RiboNN is UNCALIBRATED for BT4's CDS-variant regime, so on its own it "
+                "only annotates: the table stays in discovery order and the solver's "
+                "pick stays delivered. That changes only if you also tick the "
+                "attestation box below, which promotes it inside the scope a passing "
+                "acceptance gate measured. Requires the 5'/3' UTR context below."
             )
         else:
             ribonn_tip = (
@@ -1550,7 +1561,15 @@ class StudioWindow(QtWidgets.QMainWindow):
         run time rather than silently promoted.
         """
         attestation = self._expr_attestation
-        active = checked and attestation is not None
+        # Gated on the HEAD being selected too, not just the box being ticked: unticking
+        # RiboNN would otherwise leave a "Calibrated only for: ..." claim on screen for a
+        # head that is no longer in the run at all.
+        active = (
+            checked
+            and attestation is not None
+            and self.ribonn_check.isChecked()
+            and self._ribonn_available
+        )
         if active and attestation is not None:
             index = self.ribonn_species_combo.findText(attestation.species)
             if index >= 0:
@@ -1598,6 +1617,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             been shown and the run must not start. Refusing here, rather than
             letting the engine raise mid-run, keeps the failure legible.
         """
+        self._run_attestation_sha = ""
         if not (self.ribonn_check.isChecked() and self._ribonn_available):
             return True, None
         utr5 = "".join(self.utr5_edit.text().split()).upper()
@@ -1630,6 +1650,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         # RAISES rather than downgrading, so it is caught here and explained: a user who
         # ticked "calibrated ranking" and silently got an uncalibrated one is exactly the
         # failure the attestation layer exists to prevent.
+        # Re-resolve at run time: the file may have appeared, changed or gone since the
+        # window opened, and the promotion below reads it again anyway.
+        if self.expr_attested_check.isChecked():
+            self._expr_attestation = _resolve_expression_attestation()
         attestation = self._expr_attestation
         use_attested = self.expr_attested_check.isChecked() and attestation is not None
         # Under promotion the scope is the attestation's, not the form's: the gate
@@ -1660,6 +1684,9 @@ class StudioWindow(QtWidgets.QMainWindow):
                 "untick the attestation to run RiboNN uncalibrated (annotation only).",
             )
             return False, None
+        # Not "an attestation was available" but "THIS head was promoted by THIS record":
+        # the flag lives on the predictor, set only by the promotion seam.
+        self._run_attestation_sha = str(getattr(predictor, "attestation_sha256", ""))
         return True, predictor
 
     def _build_library_tab(self) -> QtWidgets.QWidget:
@@ -3302,10 +3329,13 @@ class StudioWindow(QtWidgets.QMainWindow):
             # banner names that scope rather than just saying "calibrated". A promotion
             # can only have come through the attestation seam, so one is resolvable
             # here; the fallback text keeps the claim honest if it somehow is not.
+            attestation = self._expr_attestation
             scope = (
-                _expression_scope_line(self._expr_attestation)
-                if self._expr_attestation is not None
-                else "scope unavailable"
+                _expression_scope_line(attestation)
+                if attestation is not None
+                and attestation.content_hash() == self._run_attestation_sha
+                else "scope unavailable (this set was not promoted by the attestation "
+                "loaded here)"
             )
             basis = (
                 f"<b>Ranked by predicted expression</b> ({escape(model)}); the ★ "

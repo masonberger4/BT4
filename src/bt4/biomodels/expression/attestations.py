@@ -212,14 +212,27 @@ def promote_if_attested(
 
     Raises:
         ExpressionAttestationError: If an attestation resolves and is opted into but does
-            not match this predictor.
+            not match this predictor, or if ``enabled=True`` was passed explicitly for an
+            attestable head and no attestation resolves at all.
     """
     if not (attested_promotion_enabled() if enabled is None else enabled):
         return predictor
-    if _attestable_backend(predictor) is None:
+    backend = _attestable_backend(predictor)
+    if backend is None:
         return predictor
-    resolved = resolve_expression_attestation("ribonn", attestation=attestation)
+    resolved = resolve_expression_attestation(backend, attestation=attestation)
     if resolved is None:
+        if enabled:
+            # An explicit per-call `enabled=True` is a request about THIS call, so
+            # answering it with a silently uncalibrated head is the failure this layer
+            # exists to prevent. A standing env-var opt-in is a preference rather than a
+            # request, and stays a no-op so a forgotten export cannot break every run.
+            raise ExpressionAttestationError(
+                f"promotion was requested for {type(predictor).__name__} but no "
+                f"attestation resolves for {backend!r}: none is bundled (none has been "
+                f"earned) and ${ATTESTATION_PATH_ENV_VAR} is unset. Refusing to hand "
+                "back an uncalibrated head to a caller that asked for a calibrated one."
+            )
         return predictor
 
     from bt4.biomodels.expression.attestation import verified_predictor
