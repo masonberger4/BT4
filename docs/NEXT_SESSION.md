@@ -582,7 +582,17 @@ items 1–3 are in
     measured defects (the `bt4 expression-gate` shortcut cannot emit `gate_result.json`;
     the "~90 rows" panel floor fails a good head **56%** of the time, all of it on the
     coverage band, so size for **~200**; `$BT4_RIBONN_WEIGHTS` is undocumented anywhere
-    else; and the job-1 "bit-for-bit" ✅ was an overclaim, now corrected). **Remaining
+    else; and the job-1 "bit-for-bit" ✅ was an overclaim, now corrected).
+    **Licence status: the maintainer reports the grant was received in writing (2026-08).**
+    Recorded as reported, not as verified — no artifact in this repo can confirm it, and
+    saying otherwise would be the kind of unbacked claim §5 exists to prevent. What *is*
+    verifiable from upstream is the grant's shape: `LICENSE` and `MODEL WEIGHTS
+    LICENSE.txt` grant use "to any person from academic research or non-profit
+    organizations", so it is an **affiliation** grant, not merely a non-commercial one,
+    and the guide's Step 1 has it resolved with `patent.gos@sanofi.com` before any
+    download. Guide Steps 5–9 (install + verify) are the step in progress; the
+    Windows-specific corrections learned there are in the gotchas section below.
+    **Remaining
     (human):** run the free sanity checks against the licensed weights, obtain a
     licence-clean regime-matched **CDS-variant** panel — no public dataset fully
     qualifies today, so read §4 of the research doc before spending anything — then
@@ -718,6 +728,32 @@ Three more, learned from reading upstream rather than from a crash:
   Note `src/predict.py` calls `torch.load` with **no `map_location`**, so if the
   released state dicts carry CUDA tensors they will refuse to load on a CPU-only
   box — that is an upstream property, not a BT4 bug.
+  **Clone into `%USERPROFILE%`, not `C:\`** — the guide's Step 9 `max_shift` check
+  defaults to `~/RiboNN/models`, so a `C:\RiboNN` clone makes the one check written to
+  fail loudly instead report that it cannot find `runs.csv`.
+
+Three more, learned while walking a maintainer through a real Windows install (2026-08):
+
+- **RiboNN and the splice CNNs should not share an environment.** RiboNN's
+  `environment.yml` pins torch **1.13.1** and numpy **1.22.4** exactly (fetched from
+  upstream, not paraphrased — BT4's own shorthand `numpy<2` understates it); the
+  `splice-pangolin` extra declares torch **>= 2.2**, so installing it here would upgrade
+  torch off that pin. Note the floor is **BT4's**: upstream Pangolin declares no
+  `install_requires` at all, and nothing in BT4 checks `torch.__version__` at runtime, so
+  "cannot coexist" is the safe arrangement rather than a measured impossibility. So a
+  maintainer with a working Pangolin environment must build a second one and
+  `pip install -e` BT4 into both — safe, because BT4's core has **zero** dependencies and
+  the `expression-ribonn` extra is floors (`torch>=1.13`, `pandas>=1.5`), not pins, so it
+  upgrades nothing already present. The consequence to state rather than let someone
+  discover: inside the RiboNN environment the wrapped splice CNNs are unavailable and the
+  audit falls back to the PWM baseline, so **one run cannot use both**.
+- **Miniforge is not a prerequisite.** Miniconda/Anaconda are equivalent here: every
+  command in the guide names its channel, and RiboNN's own `environment.yml` pins
+  `conda-forge` (verified against upstream). `mamba` is a speed convenience; `conda` runs
+  the same commands.
+- **`conda activate` is shell state, which agent-driven shells lose.** Anything starting
+  a fresh shell per command silently runs against the wrong Python and then reports a
+  confusing downstream error. Use `conda run -n RiboNN --no-capture-output ...` there.
 
 ## Splice CNN environment gotchas (learned on real hardware)
 
@@ -755,10 +791,16 @@ variable appeared in any doc before this note.
   than by BT4's adapter, which is the one thing the fidelity gate must not confuse.
 - **The two model stacks share one environment more easily than expected.** The plan
   assumed they could not coexist (Pangolin wants torch, SpliceAI an old TensorFlow).
-  Measured: TF 2.15 forces `numpy<2`, and `torch 2.13.0+cpu` runs fine on numpy 1.26.4,
-  so a single venv serves both. On Windows there is no `conda`, so use
-  `python -m venv`; the activated prompt is the check that a `pip install` is landing
-  where it is meant to.
+  Measured: TF 2.15 forces `numpy<2`, and a CPU torch build runs fine on numpy 1.26.4, so
+  a single venv serves both. A plain `python -m venv` is enough on any platform — nothing
+  in the splice path needs a conda-only package — and the activated prompt is the check
+  that a `pip install` is landing where it is meant to.
+  *(Two corrections to this note, 2026-08. It recorded the measured build as
+  `torch 2.13.0+cpu`, and **no such release exists** — PyTorch runs 1.13.x, then 2.0
+  onward — so the version number cannot be recovered and has been dropped rather than
+  guessed; the numpy finding it supports is unaffected, and the `splice-pangolin` extra's
+  own floor is `torch>=2.2`. It also claimed "on Windows there is no `conda`", which is
+  simply false and now contradicts the RiboNN Windows guidance above in this same file.)*
 
 ---
 

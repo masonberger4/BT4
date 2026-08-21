@@ -7,6 +7,37 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Changed
+- **The RiboNN install guide now covers Windows, and one line of its Windows advice was
+  wrong.** Found while walking a maintainer through a real install on Windows, and
+  verified against the code rather than assumed: Step 7's inline comment suggested
+  cloning to `C:\RiboNN`, which puts the weights outside the `~/RiboNN/models` that
+  Step 9's `max_shift` check defaults to — so the one check written to *fail loudly*
+  would instead report that it could not find `runs.csv`. Steps 5-7 now carry `cmd.exe`
+  forms, the `%USERPROFILE%` clone path, `set` vs `setx`, and the Windows extraction
+  block (Windows `tar` reads zip, unlike GNU `tar`).
+- **Miniforge is no longer presented as a prerequisite.** Miniconda and Anaconda are
+  equivalent here: every command in the guide names its channel, and RiboNN's own
+  `environment.yml` pins `conda-forge` (verified upstream). `mamba` is a speed
+  convenience, and the guide now gives the `conda`-only path and the libmamba-solver
+  switch instead of implying a second installer is required.
+- **The RiboNN / splice-CNN environment conflict is now written down.** RiboNN pins torch
+  **1.13.1** + `numpy<2`; the `splice-pangolin` extra needs torch **>= 2.2**, so they
+  should not share an environment — a maintainer who already had Pangolin working would
+  reasonably have tried. Stated with the mechanism that was actually established: the
+  `torch>=2.2` floor is **BT4's own** (upstream Pangolin declares no `install_requires`),
+  so installing the extra would upgrade torch off RiboNN's pin; whether Pangolin runs on
+  1.13.1 is untested rather than impossible. Recorded with what the separation costs (the wrapped splice CNNs
+  are unavailable inside the RiboNN environment, so one run cannot use both) and why
+  installing BT4 into both is safe (BT4's core has zero dependencies; the
+  `expression-ribonn` extra is floors, not pins, so it upgrades nothing already present).
+- **`conda activate` is shell state, which agent-driven shells lose**, silently running a
+  verification step against the wrong Python. The guide now gives
+  `conda run -n RiboNN --no-capture-output ...` for that case.
+- `docs/NEXT_SESSION.md` records that the **Sanofi licence was granted in writing
+  (2026-08)** — an *affiliation* grant, resolved before any weights were downloaded — so
+  item 11's blocker is now the panel, not the licence.
+
 ### Fixed
 - **Two promotion tests passed while the code they name was never called.** Both built
   their fixture *inside* `pytest.raises`, and `attest_expression` and
