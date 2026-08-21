@@ -681,6 +681,11 @@ def _cmd_expression_gate(args: argparse.Namespace) -> int:
         f"UTR contexts={len(scope.utr_context_sha256)}"
     )
     print(f"readout:  {scope.readout or '(panel declares none, or several)'}")
+    if scope.scoring_source != "gate":
+        # Where the link between the named backend and the numbers stops being
+        # mechanical -- and, since it cannot be recovered afterwards, where an
+        # attestation is refused outright.
+        print(f"scoring:  {scope.scoring_source} (NOT computed by the gate)")
     print()
     print(f"{'':<14}{'spearman':>10}{'CI low':>9}{'coverage':>10}{'width/IQR':>11}")
     rows = [("HEAD", comparison.head), *((f"  {n}", r) for n, r in comparison.baselines)]

@@ -99,9 +99,27 @@ def _comparison(panel: object | None = None, **kwargs: object) -> object:
     )
 
 
+def _as_ribonn_run(comparison: object, species: str = "human") -> object:
+    """Relabel a placeholder-scored comparison as a gate-scored RiboNN run.
+
+    A **test double**, and the only way to exercise promotion without the Sanofi
+    non-commercial weights. Production cannot reach this state, which is exactly why the
+    two fields it overrides exist: `attest_expression` derives the backend from the head
+    the gate actually constructed, and refuses a run whose scores were handed in rather
+    than computed.
+    """
+    return dataclasses.replace(
+        comparison,  # type: ignore[type-var]
+        backend=f"ribonn[{species}]",
+        scope=dataclasses.replace(
+            comparison.scope, scoring_source="gate"  # type: ignore[attr-defined]
+        ),
+    )
+
+
 def _attestation(**kwargs: object) -> ExpressionAttestation:
     return attest_expression(
-        _comparison(),
+        _as_ribonn_run(_comparison()),
         readout="mean_ribosome_load",
         bt4_version="0.0.0-test",
         **kwargs,  # type: ignore[arg-type]
@@ -304,7 +322,8 @@ def test_the_record_carries_the_configuration_the_run_used() -> None:
     assert attestation.utr_context_sha256 == (
         utr_context_sha256(PANEL_UTR5, PANEL_UTR3),
     )
-    assert attestation.scoring_source == "caller_supplied"
+    assert attestation.scoring_source == "gate"
+    assert attestation.backend == "ribonn"
 
 
 def test_a_declared_cell_type_the_gate_did_not_score_is_refused() -> None:
@@ -323,7 +342,7 @@ def test_a_declared_cell_type_the_gate_did_not_score_is_refused() -> None:
     )
     with pytest.raises(ExpressionAttestationError, match="declared cell types"):
         attest_expression(
-            comparison,
+            _as_ribonn_run(comparison),
             cell_types=("HEK293T",),
             readout="mrl",
             bt4_version="0.0.0-test",
@@ -338,7 +357,7 @@ def test_a_declared_species_that_did_not_run_is_refused() -> None:
 def test_the_panel_verifies_the_scope_when_it_declares_one() -> None:
     panel = _panel(cell_type="HEK293T", species="human", readout="mean_ribosome_load")
     attestation = attest_expression(
-        _comparison(panel), bt4_version="0.0.0-test"
+        _as_ribonn_run(_comparison(panel)), bt4_version="0.0.0-test"
     )
     # All three were checked against the panel's own bytes, not taken on trust.
     assert attestation.verified_against_panel == ("cell_types", "readout", "species")
@@ -353,13 +372,17 @@ def test_a_scope_the_panel_cannot_confirm_is_recorded_as_merely_declared() -> No
 
 def test_a_readout_the_panel_does_not_measure_is_refused() -> None:
     panel = _panel(readout="mean_ribosome_load")
-    with pytest.raises(ExpressionAttestationError, match="not one the panel measures"):
-        attest_expression(_comparison(panel), readout="protein_yield", bt4_version="0")
+    with pytest.raises(ExpressionAttestationError, match="not what the panel measures"):
+        attest_expression(
+            _as_ribonn_run(_comparison(panel)),
+            readout="protein_yield",
+            bt4_version="0",
+        )
 
 
 def test_a_run_with_no_readout_anywhere_is_refused() -> None:
     with pytest.raises(ExpressionAttestationError, match="must name the question"):
-        attest_expression(_comparison(), bt4_version="0.0.0-test")
+        attest_expression(_as_ribonn_run(_comparison()), bt4_version="0.0.0-test")
 
 
 def test_the_gate_refuses_a_head_that_would_average_the_wrong_cell_types() -> None:
@@ -397,6 +420,59 @@ def test_the_gate_never_scores_with_an_already_promoted_head(
     )
     comparison = _comparison()
     assert comparison.backend_calibrated is False  # type: ignore[attr-defined]
+
+
+def test_a_panel_that_mixes_assays_cannot_be_filed_under_one_readout() -> None:
+    # Rows from the other assay were still scored, so one label would name neither.
+    rows = list(_panel().rows)  # type: ignore[attr-defined]
+    mixed = panel_from_rows(
+        [
+            dataclasses.replace(
+                row, readout="mean_ribosome_load" if i % 2 else "protein_yield"
+            )
+            for i, row in enumerate(rows)
+        ]
+    )
+    with pytest.raises(ExpressionAttestationError, match="mixes readouts"):
+        attest_expression(
+            _as_ribonn_run(_comparison(mixed)),
+            readout="mean_ribosome_load",
+            bt4_version="0.0.0-test",
+        )
+
+
+def test_an_explicit_opt_in_that_cannot_be_fulfilled_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `enabled=True` is a request about this call. Answering it with a silently
+    # uncalibrated head is the failure the layer exists to prevent.
+    monkeypatch.delenv(ATTESTATION_PATH_ENV_VAR, raising=False)
+    with pytest.raises(ExpressionAttestationError, match="no attestation resolves"):
+        promote_if_attested(_head(), enabled=True)
+    # The placeholder is simply not attestable, so it still passes through untouched.
+    assert promote_if_attested(NullExpressionModel(), enabled=True).calibrated is False
+
+
+def test_a_corrupt_attestation_refuses_rather_than_reading_as_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    # A bare JSONDecodeError escapes every handler that catches "unusable attestation",
+    # which is how a hand-edited file took the desktop app down at startup.
+    path = tmp_path / "a.json"
+    path.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv(ATTESTATION_PATH_ENV_VAR, str(path))
+    with pytest.raises(ExpressionAttestationError, match="not valid JSON"):
+        resolve_expression_attestation("ribonn")
+    assert attested_expression_backends() == ()
+
+
+def test_a_schema_1_record_is_refused_with_the_reason(tmp_path: pathlib.Path) -> None:
+    payload = _attestation().to_dict()
+    for field in ("top_k", "utr_context_sha256", "verified_against_panel", "scoring_source"):
+        del payload[field]
+    payload["schema_version"] = 1
+    with pytest.raises(ExpressionAttestationError, match="cannot be filled in after"):
+        ExpressionAttestation.from_dict(payload)
 
 
 # --- the seam actually reaches the user --------------------------------------

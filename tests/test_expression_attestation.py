@@ -82,9 +82,27 @@ def _passing_comparison(cell_types: tuple[str, ...] = ("HEK293T",)) -> object:
     )
 
 
+def _as_ribonn_run(comparison: object, species: str = "human") -> object:
+    """Relabel a placeholder-scored comparison as a gate-scored RiboNN run.
+
+    A **test double**, and the only way to exercise promotion without the Sanofi
+    non-commercial weights. Production cannot reach this state, which is the point of
+    the two fields it overrides: :func:`attest_expression` derives the backend from the
+    head the gate actually constructed, and refuses outright a run whose scores were
+    handed in rather than computed. Both refusals are asserted separately below.
+    """
+    return dataclasses.replace(
+        comparison,  # type: ignore[type-var]
+        backend=f"ribonn[{species}]",
+        scope=dataclasses.replace(
+            comparison.scope, scoring_source="gate"  # type: ignore[attr-defined]
+        ),
+    )
+
+
 def _attestation() -> ExpressionAttestation:
     return attest_expression(
-        _passing_comparison(),
+        _as_ribonn_run(_passing_comparison()),
         species="human",
         cell_types=("HEK293T",),
         readout="mean_ribosome_load",
@@ -173,7 +191,9 @@ def test_a_pooled_run_cannot_be_attested_however_good_it_looks() -> None:
     )
     with pytest.raises(ExpressionAttestationError, match="refusing to attest a POOLED"):
         attest_expression(
-            pooled, readout="mean_ribosome_load", bt4_version="0.0.0-test"
+            _as_ribonn_run(pooled),
+            readout="mean_ribosome_load",
+            bt4_version="0.0.0-test",
         )
 
 
@@ -213,7 +233,9 @@ def test_a_head_that_only_ties_a_baseline_cannot_be_attested() -> None:
     assert comparison.head.passed is True  # the thresholds are met ...
     assert comparison.beats_every_baseline is False  # ... but nothing was added
     with pytest.raises(ExpressionAttestationError, match="does not beat every baseline"):
-        attest_expression(comparison, readout="mrl", bt4_version="0.0.0-test")
+        attest_expression(
+            _as_ribonn_run(comparison), readout="mrl", bt4_version="0.0.0-test"
+        )
 
 
 def test_a_failing_gate_cannot_be_attested() -> None:
@@ -226,14 +248,40 @@ def test_a_failing_gate_cannot_be_attested() -> None:
         head_scores=blind,
     )
     with pytest.raises(ExpressionAttestationError, match="failing gate"):
-        attest_expression(comparison, readout="mrl", bt4_version="0.0.0-test")
-
-
-def test_an_unknown_backend_is_refused() -> None:
-    with pytest.raises(ExpressionAttestationError, match="unknown expression backend"):
         attest_expression(
-            _passing_comparison(), backend="nope", readout="mrl", bt4_version="0.0.0"
+            _as_ribonn_run(comparison), readout="mrl", bt4_version="0.0.0-test"
         )
+
+
+def test_a_declared_backend_that_did_not_run_is_refused() -> None:
+    with pytest.raises(ExpressionAttestationError, match="declared backend"):
+        attest_expression(
+            _as_ribonn_run(_passing_comparison()),
+            backend="nope",
+            readout="mrl",
+            bt4_version="0.0.0",
+        )
+
+
+def test_a_run_against_another_head_cannot_be_filed_as_ribonn() -> None:
+    # The identity hole: the gate scored the neutral placeholder, and `backend` used to
+    # be free text written straight into the record -- so this produced a RiboNN
+    # attestation, and `verified_predictor` then promoted a real RiboNN head against it.
+    with pytest.raises(ExpressionAttestationError, match="not an attestable"):
+        attest_expression(
+            _passing_comparison(), readout="mrl", bt4_version="0.0.0-test"
+        )
+
+
+def test_a_run_whose_scores_were_handed_in_cannot_be_attested() -> None:
+    # Supplying head_scores is where the link between the named backend and the numbers
+    # stops being mechanical, and no after-the-fact check recovers it -- so it is a
+    # refusal, not a caveat recorded in a field nobody reads.
+    relabelled = dataclasses.replace(
+        _passing_comparison(), backend="ribonn[human]"  # type: ignore[type-var]
+    )
+    with pytest.raises(ExpressionAttestationError, match="rather than computed"):
+        attest_expression(relabelled, readout="mrl", bt4_version="0.0.0-test")
 
 
 # --- promotion: the single seam -----------------------------------------------

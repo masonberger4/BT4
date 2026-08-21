@@ -247,22 +247,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    if args.attest is not None:
-        code = _attest(comparison, args.attest, readout=args.readout)
-        if code:
-            return code
-
+    # The report is printed FIRST and unconditionally. `--json` is documented as
+    # `> gate_result.json`, so returning early on an attestation refusal would leave a
+    # zero-byte file where the run's own record should be -- losing the result over a
+    # failure of the optional step that follows it.
     print(json.dumps(report, indent=2, sort_keys=True) if args.json else _render(report))
+
+    if args.attest is not None:
+        return _attest(
+            comparison, args.attest, readout=args.readout, backend=args.backend
+        )
     return 0
 
 
-def _attest(comparison: api.GateComparison, path: str, *, readout: str | None) -> int:
+def _attest(
+    comparison: api.GateComparison,
+    path: str,
+    *,
+    readout: str | None,
+    backend: str | None = None,
+) -> int:
     """Write the attestation for a promotable comparison, or explain the refusal.
 
     Kept in the same process as the gate deliberately. The alternative -- a second
     script that re-runs ``expression_gate`` -- pays for another full scoring pass and,
     worse, lets the second invocation be configured differently from the one whose
-    verdict was read. The scope is taken from this comparison, so it cannot be.
+    verdict was read. The scope is taken from this comparison, so it cannot be; the
+    ``--backend`` the user asked for is forwarded only as one more cross-check, since
+    the record's own backend is derived from the head the gate constructed.
 
     Returns:
         ``0`` on success, or an exit code on a refusal (already reported to stderr).
@@ -278,7 +290,10 @@ def _attest(comparison: api.GateComparison, path: str, *, readout: str | None) -
         return 3
     try:
         attestation = api.attest_expression(
-            comparison, readout=readout, bt4_version=bt4.__version__
+            comparison,
+            backend=backend,
+            readout=readout,
+            bt4_version=bt4.__version__,
         )
     except api.ExpressionAttestationError as exc:
         print(f"error: refusing to attest: {exc}", file=sys.stderr)

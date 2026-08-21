@@ -742,6 +742,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         cell_types=tuple(args.cell_types or ()),
+        # Never honour a standing $BT4_EXPRESSION_USE_ATTESTED: these are the checks
+        # that decide whether a panel is worth acquiring, so a prior attestation must
+        # not colour them -- the same rule the gate itself follows.
+        use_attested=False,
     )
 
     try:

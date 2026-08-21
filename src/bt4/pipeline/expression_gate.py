@@ -103,6 +103,13 @@ class GateScope:
     what the run was configured with precisely so the two can be compared rather than
     conflated.
 
+    One caveat the record states rather than hides: when ``scoring_source`` is
+    ``"caller_supplied"``, ``species`` / ``cell_types`` / ``top_k`` describe the backend
+    the gate *constructed to name the run*, not one that produced the numbers -- nothing
+    scored with them. That is why
+    :func:`~bt4.biomodels.expression.attest_expression` refuses such a run outright
+    instead of recording a scope it cannot stand behind.
+
     Attributes:
         species: The weight set scored.
         cell_types: The cell-type selection averaged, sorted. Empty means every one of

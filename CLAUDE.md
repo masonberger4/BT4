@@ -1152,9 +1152,9 @@ control.
   than published weights, `$BT4_EXPRESSION_ATTESTATION` reads a local record, so using
   a result never requires committing the panel's identity; a mis-pointed path
   **refuses** rather than falling back, since a typo would otherwise be
-  indistinguishable from "no attestation". **No attestation is bundled** — none has
-  been earned, and shipping one that had not is exactly §10.6's fabricated
-  placeholder. BT4 Studio carries the opt-in per run (never by mutating process env),
+  indistinguishable from "no attestation". **BT4 never bundles an attestation that has not been
+  earned** — shipping one would be exactly §10.6's fabricated placeholder (which ships
+  today is a status fact, and lives in NEXT_SESSION.md, §10.11). BT4 Studio carries the opt-in per run (never by mutating process env),
   shows the attestation's **scope on the page** (species / cell types / readout /
   `top_k` / UTR contexts / panel hash), **pins the head to that scope** while it is
   honoured, and flips the Candidates banner from *discovery order, NOT a ranking* to a

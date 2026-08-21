@@ -10,6 +10,7 @@ CAI directly and for free.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import pathlib
@@ -350,13 +351,26 @@ def test_attest_writes_the_scope_the_comparison_actually_used(
     )
     assert comparison.promotable is True
 
+    # A gate run against the neutral placeholder cannot be filed as a RiboNN result --
+    # the record's backend comes from the head the gate constructed, not from a label.
+    assert rg._attest(comparison, str(tmp_path / "no.json"), readout="mrl") == 3
+    assert not (tmp_path / "no.json").exists()
+
+    # A test double standing in for a gate-scored RiboNN run (no licensed weights in CI).
+    comparison = dataclasses.replace(
+        comparison,
+        backend="ribonn[human]",
+        scope=dataclasses.replace(comparison.scope, scoring_source="gate"),
+    )
+
     out = tmp_path / "attestation.json"
     assert rg._attest(comparison, str(out), readout="mean_ribosome_load") == 0
     record = json.loads(out.read_text(encoding="utf-8"))
     assert record["cell_types"] == ["HEK293T"]
     assert record["top_k"] == 3
     assert record["panel_sha256"] == comparison.panel_hash
-    assert record["scoring_source"] == "caller_supplied"
+    assert record["scoring_source"] == "gate"
+    assert record["backend"] == "ribonn"
     assert "$BT4_EXPRESSION_ATTESTATION" in capsys.readouterr().err
     # This panel declares no readout column, so the readout was taken on the
     # maintainer's word -- and the record SAYS so rather than implying it was checked.
@@ -374,15 +388,21 @@ def test_attest_writes_the_scope_the_comparison_actually_used(
             for row in panel.rows  # type: ignore[attr-defined]
         ]
     )
-    checked = run_panel_gate(
-        declared,
-        "null",
-        settings=GateSettings(
-            within_group=True, recalibrate=True, coverage_tolerance=0.10,
-            bootstrap_resamples=200,
+    checked = dataclasses.replace(
+        run_panel_gate(
+            declared,
+            "null",
+            settings=GateSettings(
+                within_group=True, recalibrate=True, coverage_tolerance=0.10,
+                bootstrap_resamples=200,
+            ),
+            cell_types=("HEK293T",),
+            head_scores=[row.measured for row in declared.rows],
         ),
-        cell_types=("HEK293T",),
-        head_scores=[row.measured for row in declared.rows],
+        backend="ribonn[human]",
+    )
+    checked = dataclasses.replace(
+        checked, scope=dataclasses.replace(checked.scope, scoring_source="gate")
     )
     other = tmp_path / "lie.json"
     assert rg._attest(checked, str(other), readout="something_else") == 3

@@ -53,6 +53,16 @@ its first tagged release.
     `readout` columns declare the same fact it is checked against the panel bytes too,
     and `verified_against_panel` records exactly which fields got that second check --
     so a verified scope is distinguishable from a merely-declared one.
+  - **The record never named the model that was scored.** `attest_expression` took
+    `backend` as free text and wrote it straight through, so a gate run against the
+    neutral placeholder -- or any other head -- could be filed as a RiboNN result, and
+    `verified_predictor` would then promote a real RiboNN head against it, because it
+    only ever compared the *label the caller typed*. It is now derived from the `name` of
+    the predictor the gate actually constructed, and a run whose scores were **handed in**
+    rather than computed (`scoring_source != "gate"`) cannot be attested at all: nothing
+    ties supplied numbers to the model the record names, and no after-the-fact check
+    recovers it. The maintainer path that needed `head_scores` -- gate once, attest from a
+    second run -- is served by `--attest`, which attests from the same comparison.
   - **`verified_predictor` bound neither `top_k` nor the UTR context**, so an
     attestation earned at `top_k=5` under one transcript context would promote a head
     configured with a different ensemble size or different UTRs entirely. Both are now
@@ -69,6 +79,28 @@ its first tagged release.
     head configured to average every cell type against a panel that declares one, or a
     species the panel contradicts. Leaving `--cell-type` off used to run cleanly to a
     wrong verdict with no error and no warning.
+- **A corrupt attestation file took BT4 Studio down at startup.**
+  `load_expression_attestation` let `json.JSONDecodeError` escape, and every caller that
+  handles "this attestation is unusable" catches `ExpressionAttestationError` -- so a
+  hand-edited record raised out of window construction instead of greying out one
+  checkbox. Unparseable JSON is now wrapped, and refused rather than read as absent.
+- **`--attest` truncated the run's own record when it refused.** The report is
+  documented as `> gate_result.json` and was printed *after* the attestation step, so a
+  refusal returned early and left a zero-byte file -- losing the result over a failure of
+  the optional step that follows it. The report is now printed first, unconditionally.
+- **A panel mixing two assays could be filed under one readout.** The check was
+  membership, so naming either one passed while rows measured by the other were still
+  scored. A multi-readout panel is now refused: gate one assay at a time.
+- **An explicit `use_attested=True` that could not be fulfilled returned an uncalibrated
+  head silently.** It now raises for an attestable head when nothing resolves -- a
+  per-call argument is a request about that call, so answering it with an uncalibrated
+  head is the failure this layer exists to prevent. A standing `$BT4_EXPRESSION_USE_ATTESTED`
+  stays a no-op, because a forgotten export is a preference, not a request.
+- **`scripts/ribonn_sensitivity.py` honoured a standing promotion opt-in**, unlike the
+  gate it feeds. These checks decide whether a panel is worth acquiring; a prior
+  attestation must not colour them.
+- **A `schema_version` 1 record was refused with a bare field list.** It now says which
+  fields schema 2 added and why they cannot be filled in afterwards.
 - **`bt4 expression-gate` ignored `--top-k`** (it had no such flag and always used 5,
   while the script did forward it). The flag now exists and is forwarded; since `top_k`
   is part of the scope an attestation binds, a promotion refuses a differently-sized
