@@ -378,6 +378,9 @@ def assemble_and_rank_candidates(
             "mode": "candidates",
             "predictor": backend.name,
             "predictor_calibrated": backend.calibrated,
+            # Which attestation authorized a calibrated head (empty when there is
+            # none), so two runs steered by different claims stamp differently.
+            "predictor_attestation": getattr(backend, "attestation_sha256", ""),
             "candidate_n": n,
             "repeat_variants": repeat_variants,
             "frontier_steps": steps,

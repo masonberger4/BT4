@@ -36,6 +36,35 @@ load, human weights, one UTR context, certifies *that*. :func:`verified_predicto
 refuses a predictor whose species or cell-type selection differs, because the mean of 78
 tissues is a different quantity from one cell line and a claim about one is not a claim
 about the other.
+
+**The scope is taken from the run, not from the caller's word for it.** An earlier
+version accepted ``species`` and ``cell_types`` as free text and copied them straight
+into the record, so a gate run averaging all 78 cell types could be filed as a HEK293T
+result and every later check would accept it. :func:`attest_expression` now *derives*
+the scope from the comparison's own :class:`GateScope
+<bt4.pipeline.expression_gate.GateScope>` -- what the gate actually scored -- and treats
+anything the caller declares as a **cross-check that refuses on mismatch**, never an
+override. Where the panel itself declares a fact (its ``species`` / ``cell_type`` /
+``readout`` columns) the declaration is additionally checked against the panel bytes;
+:attr:`ExpressionAttestation.verified_against_panel` records exactly which fields got
+that second check, so a reader can tell a verified scope from a merely-declared one.
+
+**Two more things the scope binds, because they change the number.**
+:attr:`~ExpressionAttestation.top_k` (how many cross-validation runs were ensembled) and
+:attr:`~ExpressionAttestation.utr_context_sha256` (the UTR contexts the panel was
+measured in) are part of what produced the score, so a head configured differently is
+not the head that was gated and :func:`verified_predictor` refuses it. ``batch_size`` and
+``num_workers`` are deliberately **not** bound: RiboNN pads to a fixed width and does not
+shuffle when predicting, so neither can change a score, and binding them would be false
+precision.
+
+**On the UTR hash.** ``utr_context_sha256`` is a plain SHA-256 of each ``(utr5, utr3)``
+pair, so a *short* UTR is recoverable from it by brute force. That is stated rather than
+papered over: committing an attestation publishes the panel's UTR context. It is not
+licensed material (RiboNN's weights and outputs are; a panel's UTRs are the maintainer's
+own data, usually from the paper the panel came from) -- but a maintainer whose panel is
+not public should keep the attestation local (see
+:mod:`bt4.biomodels.expression.attestations`) rather than commit it.
 """
 
 from __future__ import annotations
@@ -44,7 +73,7 @@ import hashlib
 import json
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 __all__ = [
     "MAX_ATTESTATION_COVERAGE_TOLERANCE",
@@ -54,6 +83,7 @@ __all__ = [
     "ExpressionAttestationError",
     "attest_expression",
     "load_expression_attestation",
+    "utr_context_sha256",
     "verified_predictor",
 ]
 
@@ -98,10 +128,36 @@ _ALLOWED_FIELDS = frozenset(
         "best_baseline_spearman",
         "panel_sha256",
         "weight_sha256",
+        "top_k",
+        "utr_context_sha256",
+        "verified_against_panel",
+        "scoring_source",
         "bt4_version",
         "schema_version",
     }
 )
+
+# Domain separation, so a UTR hash can never collide with any other SHA-256 in this
+# record and a reader can tell what was hashed from the tag alone.
+_UTR_HASH_TAG = "bt4-expression-utr-context-v1"
+
+
+def utr_context_sha256(utr5: str, utr3: str) -> str:
+    """Return the stable content hash of one ``(utr5, utr3)`` context.
+
+    The gate records one of these per distinct context in the panel, and
+    :func:`verified_predictor` recomputes it from the predictor's own fixed UTRs, so an
+    attestation earned under one transcript context cannot promote a head configured for
+    another. Case-insensitive and whitespace-free, matching how both the panel reader and
+    the adapter normalise a flank.
+
+    See the module docstring for why this hash is not a secret: a short UTR is
+    brute-forceable from it.
+    """
+    payload = "\t".join(
+        (_UTR_HASH_TAG, "".join(utr5.split()).upper(), "".join(utr3.split()).upper())
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class ExpressionAttestationError(ValueError):
@@ -141,6 +197,43 @@ class _ComparisonLike(Protocol):
     @property
     def promotable(self) -> bool: ...
 
+    @property
+    def scope(self) -> Any: ...
+
+
+class _ScopeLike(Protocol):
+    """How a gate run was actually configured (duck-typed, see :class:`_ComparisonLike`).
+
+    This is the record that makes a declared scope checkable instead of decorative.
+    """
+
+    @property
+    def species(self) -> str: ...
+
+    @property
+    def cell_types(self) -> tuple[str, ...]: ...
+
+    @property
+    def top_k(self) -> int: ...
+
+    @property
+    def readout(self) -> str: ...
+
+    @property
+    def utr_context_sha256(self) -> tuple[str, ...]: ...
+
+    @property
+    def panel_species(self) -> tuple[str, ...]: ...
+
+    @property
+    def panel_cell_types(self) -> tuple[str, ...]: ...
+
+    @property
+    def panel_readouts(self) -> tuple[str, ...]: ...
+
+    @property
+    def scoring_source(self) -> str: ...
+
 
 @dataclass(frozen=True, slots=True)
 class ExpressionAttestation:
@@ -177,6 +270,21 @@ class ExpressionAttestation:
         panel_sha256: The panel's content hash, binding the claim to exact bytes.
         weight_sha256: The pinned ``{weight_path: sha256}`` for this species, as a
             sorted tuple of pairs. Public content hashes, not licensed outputs.
+        top_k: How many cross-validation runs the gated head ensembled. Part of the
+            model that produced the number, so a differently-configured head is a
+            different head.
+        utr_context_sha256: One :func:`utr_context_sha256` per distinct ``(utr5, utr3)``
+            context in the panel, sorted. A predictor is promoted only when its own fixed
+            UTR context is one of these -- an attestation earned under one transcript
+            context does not certify another. (Not a secret; see the module docstring.)
+        verified_against_panel: Which scope fields were cross-checked against the panel's
+            own columns rather than merely declared -- a subset of ``("cell_types",
+            "readout", "species")``, sorted. A field absent here was taken on the
+            maintainer's word because the panel did not declare it.
+        scoring_source: ``"gate"`` when the gate invoked the backend itself, or
+            ``"caller_supplied"`` when it was handed pre-computed values. Recorded
+            because that is exactly the step at which the link between the named backend
+            and the numbers stops being mechanical.
         bt4_version: The BT4 version that produced the attestation.
         schema_version: Attestation schema version.
     """
@@ -201,8 +309,12 @@ class ExpressionAttestation:
     best_baseline_spearman: float
     panel_sha256: str
     weight_sha256: tuple[tuple[str, str], ...]
+    top_k: int
+    utr_context_sha256: tuple[str, ...]
+    verified_against_panel: tuple[str, ...]
+    scoring_source: str
     bt4_version: str
-    schema_version: int = 1
+    schema_version: int = 2
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-ready mapping (weight and cell-type tuples become lists)."""
@@ -227,6 +339,10 @@ class ExpressionAttestation:
             "best_baseline_spearman": self.best_baseline_spearman,
             "panel_sha256": self.panel_sha256,
             "weight_sha256": [list(pair) for pair in self.weight_sha256],
+            "top_k": self.top_k,
+            "utr_context_sha256": list(self.utr_context_sha256),
+            "verified_against_panel": list(self.verified_against_panel),
+            "scoring_source": self.scoring_source,
             "bt4_version": self.bt4_version,
             "schema_version": self.schema_version,
         }
@@ -274,8 +390,14 @@ class ExpressionAttestation:
             weight_sha256=tuple(
                 (str(pair[0]), str(pair[1])) for pair in data["weight_sha256"]
             ),
+            top_k=int(data["top_k"]),
+            utr_context_sha256=tuple(str(h) for h in data["utr_context_sha256"]),
+            verified_against_panel=tuple(
+                str(name) for name in data["verified_against_panel"]
+            ),
+            scoring_source=str(data["scoring_source"]),
             bt4_version=str(data["bt4_version"]),
-            schema_version=int(data.get("schema_version", 1)),
+            schema_version=int(data.get("schema_version", 2)),
         )
 
     def content_hash(self) -> str:
@@ -298,13 +420,29 @@ def _pinned_weights(species: str) -> dict[str, str]:
     return {k: v for k, v in PINNED_WEIGHT_SHA256.items() if k.startswith(prefix)}
 
 
+def _require_scope(comparison: _ComparisonLike) -> _ScopeLike:
+    """Return the comparison's run scope, refusing a comparison that carries none.
+
+    A comparison without a scope cannot say how it was scored, so nothing it reports can
+    be bound to a configuration. Refusing is the point: the whole purpose of this layer
+    is that the recorded scope is the run's, not the caller's.
+    """
+    scope: Any = getattr(comparison, "scope", None)
+    if scope is None:
+        raise ExpressionAttestationError(
+            "this gate comparison carries no scope, so how it was scored cannot be "
+            "checked. Re-run it through bt4.pipeline.expression_gate.run_panel_gate."
+        )
+    return cast(_ScopeLike, scope)
+
+
 def attest_expression(
     comparison: _ComparisonLike,
     *,
     backend: str = "ribonn",
-    species: str = "human",
-    cell_types: tuple[str, ...] = (),
-    readout: str,
+    species: str | None = None,
+    cell_types: tuple[str, ...] | None = None,
+    readout: str | None = None,
     bt4_version: str,
 ) -> ExpressionAttestation:
     """Record a passing gate comparison as a licence-clean attestation.
@@ -321,24 +459,40 @@ def attest_expression(
       coverage tolerance clears :data:`MAX_ATTESTATION_COVERAGE_TOLERANCE`, so a
       threshold set to pass cannot self-certify.
 
+    **The scope comes from the run.** ``species``, ``cell_types`` and ``readout`` are
+    taken from ``comparison.scope`` -- what the gate actually scored. Passing them
+    explicitly asks for a **cross-check**: a value that disagrees with the run is a
+    refusal, not an override. This is the hole that made the previous version's scope
+    decorative: a run averaging all 78 cell types could be filed as a HEK293T result and
+    nothing downstream could tell.
+
+    Where the panel declares the same fact in its own ``species`` / ``cell_type`` /
+    ``readout`` columns, that is checked too, and the field is listed in
+    :attr:`~ExpressionAttestation.verified_against_panel`. A field the panel does not
+    declare is recorded as merely declared -- an honest gap, not a silent pass.
+
     Args:
         comparison: A gate comparison (see :mod:`bt4.pipeline.expression_gate`).
         backend: Which head is attested.
-        species: Which weight set it was gated against.
-        cell_types: The cell-type selection scored. Part of the scope, not a detail.
-        readout: What the panel measured, so the claim names its assay.
+        species: Optional cross-check against the species the gate ran with.
+        cell_types: Optional cross-check against the cell-type selection it scored.
+        readout: What the panel measured. Optional when the panel's own ``readout``
+            column declares exactly one; required otherwise, because a number must name
+            the question it answers.
         bt4_version: The BT4 version producing the record.
 
     Returns:
         The :class:`ExpressionAttestation`.
 
     Raises:
-        ExpressionAttestationError: On an unknown backend or any unearned claim.
+        ExpressionAttestationError: On an unknown backend, any unearned claim, or any
+            declared scope value that disagrees with the run or the panel.
     """
     if backend not in _BACKENDS:
         raise ExpressionAttestationError(
             f"unknown expression backend {backend!r}; known: {list(_BACKENDS)}"
         )
+    scope = _require_scope(comparison)
     head = comparison.head
     if not head.passed:
         raise ExpressionAttestationError(
@@ -372,16 +526,25 @@ def attest_expression(
             f"{MAX_ATTESTATION_COVERAGE_TOLERANCE}"
         )
 
-    pinned = _pinned_weights(species)
+    run_species, run_cell_types, run_readout, verified = _resolved_scope(
+        scope, species=species, cell_types=cell_types, readout=readout
+    )
+
+    pinned = _pinned_weights(run_species)
     if not pinned:
         raise ExpressionAttestationError(
-            f"no pinned weights for species {species!r}; cannot bind an attestation"
+            f"no pinned weights for species {run_species!r}; cannot bind an attestation"
+        )
+    if not scope.utr_context_sha256:
+        raise ExpressionAttestationError(
+            "the gate run recorded no UTR context, so the claim cannot be bound to the "
+            "transcript context it was earned in"
         )
     return ExpressionAttestation(
         backend=backend,
-        species=species,
-        cell_types=tuple(sorted(cell_types)),
-        readout=readout,
+        species=run_species,
+        cell_types=run_cell_types,
+        readout=run_readout,
         within_group=head.within_group,
         recalibrate=head.recalibrate,
         passed=True,
@@ -398,8 +561,79 @@ def attest_expression(
         best_baseline_spearman=comparison.best_baseline_spearman,
         panel_sha256=comparison.panel_hash,
         weight_sha256=tuple(sorted((str(k), str(v)) for k, v in pinned.items())),
+        top_k=scope.top_k,
+        utr_context_sha256=tuple(sorted(scope.utr_context_sha256)),
+        verified_against_panel=verified,
+        scoring_source=scope.scoring_source,
         bt4_version=bt4_version,
     )
+
+
+def _resolved_scope(
+    scope: _ScopeLike,
+    *,
+    species: str | None,
+    cell_types: tuple[str, ...] | None,
+    readout: str | None,
+) -> tuple[str, tuple[str, ...], str, tuple[str, ...]]:
+    """Resolve the scope from the run, cross-checking anything the caller declared.
+
+    Returns ``(species, cell_types, readout, verified_against_panel)``. Every disagreement
+    -- caller vs run, or run vs the panel's own columns -- is a refusal. ``verified``
+    lists the fields the panel independently confirmed, so a record can distinguish a
+    checked scope from one taken on trust.
+    """
+    verified: list[str] = []
+
+    run_species = scope.species
+    if species is not None and species != run_species:
+        raise ExpressionAttestationError(
+            f"declared species {species!r} but the gate ran against {run_species!r}; "
+            "the scope is the run's, not the caller's"
+        )
+    declared_by_panel = tuple(sorted({name for name in scope.panel_species if name}))
+    if declared_by_panel:
+        if declared_by_panel != (run_species,):
+            raise ExpressionAttestationError(
+                f"the panel declares species {list(declared_by_panel)} but the gate ran "
+                f"against {run_species!r}"
+            )
+        verified.append("species")
+
+    run_cell_types = tuple(sorted(scope.cell_types))
+    if cell_types is not None and tuple(sorted(cell_types)) != run_cell_types:
+        shown = list(run_cell_types) or "every cell type (no selection)"
+        raise ExpressionAttestationError(
+            f"declared cell types {sorted(cell_types)} but the gate scored {shown}. "
+            "Averaging a different set of cell types is a different quantity, so the "
+            "declaration is refused rather than recorded."
+        )
+    panel_cells = tuple(sorted({name for name in scope.panel_cell_types if name}))
+    if panel_cells:
+        if panel_cells != run_cell_types:
+            shown = list(run_cell_types) or "every cell type (no selection)"
+            raise ExpressionAttestationError(
+                f"the panel was measured in {list(panel_cells)} but the gate scored "
+                f"{shown}"
+            )
+        verified.append("cell_types")
+
+    run_readout = readout if readout is not None else scope.readout
+    if not run_readout:
+        raise ExpressionAttestationError(
+            "no readout: the panel declares none (or declares several) and none was "
+            "given. A measured number must name the question it answers."
+        )
+    panel_readouts = tuple(sorted({name for name in scope.panel_readouts if name}))
+    if panel_readouts:
+        if run_readout not in panel_readouts:
+            raise ExpressionAttestationError(
+                f"declared readout {run_readout!r} is not one the panel measures "
+                f"({list(panel_readouts)})"
+            )
+        verified.append("readout")
+
+    return run_species, run_cell_types, run_readout, tuple(sorted(verified))
 
 
 def load_expression_attestation(path: str | Path) -> ExpressionAttestation:
@@ -428,10 +662,19 @@ def verified_predictor(predictor: Any, attestation: ExpressionAttestation) -> An
     * its ``cell_types`` match the predictor's **exactly** -- an attestation earned on
       one cell line does not certify a head averaging all 78, because those are
       different quantities;
+    * its ``top_k`` matches -- a differently-sized ensemble is a different model, so it
+      is not the model that was gated;
+    * the predictor's own fixed ``(utr5, utr3)`` context is one the attestation covers --
+      the gate measured ranking *inside* a transcript context, and nothing was measured
+      about another one;
     * its floors hold (in case the file was hand-edited after
       :func:`attest_expression` built it);
     * its ``weight_sha256`` exactly matches the adapter's pins for that species, so the
       claim is bound to the same weights the adapter will hash-verify before loading.
+
+    ``batch_size`` and ``num_workers`` are deliberately **not** checked: RiboNN pads to a
+    fixed width and builds its predict dataloader with ``shuffle=False``, so neither can
+    change a score. Binding them would refuse a head that is provably the gated one.
 
     Scores are still computed live from the user's own weights; the attestation carries
     none.
@@ -441,7 +684,9 @@ def verified_predictor(predictor: Any, attestation: ExpressionAttestation) -> An
         attestation: A passing attestation for that head and scope.
 
     Returns:
-        The promoted predictor (``calibrated is True``).
+        The promoted predictor (``calibrated is True``), carrying the attestation's
+        :meth:`~ExpressionAttestation.content_hash` so a run stamps which claim
+        authorized it. Nothing about what the head *computes* changes.
 
     Raises:
         ExpressionAttestationError: On any mismatch, unearned claim, or a
@@ -492,6 +737,19 @@ def verified_predictor(predictor: Any, attestation: ExpressionAttestation) -> An
             f"attestation interval is vacuous: width/IQR {attestation.width_over_iqr} "
             f">= {MAX_ATTESTATION_WIDTH_OVER_IQR}"
         )
+    if attestation.top_k != predictor.top_k:
+        raise ExpressionAttestationError(
+            f"attestation was earned at top_k={attestation.top_k}, predictor ensembles "
+            f"top_k={predictor.top_k}. A different ensemble size is a different model."
+        )
+    context = utr_context_sha256(predictor.utr5, predictor.utr3)
+    if context not in attestation.utr_context_sha256:
+        raise ExpressionAttestationError(
+            "the predictor's fixed 5'/3' UTR context is not one this attestation covers "
+            f"(it covers {len(attestation.utr_context_sha256)} context(s), none matching "
+            f"{context[:16]}...). The gate measured ranking inside the panel's own "
+            "transcript context; nothing was measured about another one."
+        )
     pinned = tuple(
         sorted((str(k), str(v)) for k, v in _pinned_weights(predictor.species).items())
     )
@@ -500,7 +758,13 @@ def verified_predictor(predictor: Any, attestation: ExpressionAttestation) -> An
             "attestation weight hashes do not match this adapter's pinned weights; "
             "it was earned against different weights and is not trustworthy here"
         )
-    return dataclasses.replace(predictor, fidelity_verified=True)
+    return dataclasses.replace(
+        predictor,
+        fidelity_verified=True,
+        # Record WHICH claim authorized this, so a manifest can tell two promotions
+        # apart (invariant #9). The attestation is timestamp-free, so this is stable.
+        attestation_sha256=attestation.content_hash(),
+    )
 
 
 # Structural guard: the dataclass shape IS the licence-clean contract, so a drift

@@ -7,7 +7,72 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **The expression head can finally be promoted -- and BT4 Studio can use it.**
+  `verified_predictor` has existed since the attestation apparatus landed, but **nothing
+  in `src/` called it**: a maintainer could run the acceptance gate, earn a claim and
+  commit a record, and every user would still get an uncalibrated head, a candidate set
+  in discovery order, and the solver's pick delivered. The gate, the record format and
+  the calibrated-gating on the consuming side were all built; the seam between them was
+  missing. It now exists, opt-in and scope-bound:
+  - **`bt4.biomodels.expression.attestations`** (mirroring the splice side's
+    `promote_if_attested`): `BT4_EXPRESSION_USE_ATTESTED=1`, or an explicit
+    `use_attested=True` on `api.resolve_expression_backend`, honours a resolvable
+    attestation. **Nothing auto-promotes**, `default()` still returns the neutral
+    placeholder, and **no attestation is bundled** -- none has been earned, and shipping
+    one that had not would be the fabricated artifact CLAUDE.md §10.6 forbids.
+  - **A maintainer's own attestation is first-class.** An expression attestation is
+    earned against a *measured panel*, frequently unpublished, so
+    `$BT4_EXPRESSION_ATTESTATION` points at a local record and needs no commit. A
+    mis-pointed path **refuses** rather than falling back, because a typo would otherwise
+    look exactly like "no attestation".
+  - **BT4 Studio surfaces it.** A per-run toggle on the Candidates tab (passed
+    explicitly, never by mutating process env), disabled with a tooltip naming what is
+    missing when nothing resolves; the attestation's **scope on the page** (species /
+    cell types / readout / `top_k` / UTR contexts / panel hash), not just in a tooltip;
+    the head **pinned to that scope** while it is honoured; and the banner flipping from
+    *discovery order, NOT a ranking* to a ranking **with its scope named**. A head the
+    attestation does not cover stops the run with the mismatch named, rather than being
+    silently downgraded to uncalibrated.
+  - **The manifest records which claim authorized a calibrated pick** (invariant #9): a
+    promoted head carries the attestation's content hash, and `pipeline/candidates.py` /
+    `pipeline/rerank.py` fold it into the stamp, so two runs steered by different
+    attestations cannot share one.
+
 ### Fixed
+- **The expression attestation's scope was decorative, and is now the run's.** Three
+  measured holes, all closed before any real gate is ever run -- the gate is a one-shot
+  pre-registered procedure, so the record has to be complete and unfakeable when it is
+  made, not afterwards:
+  - **`attest_expression`'s `species` and `cell_types` were caller-declared free text,
+    never checked against how the gate actually scored.** Run the gate averaging all 78
+    cell types, then declare `cell_types=("HEK293T",)`, and the record -- and every later
+    check -- accepted the lie. The scope is now **derived** from the run
+    (`GateComparison.scope`); anything a caller declares is a **cross-check that refuses
+    on mismatch**, never an override. Where the panel's own `species` / `cell_type` /
+    `readout` columns declare the same fact it is checked against the panel bytes too,
+    and `verified_against_panel` records exactly which fields got that second check --
+    so a verified scope is distinguishable from a merely-declared one.
+  - **`verified_predictor` bound neither `top_k` nor the UTR context**, so an
+    attestation earned at `top_k=5` under one transcript context would promote a head
+    configured with a different ensemble size or different UTRs entirely. Both are now
+    bound. `batch_size` / `num_workers` deliberately are **not**: RiboNN pads to a fixed
+    width and does not shuffle when predicting, so neither can change a score, and
+    binding them would be false precision.
+  - **The gate's JSON record omitted `cell_types`, `top_k` and the UTRs**, so a finished
+    run was not reconstructable from its own output. `scripts/run_expression_gate.py` and
+    `bt4 expression-gate` now emit and print the full `GateScope`, including whether the
+    scores were computed by the gate or supplied by the caller (`scoring_source`) -- the
+    step at which the link between the named backend and the numbers stops being
+    mechanical.
+  - Two of these are now caught **before** the scoring pass: `run_panel_gate` refuses a
+    head configured to average every cell type against a panel that declares one, or a
+    species the panel contradicts. Leaving `--cell-type` off used to run cleanly to a
+    wrong verdict with no error and no warning.
+- **`bt4 expression-gate` ignored `--top-k`** (it had no such flag and always used 5,
+  while the script did forward it). The flag now exists and is forwarded; since `top_k`
+  is part of the scope an attestation binds, a promotion refuses a differently-sized
+  ensemble.
 - **The plain-English RiboNN guide, corrected by an adversarial pass over its own claims.**
   A four-lens review (executable accuracy / overclaim audit / instructional quality /
   independent statistical re-derivation) found real defects in the version that shipped,

@@ -214,9 +214,17 @@ generate-then-screen) use generate-and-rank, never inner-loop expression scoring
    and weights actually resolve, with missing/non-DNA UTRs refused before the run
    starts. RiboNN stays `calibrated=False`, so the discovery-order banner is
    unchanged — selecting the head changes what is *shown*, never what is
-   *delivered*.
-6. **(Gated, future)** splice **auto-edit** and RiboNN **auto-select**, each
+   *delivered*. The one exception is a deliberate opt-in beside it: an
+   acceptance-gate **attestation** the user holds promotes the head for that run,
+   strictly inside the scope the gate measured, and the banner then names that scope.
+   None ships, so the control is disabled by default and says what is missing.
+6. **(Partly built, still gated)** splice **auto-edit** and RiboNN **auto-select**, each
    unlocked only when its backend passes its fidelity/acceptance gate.
+   *Auto-select's delivery half now exists and is tested* — a head promoted through
+   `promote_if_attested` reorders the candidate set and re-picks `chosen`, and BT4
+   Studio's banner names the scope it was earned in. What is still gated is the only
+   part that matters: a head that has actually **earned** the promotion. No attestation
+   ships, so today nothing promotes.
 
 ## Future / out of scope for v1
 

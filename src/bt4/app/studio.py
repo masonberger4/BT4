@@ -205,6 +205,61 @@ _ASSP_CONSENT = (
 )
 
 
+def _resolve_expression_attestation() -> api.ExpressionAttestation | None:
+    """Return the expression attestation BT4 would use here, or ``None``.
+
+    Never raises. A malformed or mis-pointed record means "no calibrated ranking is
+    offerable on this machine", which the disabled toggle and its tooltip say; letting
+    the exception escape would take the window down at construction time over an
+    optional feature.
+    """
+    try:
+        return api.expression_attestation("ribonn")
+    except (api.ExpressionAttestationError, OSError):
+        return None
+
+
+def _expression_scope_line(attestation: api.ExpressionAttestation) -> str:
+    """Return a one-line, plain-text summary of exactly what an attestation covers.
+
+    The scope IS the claim (CLAUDE.md section 6/section 10.6): a calibration earned on
+    HEK293T ribosome load does not certify a head averaging 78 tissues, so the user is
+    shown what they are trusting rather than just the word "calibrated".
+    """
+    cells = ", ".join(attestation.cell_types) or "all cell types"
+    return (
+        f"{attestation.species} weights - {cells} - {attestation.readout} - "
+        f"top_k={attestation.top_k} - "
+        f"{len(attestation.utr_context_sha256)} UTR context(s) - "
+        f"panel {attestation.panel_sha256[:12]}..."
+    )
+
+
+def _expression_attestation_tooltip(
+    attestation: api.ExpressionAttestation | None,
+) -> str:
+    """Explain the attestation toggle -- including, when off, exactly what is missing."""
+    if attestation is None:
+        return (
+            "No expression attestation is available, so this would do nothing.\n\n"
+            "BT4 bundles none: no expression head has passed its CDS-variant "
+            "acceptance gate, and shipping a record for one that has not would be a "
+            "claim BT4 has not earned. If you ran the gate yourself, point "
+            f"${api.EXPRESSION_ATTESTATION_ENV_VAR} at your own attestation JSON "
+            "(see docs/GUIDE_ribonn_calibration.md) and it will appear here."
+        )
+    return (
+        "Promote RiboNN to calibrated=True for this run, using the attestation "
+        "found on this machine. The candidate set is then RANKED by predicted "
+        "expression and the delivered pick becomes the head's top scorer.\n\n"
+        f"Scope: {_expression_scope_line(attestation)}\n\n"
+        "That scope is the whole claim: it certifies ranking synonymous variants of "
+        "a known protein, in that cell-type selection, measured by that readout, in "
+        "that UTR context. A head configured differently is REFUSED rather than "
+        "promoted. Nothing here is a claim about a protein nobody has measured."
+    )
+
+
 def _distinct_site_count(positions: list[int], match_window: int) -> int:
     """Count distinct splice sites, merging positions within ``match_window``.
 
@@ -412,6 +467,10 @@ class StudioWindow(QtWidgets.QMainWindow):
         self._cc_running = False
         self._lib_running = False
         self._library: api.LibraryResult | None = None
+        # The expression attestation (if any) this machine can offer. Set for real when
+        # the Candidates tab's expression group is built; declared here so nothing can
+        # read it before that.
+        self._expr_attestation: api.ExpressionAttestation | None = None
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls_scroll = QtWidgets.QScrollArea()
@@ -1376,11 +1435,18 @@ class StudioWindow(QtWidgets.QMainWindow):
         of its signal, so holding the real ones fixed while the CDS varies is the
         intended use.
 
-        Selecting RiboNN changes **nothing** about delivery. It is
+        Selecting RiboNN changes **nothing** about delivery *by itself*. It is
         ``calibrated=False`` -- reproducing it faithfully is not calibration for
         BT4's CDS-variant regime -- so :func:`bt4.api.candidates` keeps the set in
         discovery order and leaves the solver's pick delivered; the head only
         annotates (CLAUDE.md §6, §10.6).
+
+        The one thing that changes that is the **attestation** toggle beside it: a
+        record that this head passed the CDS-variant acceptance gate promotes it, for
+        this run only, strictly inside the scope the gate measured. No attestation is
+        bundled -- none has been earned -- so the control is disabled by default and its
+        tooltip says what would have to exist for it to do anything. Nothing here can
+        manufacture a claim; it can only carry one that was earned elsewhere.
         """
         box = QtWidgets.QGroupBox("Expression head (optional)")
         form = QtWidgets.QFormLayout(box)
@@ -1444,17 +1510,82 @@ class StudioWindow(QtWidgets.QMainWindow):
             "UTR). Context for the model only; never part of the exported CDS.",
         )
 
+        self.expr_attested_check = QtWidgets.QCheckBox(
+            "honor expression attestation (calibrated ranking)"
+        )
+        self.expr_attested_check.setAccessibleName(
+            "Honor an expression acceptance-gate attestation"
+        )
+        self._expr_attestation = _resolve_expression_attestation()
+        self.expr_attested_check.toggled.connect(self._update_expr_attested)
+        self._add_row(
+            form, "Attestation", self.expr_attested_check,
+            _expression_attestation_tooltip(self._expr_attestation),
+        )
+
+        # The scope shown on the page, not only in a tooltip: a user about to trust a
+        # calibrated ranking must be able to READ what it was earned on.
+        self.expr_scope_label = QtWidgets.QLabel()
+        self.expr_scope_label.setWordWrap(True)
+        self.expr_scope_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.expr_scope_label.setAccessibleName("Attested calibration scope")
+        self.expr_scope_label.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        form.addRow("", self.expr_scope_label)
+
         self._update_ribonn_enabled(self.ribonn_check.isChecked())
+        self._update_expr_attested(self.expr_attested_check.isChecked())
         return box
 
+    def _update_expr_attested(self, checked: bool) -> None:
+        """Pin the head to the attestation's scope while the promotion is opted in.
+
+        The species, cell-type selection and ensemble size are **defined by the
+        attestation**, not chosen: the gate measured one configuration and certifies
+        that one. So while the toggle is on they are taken from the record and the
+        species control is pinned to it, rather than left free to show one thing while
+        the run does another. The UTR context stays the user's, because it is genuinely
+        their construct -- and a context the attestation never covered is refused at
+        run time rather than silently promoted.
+        """
+        attestation = self._expr_attestation
+        active = checked and attestation is not None
+        if active and attestation is not None:
+            index = self.ribonn_species_combo.findText(attestation.species)
+            if index >= 0:
+                self.ribonn_species_combo.setCurrentIndex(index)
+            cells = ", ".join(attestation.cell_types) or "all cell types"
+            self.expr_scope_label.setText(
+                "Calibrated <b>only</b> for: "
+                f"{escape(_expression_scope_line(attestation))}<br>"
+                f"<i>The head is pinned to {escape(attestation.species)} weights and "
+                f"{escape(cells)}; enter the UTR context the panel used, or the "
+                "promotion is refused.</i>"
+            )
+        else:
+            self.expr_scope_label.clear()
+        # Pinned by the attestation => not the user's to change while it is honoured.
+        self.ribonn_species_combo.setEnabled(
+            self.ribonn_check.isChecked() and self._ribonn_available and not active
+        )
+
     def _update_ribonn_enabled(self, checked: bool) -> None:
-        """Enable the RiboNN sub-controls only while the head is selected."""
-        for widget in (
-            self.ribonn_species_combo,
-            self.utr5_edit,
-            self.utr3_edit,
-        ):
+        """Enable the RiboNN sub-controls only while the head is selected.
+
+        The attestation toggle is additionally gated on an attestation actually being
+        resolvable: with none present it would silently do nothing, and a control that
+        silently does nothing is worse than one that says why it is unavailable
+        (CLAUDE.md 6.6). Its tooltip carries the "what is missing" text either way.
+        """
+        for widget in (self.utr5_edit, self.utr3_edit):
             widget.setEnabled(checked and self._ribonn_available)
+        self.expr_attested_check.setEnabled(
+            checked and self._ribonn_available and self._expr_attestation is not None
+        )
+        # Delegated, so the species control has exactly one owner: it is the user's
+        # while the head is uncalibrated and the attestation's while it is honoured.
+        self._update_expr_attested(self.expr_attested_check.isChecked())
 
     def _prepare_predictor(self) -> tuple[bool, api.ExpressionPredictor | None]:
         """Build the expression head for a candidate run, or explain the problem.
@@ -1494,12 +1625,41 @@ class StudioWindow(QtWidgets.QMainWindow):
             )
             self.utr5_edit.setFocus()
             return False, None
-        predictor = api.resolve_expression_backend(
-            "ribonn",
-            species=self.ribonn_species_combo.currentText(),
-            utr5=utr5,
-            utr3=utr3,
-        )
+        # Promotion is per run and passed explicitly, never by mutating the process
+        # environment -- the same shape as the splice attested toggle. A scope mismatch
+        # RAISES rather than downgrading, so it is caught here and explained: a user who
+        # ticked "calibrated ranking" and silently got an uncalibrated one is exactly the
+        # failure the attestation layer exists to prevent.
+        attestation = self._expr_attestation
+        use_attested = self.expr_attested_check.isChecked() and attestation is not None
+        # Under promotion the scope is the attestation's, not the form's: the gate
+        # measured one species / cell-type selection / ensemble size and certifies that
+        # one, so the head is built to match rather than being built loosely and then
+        # rejected. (The UTR context stays the user's, and is checked.)
+        scope: dict[str, object] = {"species": self.ribonn_species_combo.currentText()}
+        if use_attested and attestation is not None:
+            scope = {
+                "species": attestation.species,
+                "cell_types": attestation.cell_types,
+                "top_k": attestation.top_k,
+            }
+        try:
+            predictor = api.resolve_expression_backend(
+                "ribonn",
+                utr5=utr5,
+                utr3=utr3,
+                use_attested=use_attested,
+                **scope,  # type: ignore[arg-type]
+            )
+        except api.ExpressionAttestationError as exc:
+            self._warn(
+                "That attestation does not cover this setup",
+                str(exc),
+                "An attestation certifies ranking for one species, cell-type "
+                "selection, ensemble size and UTR context. Match the head to it, or "
+                "untick the attestation to run RiboNN uncalibrated (annotation only).",
+            )
+            return False, None
         return True, predictor
 
     def _build_library_tab(self) -> QtWidgets.QWidget:
@@ -1746,7 +1906,9 @@ class StudioWindow(QtWidgets.QMainWindow):
             "an optimality certificate and a content-addressed run manifest, so "
             "any exported design is reproducible from its stamp. The splice and "
             "expression models shipped today are UNCALIBRATED: they annotate and "
-            "advise, and they never steer what is delivered."
+            "advise, and they never steer what is delivered. The only way that "
+            "changes is if you opt in to an acceptance-gate attestation you hold, "
+            "which promotes a head strictly inside the scope it was earned in."
         )
         box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
         # show() (not exec()) so the app never blocks -- important headless too.
@@ -1820,6 +1982,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             self.splice_cnn_check,
             self.splice_attested_check,
             self.ribonn_check,
+            self.expr_attested_check,
             self.ribonn_species_combo,
             self.utr5_edit,
             self.utr3_edit,
@@ -3135,15 +3298,27 @@ class StudioWindow(QtWidgets.QMainWindow):
         delivered = cand_set.delivered()
         model = delivered.expression_model if delivered is not None else "?"
         if cand_set.calibrated:
+            # A calibrated ranking is only as good as the scope it was earned in, so the
+            # banner names that scope rather than just saying "calibrated". A promotion
+            # can only have come through the attestation seam, so one is resolvable
+            # here; the fallback text keeps the claim honest if it somehow is not.
+            scope = (
+                _expression_scope_line(self._expr_attestation)
+                if self._expr_attestation is not None
+                else "scope unavailable"
+            )
             basis = (
-                f"Ranked by predicted expression ({model}); the ★ delivered "
-                "candidate is the top-scoring one."
+                f"<b>Ranked by predicted expression</b> ({escape(model)}); the ★ "
+                "delivered candidate is the top-scoring one.<br>"
+                f"Calibrated for: <b>{escape(scope)}</b>. That scope is the claim &mdash; "
+                "it certifies ranking spellings of a known protein in that context, "
+                "nothing broader."
             )
             style = "proven_optimal"
         else:
             basis = (
-                f"Expression head <b>{model}</b> is <b>uncalibrated</b>, so this is "
-                "<b>discovery order, not a ranking</b>; the ★ delivered "
+                f"Expression head <b>{escape(model)}</b> is <b>uncalibrated</b>, so "
+                "this is <b>discovery order, not a ranking</b>; the ★ delivered "
                 "candidate is the solver's pick. Scores annotate only."
             )
             style = "heuristic"

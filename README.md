@@ -356,6 +356,17 @@ bit-for-bit; the attestation is committed), but promotion stays **opt-in** via
 sequence — so BT4 uses them as honest cross-checks/rerankers, never as validated
 results. SpliceAI's and RiboNN's weights are noncommercial-licensed.
 
+**RiboNN has an equivalent opt-in, and no attestation ships for it.** If you run the
+CDS-variant acceptance gate yourself and it passes
+([`docs/GUIDE_ribonn_calibration.md`](docs/GUIDE_ribonn_calibration.md)), point
+`$BT4_EXPRESSION_ATTESTATION` at the record and set `BT4_EXPRESSION_USE_ATTESTED=1`
+(or tick the box on BT4 Studio's Candidates tab) and the candidate set is then **ranked**
+by predicted expression, with the delivered pick chosen by the head. BT4 bundles no
+expression attestation — none has been earned — so by default the head annotates and
+never steers. A promotion is bound to the exact scope the gate measured (species,
+cell-type selection, `top_k`, UTR context, weight hashes); a head outside it is
+**refused**, never quietly downgraded.
+
 New to the codebase? Read [`CLAUDE.md`](./CLAUDE.md) first (the design
 constitution), then [`CONTRIBUTING.md`](./CONTRIBUTING.md). Adding a constraint or
 objective is a new file plus its honesty property test — never an engine edit.

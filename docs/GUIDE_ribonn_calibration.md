@@ -17,8 +17,9 @@ A few reassurances before we start:
   expectation is that it isn't. Finding that out cheaply and writing it down *is* the
   deliverable. You have not failed if the answer is no.
 - **Nothing you do here changes BT4 for users by accident.** There is no switch you
-  can trip. Turning the model on for real needs a deliberate, separate step, and even
-  that isn't wired up yet (see [Step 21](#step-21--the-part-that-still-wont-work)).
+  can trip. Turning the model on for real needs a deliberate, separate opt-in — an
+  environment variable or a checkbox — and it only works inside the exact scope your
+  test measured (see [Step 21](#step-21--using-it-this-part-now-works)).
 - **Don't recognise a word?** There is a one-line-per-term [Glossary](#glossary) at the
   very end. CDS, UTR, Spearman, GC3, r², coverage, conformal interval and attestation are
   all in it.
@@ -740,17 +741,20 @@ if you're redirecting output to a file.
 your measurements are in real units. This fits the straight line connecting them. Without
 it, the error-bar half of the test is comparing two different rulers.
 
-**`--cell-type`** — ⚠️ **the silent one.** Leave it out and RiboNN averages **all 78 human
-cell types**. Against a panel measured in one cell line, that is a different quantity
-entirely — and there is no error, no warning, and no cross-check against your file's own
-`cell_type` column. It runs cleanly to a wrong verdict.
+**`--cell-type`** — ⚠️ **it used to be the silent one.** Leave it out and RiboNN averages
+**all 78 human cell types**; against a panel measured in one cell line that is a
+different quantity entirely. **If your panel fills in its `cell_type` column, this is now
+caught before anything is scored** — the gate refuses and tells you which `--cell-type`
+to pass. If your panel leaves the column blank there is still nothing to check against
+and it will run cleanly to a wrong verdict, so fill it in. (Same for `species`.)
 
 > **Use the script, not the `bt4 expression-gate` shortcut**, if you want the record file.
 > The shortcut command exists and works, but it has **no `--json` flag**, so it cannot
-> produce `gate_result.json` — and it also can't set `--top-k` or `--baselines`.
+> produce `gate_result.json` — and it also can't set `--baselines` or `--attest`.
+> (It *can* now set `--top-k`.)
 
 Keep `gate_result.json`, `stage1_spread.json` and your pre-registration file together.
-Those three files *are* the record.
+Those three files *are* the record — four, once Step 20 adds the attestation.
 
 ## Step 19 — Read the verdict
 
@@ -790,11 +794,51 @@ content-hashed record saying "this model passed this test, on this data (bound b
 panel's SHA-256), in this scope." It is not signed and proves nothing about *who* ran it;
 it binds the claim to exact bytes, not to an identity.
 
+**Add one flag to the Step 18 command.** That is the whole procedure now:
+
+```bash
+python scripts/run_expression_gate.py \
+    --panel panel.tsv --backend ribonn --species human --cell-type HEK293T \
+    --within-group --recalibrate \
+    --min-spearman 0.30 --target-coverage 0.90 --coverage-tolerance 0.05 \
+    --baselines permutation,cai,gc3,length,constant \
+    --num-workers 0 \
+    --readout mean_ribosome_load \
+    --attest ribonn_attestation.json \
+    --json > gate_result.json
+```
+
+`--attest` writes the record **from the comparison the verdict was read off**. That
+matters for two reasons, and both used to be real hazards:
+
+- It does not re-score. The old two-script procedure ran the whole test a second time —
+  another full RiboNN pass — purely to rebuild an object it had already had.
+- It cannot be configured differently the second time, because there is no second time.
+
+If the run is not promotable, `--attest` refuses with exit code 3 and writes nothing.
+That is a result, not a failure — go to the outcome table in Step 19.
+
+> ⚠️ **This is not the sharpest edge in the procedure any more.** Earlier versions of
+> this guide warned that the `species` and `cell_types` you typed into `promote.py` were
+> free text, never checked against how the test actually ran — so a run averaging all 78
+> cell types could be filed as a HEK293T result, and every later check would accept it.
+> **That hole is closed.** The scope is now taken from the run itself. If you pass
+> `species=` or `cell_types=` and they disagree with what was scored, you get a refusal,
+> not a record. And where your panel's own `species` / `cell_type` / `readout` columns
+> declare the same fact, that is checked against your file too — the attestation's
+> `verified_against_panel` field lists exactly which parts of the scope got that second
+> check, so a reader can tell a verified scope from one taken on your word.
+
+The attestation layer still refuses outright to record: a failing test, a run done
+without `--within-group`, a model that didn't beat every baseline, error bars as wide as
+the data, or thresholds set below the built-in floors.
+
+**If you prefer to do it in Python** (e.g. you already have the comparison in a session):
+
 ```python
-# promote.py — run once, on the machine that ran the test.
+# promote.py — only if you are not using --attest.
 import json
 from bt4 import api, __version__
-from bt4.biomodels.expression import attest_expression
 
 panel = api.read_panel("panel.tsv")
 comparison = api.expression_gate(
@@ -804,69 +848,83 @@ comparison = api.expression_gate(
     species="human", cell_types=("HEK293T",),
 )
 assert comparison.promotable, "gate did not pass; nothing to attest"
-att = attest_expression(
-    comparison, species="human", cell_types=("HEK293T",),
-    readout="mean_ribosome_load", bt4_version=__version__,
+att = api.attest_expression(
+    comparison, readout="mean_ribosome_load", bt4_version=__version__,
 )
 open("ribonn_attestation.json", "w").write(json.dumps(att.to_dict(), indent=2))
 ```
 
-Save that as `promote.py` in your BT4 folder and run `python promote.py`.
+Note there is no `species=`/`cell_types=` on `attest_expression` here: they come from
+the `expression_gate` call above. You *may* pass them, and then they are checked — but
+you cannot use them to say something the run did not do.
 
-⚠️ **Two things to be careful about here.**
-
-First, this script **runs the whole test a second time**, which costs another full scoring
-pass and can silently disagree with Step 18 if you type different settings. Make the
-`species` and `cell_types` match Step 18 **exactly**.
-
-Second — and this is the sharpest edge in the whole procedure — **the `species` and
-`cell_types` you type here are not checked against how the test actually ran.** They are
-free text, copied straight into the permanent record. Run the test across all 78 cell
-types, then type `cell_types=("HEK293T",)` here, and you produce a committed record
-whose stated scope is simply false, which every later check will accept. Nothing catches
-this but you.
-
-The attestation layer will, however, refuse outright to record: a failing test, a run
-done without `--within-group`, a model that didn't beat every baseline, error bars as
-wide as the data, or thresholds set below the built-in floors.
+Keep `gate_result.json`, `ribonn_attestation.json`, `stage1_spread.json` and your
+pre-registration file together. Those four files *are* the record.
 
 Then update [`CLAUDE.md`](../CLAUDE.md) §6/§9, item 11 in
 [`NEXT_SESSION.md`](NEXT_SESSION.md), and [`CHANGELOG.md`](../CHANGELOG.md).
 
-## Step 21 — The part that still won't work
+## Step 21 — Using it (this part now works)
 
-**Be careful what you promise anyone.** Even after a passing test and a committed
-attestation, **nothing changes for BT4's users.**
+**Nothing auto-promotes, and nothing changes until you ask.** That is deliberate. But
+asking is now one environment variable or one checkbox, where it used to be a Python
+script you had to write yourself.
 
-The function that flips the switch is `verified_predictor`, and **no part of BT4 calls it**
-outside its own tests. A user must invoke it by hand:
+```bash
+export BT4_EXPRESSION_ATTESTATION=/path/to/ribonn_attestation.json
+export BT4_EXPRESSION_USE_ATTESTED=1
+```
+
+With those set, `api.resolve_expression_backend("ribonn", ...)` returns a **calibrated**
+head, `api.candidates` **ranks** the set by predicted expression instead of returning it
+in discovery order, and the delivered pick becomes the head's top scorer. The run
+manifest records the attestation's content hash, so a design produced this way is
+distinguishable from one produced without it.
+
+In **BT4 Studio**: Candidates tab → *Expression head* → tick **honor expression
+attestation**. The box is greyed out with an explanatory tooltip when no attestation
+resolves, so it is never a control that silently does nothing. When it is on, the panel
+shows the scope you are trusting — species, cell types, readout, `top_k`, how many UTR
+contexts, and the panel hash — and the head is **pinned** to that species and cell-type
+selection, so the form cannot display one scope while the run uses another.
+
+You can still do it explicitly in code:
 
 ```python
-from bt4.biomodels.expression import (
-    RiboNNExpressionModel, load_expression_attestation, verified_predictor,
+from bt4 import api
+model = api.resolve_expression_backend(
+    "ribonn", species="human", utr5="...", utr3="...",
+    cell_types=("HEK293T",), use_attested=True,
 )
-model = RiboNNExpressionModel(species="human", utr5="...", utr3="...",
-                              cell_types=("HEK293T",))
-model = verified_predictor(model, load_expression_attestation("ribonn_attestation.json"))
 assert model.calibrated
 ```
 
-Save as `use_it.py` and run `python use_it.py`. This is what a *user* would have to do by
-hand — nothing in BT4 does it for them, which is the whole point of this step.
+**A configuration the attestation does not cover is refused, not downgraded.** Species,
+cell-type selection, `top_k`, the UTR context, and the adapter's pinned weight hashes are
+all bound: change any of them and you get an error naming the mismatch. You do *not* get
+an uncalibrated head handed back quietly, which would be the worst outcome — a user who
+asked for a calibrated ranking and cannot tell they did not get one. (`batch_size` and
+`num_workers` are deliberately *not* bound: RiboNN pads to a fixed width and does not
+shuffle when predicting, so neither can change a score.)
 
-Wiring that into BT4's normal paths is **separate work — budget it separately.** The
-splice side is *not* in the same position, despite item 10 recording a related gap: its
-`verified_predictor` **is** called from production code behind an explicit opt-in
-(`BT4_SPLICE_USE_ATTESTED` / `--use-attested-splice`), so a committed splice attestation
-does change behaviour for a user who asks for it. The expression side has no caller at
-all.
+**The UTR context is part of the claim.** Your gate measured ranking *inside* the
+transcript context your panel used. A head configured for a different 5′/3′ UTR is
+outside what was measured, so it is refused. If you want to design in a different
+context, that is a different question and needs its own panel.
 
-And keep the claim honest and scoped. An attestation earned on HEK293T does **not**
-certify a model averaging all 78 cell types. The honest sentence is always something like:
-*"calibrated for ranking synonymous variants of a known protein, in cell type X, measured
-by readout Y."* The broader claim — ranking sequences for a protein nobody has measured —
-**cannot be honestly tested at all**, because it would need ~100 held-out proteins that
-don't exist.
+**Should you commit the attestation to the repo?** Only if your panel is public. The
+record carries the panel's SHA-256 and a hash of each UTR context — and a *short* UTR is
+recoverable from its hash by brute force, so committing one publishes that context. The
+`$BT4_EXPRESSION_ATTESTATION` path exists precisely so a maintainer with unpublished data
+can use their own result without publishing anything.
+
+**And keep the claim scoped.** An attestation earned on HEK293T does **not** certify a
+model averaging all 78 cell types — which is why BT4 now refuses that rather than
+trusting your label. The honest sentence is always something like: *"calibrated for
+ranking synonymous variants of a known protein, in cell type X, measured by readout Y,
+in UTR context Z."* The broader claim — ranking sequences for a protein nobody has
+measured — **cannot be honestly tested at all**, because it would need ~100 held-out
+proteins that don't exist.
 
 ---
 
@@ -881,15 +939,16 @@ don't exist.
 | 4 | Trusting `('null', 'ribonn')` | Only proves two folders exist. Empty folders pass. |
 | 5 | Forgetting `--within-group` | Measures the wrong thing entirely and wastes the run. Warns on stderr only. |
 | 6 | Forgetting `--recalibrate` | Compares two different scales; error bars become garbage. |
-| 7 | Forgetting `--cell-type` | Silently averages 78 cell types. No error, no warning, wrong answer. |
+| 7 | Forgetting `--cell-type` | **Now caught, if your panel says so.** A panel with a `cell_type` column makes the gate refuse before it scores. With no such column there is still nothing to check against, and it silently averages 78 cell types — so fill the column in. |
 | 8 | Mismatched FASTA headers in Step 11 | Grouping is "text before the first `|`". Get it wrong and every sequence becomes its own group; the crash message never mentions headers. |
 | 9 | Reading `responds_to_synonymous_change` as biology | It's a one-part-in-a-billion check. |
 | 10 | A 90-row dataset | A good model fails about half the time. See Step 16. |
 | 11 | Re-running with adjusted thresholds | Turns validation into a search. Nothing enforces the "run once" rule. |
-| 12 | Typing a scope in `promote.py` that doesn't match the run | Produces a permanent record that lies, which every later check accepts. |
+| 12 | Typing a scope that doesn't match the run | **Fixed.** The scope is taken from the run; a disagreeing declaration is a refusal, not a record. Use `--attest` and there is nothing to type. |
 | 13 | Expecting a green test suite to mean a real run works | Every RiboNN test uses a stand-in. |
 | 14 | Comparing against raw protein output | Re-introduces the exact quantity RiboNN's output divides out. |
-| 15 | Expecting a pass to change anything for users | Nothing calls `verified_predictor`. Separate work. |
+| 15 | Expecting a pass to change things for users *automatically* | It doesn't, by design — but the opt-in exists now (`BT4_EXPRESSION_USE_ATTESTED`, or the Studio checkbox), and a head outside the attested scope is refused rather than quietly downgraded. |
+| 16 | Committing an attestation for a private panel | It carries the panel hash and a hash per UTR context; a *short* UTR is brute-forceable from its hash. Use `$BT4_EXPRESSION_ATTESTATION` locally instead. |
 
 ---
 
@@ -907,7 +966,10 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
    all. This guide says "it runs", not "it matches".
 2. **`bt4 expression-gate` cannot produce `gate_result.json`.** The runbook offers it as
    an equivalent to the script at Stage 4, but it has **no `--json` flag** (nor
-   `--baselines`, `--top-k`, `--batch-size`). Use the script for the record.
+   `--baselines`, `--batch-size`, `--attest`). Use the script for the record. *(It
+   silently ignored `--top-k` too — it had no such flag and always ensembled 5, while the
+   script forwarded it. The flag now exists, because `top_k` is part of the scope an
+   attestation binds.)*
 3. **`harness_ok` does not mean "the scores differ substantially".** It is a
    not-equal test at a 1e-9 floor — about six orders of magnitude away from the runbook's
    wording.
@@ -940,6 +1002,20 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
     through the backend, so every one needs the licensed weights. The genuinely free work
     — the test suite and a `--backend null` dry run — appears nowhere in the runbook. This
     guide leads with it (Steps 3–4).
+13. **The scope you typed was never checked against the run** — this guide's own earlier
+    version called it "the sharpest edge in the whole procedure", and it was. **Fixed in
+    the code, not in prose (2026-08):** `attest_expression` now derives species / cell
+    types / readout from the gate comparison, refuses a declaration that disagrees, and
+    cross-checks against the panel's own columns where it has them. The gate additionally
+    refuses a cell-type or species mismatch *before* it scores, so the run-once budget is
+    not spent on a wrong-scope answer. Steps 18 and 20 are rewritten accordingly.
+14. **"Nothing calls `verified_predictor`"** — true when this guide landed, and the reason
+    old Step 21 was titled "the part that still won't work". No longer: the promotion seam
+    ships (`BT4_EXPRESSION_USE_ATTESTED`, `$BT4_EXPRESSION_ATTESTATION`, a BT4 Studio
+    toggle), and `run_expression_gate.py --attest` writes the record from the same
+    comparison the verdict came from, so the second scoring pass is gone. What has **not**
+    changed: nothing is bundled, nothing auto-promotes, and a head outside the attested
+    scope is refused rather than downgraded.
 
 ---
 
