@@ -7,6 +7,110 @@ its first tagged release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-21
+
+The largest release so far, and the one that starts moving BT4 from *a coding
+sequence in isolation* toward *a coding sequence in a construct*: a
+`ConstructContext` carrying the 5'UTR and vector backbone, `SeededConstraint` so
+every LOCAL rule is junction-correct, one shared junction folding window, and
+`api.audit_construct` auditing the assembled construct including restriction-site
+uniqueness. Around it, annotated **GenBank I/O** puts residual violations on the
+map a user actually opens; the organism set grows to **twelve**, every table
+recounted from release-pinned public CDS; and CAI finally **declares its
+reference set**, with the highly-expressed set (PaxDb top-300) the default
+wherever one exists — 8 of the 12 organisms, and the other four ship none rather
+than a guessed one — so `w = 1` marks the codon translation *prefers*, not merely
+the one that is most common.
+
+The calibration apparatus also grew up. Both wrapped splice CNNs — **Pangolin**
+and **SpliceAI** — passed their integration-fidelity gates at `max_abs_deviation`
+exactly 0.0 over the same 18-case panel, and ship with committed, license-clean
+attestations honored behind an explicit opt-in. The statistical-calibration gates
+that a fidelity pass does *not* provide landed too: the splice gate (Part B) with
+its strict panel format, position-convention verification and four permanent
+baselines, and the expression gate with `within_group` scoring, conformal
+coverage, a cluster bootstrap and five baselines a head must beat. The wrapped
+**RiboNN** translation-efficiency head landed with batched scoring and an honest
+scope, and BT4 Studio surfaced it — plus the opt-in ASSP cross-check, a
+**Candidates & splice audit** tab, **Library (sampled)** mode, menus, shortcuts
+and runtime theming.
+
+Running through the release is a series of measurements that were allowed to
+contradict this project's own claims, and did. BT4's splice risk pooling was
+**structurally mute in BT4's own regime** — one uncalibrated background constant
+flooring the opt-in path (6 of 93 designed sequences above it) while saturating
+the shipped one (93 of 93) — so a floored zero is now distinguishable from a
+measured one, with a background-free ranking statistic beside it and the
+threshold deliberately left where it was. The adapters' `N`-padding was shown
+**not to be neutral**, making an `N`-padded splice number a lower bound rather
+than an estimate. The models were shown **not to be blind** on designed CDS (a
+planted donor lifts the local peak ~11x at exactly the predicted anchor) while
+the detection floor was shown to be **high** enough that intermediate-strength
+sites clear nothing. And the candidate ranking was shown **reliable but not
+valid** — Eρ² = 0.90–0.96, yet the delivered argmax changes with fold or tissue
+in 2 of 3 proteins.
+
+**No model became calibrated in this release.** RiboNN and every splice backend
+still report `calibrated=False` for BT4's regime, the splice operating point is
+still a convention rather than evidence, and the frontier reranker still refuses
+to re-pick the delivered sequence from an uncalibrated score. What shipped is the
+apparatus that could *earn* a calibration claim, and the surfaces that keep an
+uncalibrated number from being read as one.
+
+### Fixed
+- **The packaged BT4 Studio app did not start at all, and only launching it said so.**
+  Cutting this release meant building the bundle and opening it, which is how a
+  release-blocking defect surfaced that every from-source gate had passed over:
+  `packaging/bt4-studio.spec` collected `**/*.tsv` and `**/*.provenance.json`, and two
+  kinds of data file added since have neither shape. The frozen app died before its
+  first window with `FileNotFoundError: .../bt4/biomodels/expression/data/ribonn_sha256.json`
+  -- RiboNN's public weight-hash pin is read at *import* time, and `bt4.api` imports
+  `bt4.biomodels.expression`, so nothing about the failure was optional or lazy. The
+  committed splice fidelity attestations
+  (`biomodels/splice/data/{pangolin,spliceai}.attestation.json`) were missing from the
+  bundle for the same reason, and would have failed **quieter and worse**: an absent
+  attestation file legitimately reads as "no attestation ships for this backend", so a
+  packaged BT4 would have disclaimed two gates that had in fact passed.
+  - The spec now collects `**/*.json`. A pattern that matches the *kind* of file cannot
+    drift behind the tree the way an enumeration of today's files did.
+  - `tests/test_bundle_spec.py` pins it: every non-Python file under `src/bt4` must be
+    matched by the spec's own `includes` patterns, resolved exactly the way PyInstaller
+    resolves them (`Path.glob`), with a companion test asserting the check is not
+    vacuous. This defect was invisible to the whole suite because the suite runs from
+    a source tree where the files are simply *there*.
+- **`bt4-studio --self-test` proved the app opened, not that it worked.** It built
+  `StudioWindow` and exited, so a bundle missing a data file that nothing loads until a
+  run -- the REBASE enzyme catalog is the obvious one -- would have passed the release
+  workflow's only per-OS check on the real artifact and shipped, surfacing on the user's
+  first click. It now also runs one real design through `bt4.api` inside the frozen
+  bundle (a restriction-avoiding solve, checked for length and for the site it was told
+  to avoid) and fails non-zero if the engine cannot deliver. It stays silent on success:
+  only `cli` prints (CLAUDE.md section 3).
+- **A version bump falsely invalidated the committed splice attestations.**
+  `test_attestation_records_the_producing_version` asserted
+  `attestation.bt4_version == bt4.__version__`, which is strictly stronger than the
+  provenance it documents: the fidelity gates ran on a maintainer machine holding the
+  licensed weights, at the version current then, and cutting a new BT4 does not re-run
+  them. So the assertion left only two ways to release -- re-run a gate that needs
+  weights no CI can hold, or rewrite the one field whose job is to record *which build
+  measured this*. The check now pins what it says: the recorded version parses and is
+  not from the future. Promotion was never affected and is unchanged -- `verified_predictor`
+  gates on the backend, `passed`, the tolerance floor and an exact weight-SHA match, never
+  on the version -- so a release neither re-certifies nor silently invalidates an
+  attestation. Two *synthetic*-attestation fixtures that hardcoded `"0.4.0"`
+  (`tests/test_splice_attestation.py`, `tests/test_calibration_flag_leaks.py`) now read
+  `bt4.__version__` instead, which `docs/DESIGN_splice_cnn_calibration.md` had already
+  asked for "so it does not rot at the next bump" -- this was that bump.
+- **The Linux app aborts at startup on a minimal system, and the docs did not say so.**
+  The dependency list in `packaging/README.md` is what CI installs to *build* the bundle
+  and run the offscreen self-test; the `xcb` platform plugin a real desktop needs links
+  against roughly a dozen more `libxcb-*` libraries, so on a minimal, server, WSL or
+  container install the released app exits with *"Could not load the Qt platform plugin
+  xcb"* and nothing else. `docs/INSTALL.md` now carries the complete package list under
+  its Linux troubleshooting section, read off the shipped binary's `NEEDED` entries and
+  verified by launching the packaged app on a bare system, and `packaging/README.md`
+  marks its own list as the build-time set rather than the user-facing one.
+
 ### Fixed
 - **The plain-English RiboNN guide, corrected by an adversarial pass over its own claims.**
   A four-lens review (executable accuracy / overclaim audit / instructional quality /

@@ -53,10 +53,22 @@ def _keep_pg(name: str) -> bool:
 hiddenimports += collect_submodules("pyqtgraph", filter=_keep_pg)
 datas += collect_data_files("pyqtgraph", excludes=["**/examples/**", "**/tests/**"])
 
-# BT4's provenanced codon tables (TSV + provenance sidecars) and typing marker.
-datas += collect_data_files(
-    "bt4", includes=["**/*.tsv", "**/*.provenance.json", "py.typed"]
-)
+# BT4's packaged data files: the provenanced codon/tRNA/enzyme tables (TSV), every
+# JSON sidecar beside them, and the typing marker.
+#
+# The JSON pattern is deliberately `**/*.json` and NOT an enumeration of the JSON
+# files that happen to exist today. It used to be `**/*.provenance.json`, and the
+# tree grew two data files that pattern did not match --
+# `biomodels/expression/data/ribonn_sha256.json` (RiboNN's public weight-hash pin,
+# read at *import* time) and `biomodels/splice/data/*.attestation.json` (the
+# committed fidelity attestations). The first turned the frozen app into a hard
+# launch crash (`FileNotFoundError` inside `bt4.biomodels.expression`, which
+# `bt4.api` imports), and the second failed quieter and worse: a missing
+# attestation file reads as "no attestation ships for this backend", so the bundle
+# would have silently disclaimed a gate that had in fact passed. A pattern that
+# matches the *kind* of file cannot drift behind the tree that way; the coverage is
+# pinned by `tests/test_bundle_spec.py`.
+datas += collect_data_files("bt4", includes=["**/*.tsv", "**/*.json", "py.typed"])
 
 a = Analysis(
     ["bt4_studio_entry.py"],
