@@ -74,14 +74,16 @@ def rerank_by_expression(
     if backend.calibrated and scores:
         # A calibrated head may steer delivery to the highest predicted expression.
         chosen = max(range(len(scores)), key=lambda i: scores[i])
-        # Because it chose WHICH sequence ships, its identity has to enter the
-        # provenance stamp (invariant #9: a stamp must not map to two different
-        # delivered sequences). Without this, reranking the same frontier with two
-        # different calibrated heads yields different DNA under byte-identical
-        # manifests -- and identical to the un-reranked run as well. `_refine`
-        # already stamps the folding backend this way, and
-        # `assemble_and_rank_candidates` stamps `predictor` / `predictor_calibrated`;
-        # this is the one steering site that did not.
+        # Because it chose WHICH sequence ships, its identity is recorded on the
+        # manifest (invariant #9: a stamp must not map to two different delivered
+        # sequences). Honest limit: this writes `manifest.extra`, which is NOT folded
+        # into `config_hash` -- unlike `assemble_and_rank_candidates`, which passes its
+        # predictor fields through `_manifest` and so does change the hash. Rerank
+        # cannot do the same, because it is handed a finished manifest and not the
+        # config that produced it, so `config_hash` here still cannot distinguish two
+        # calibrated heads. The record is visible in the manifest; the *hash* is not yet
+        # sensitive to it. Closing that needs the config threaded through, which is a
+        # separate change.
         manifest = dataclasses.replace(
             result.manifest,
             extra={

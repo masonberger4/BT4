@@ -876,10 +876,21 @@ export BT4_EXPRESSION_USE_ATTESTED=1
 ```
 
 With those set, `api.resolve_expression_backend("ribonn", ...)` returns a **calibrated**
-head, `api.candidates` **ranks** the set by predicted expression instead of returning it
-in discovery order, and the delivered pick becomes the head's top scorer. The run
-manifest records the attestation's content hash, so a design produced this way is
-distinguishable from one produced without it.
+head. Hand that head to the design flow and the set becomes a real ranking:
+
+```python
+from bt4 import api
+head = api.resolve_expression_backend(
+    "ribonn", species="human", utr5="...", utr3="...", cell_types=("HEK293T",),
+)
+result = api.candidates("MKAYVQTL...", predictor=head)   # ranked, not discovery order
+```
+
+⚠️ **The environment variable governs promotion, not selection.** `api.candidates` with
+no `predictor=` still uses the neutral placeholder however many variables you export —
+exporting them does not silently change what a script that never asked for RiboNN does.
+The run manifest records the attestation's content hash, so a design produced with a
+promoted head is distinguishable from one produced without it.
 
 In **BT4 Studio**: Candidates tab → *Expression head* → tick **honor expression
 attestation**. The box is greyed out with an explanatory tooltip when no attestation

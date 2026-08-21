@@ -405,7 +405,10 @@ class ExpressionAttestation:
         return cls(
             backend=str(data["backend"]),
             species=str(data["species"]),
-            cell_types=tuple(str(name) for name in data["cell_types"]),
+            # Sorted on the way in, matching how attest_expression writes them: a
+            # content hash that moved when someone reordered a JSON list would not be a
+            # content hash, and verified_predictor compares these tuples exactly.
+            cell_types=tuple(sorted(str(name) for name in data["cell_types"])),
             readout=str(data["readout"]),
             within_group=bool(data["within_group"]),
             recalibrate=bool(data["recalibrate"]),
@@ -423,12 +426,12 @@ class ExpressionAttestation:
             best_baseline_spearman=float(data["best_baseline_spearman"]),
             panel_sha256=str(data["panel_sha256"]),
             weight_sha256=tuple(
-                (str(pair[0]), str(pair[1])) for pair in data["weight_sha256"]
+                sorted((str(pair[0]), str(pair[1])) for pair in data["weight_sha256"])
             ),
             top_k=int(data["top_k"]),
-            utr_context_sha256=tuple(str(h) for h in data["utr_context_sha256"]),
+            utr_context_sha256=tuple(sorted(str(h) for h in data["utr_context_sha256"])),
             verified_against_panel=tuple(
-                str(name) for name in data["verified_against_panel"]
+                sorted(str(name) for name in data["verified_against_panel"])
             ),
             scoring_source=str(data["scoring_source"]),
             bt4_version=str(data["bt4_version"]),

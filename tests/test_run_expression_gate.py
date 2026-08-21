@@ -353,7 +353,10 @@ def test_attest_writes_the_scope_the_comparison_actually_used(
 
     # A gate run against the neutral placeholder cannot be filed as a RiboNN result --
     # the record's backend comes from the head the gate constructed, not from a label.
+    # The message is checked, not just the exit code: this run also has supplied scores,
+    # which is a *different* refusal, and an exit code alone cannot tell them apart.
     assert rg._attest(comparison, str(tmp_path / "no.json"), readout="mrl") == 3
+    assert "not an attestable expression head" in capsys.readouterr().err
     assert not (tmp_path / "no.json").exists()
 
     # A test double standing in for a gate-scored RiboNN run (no licensed weights in CI).

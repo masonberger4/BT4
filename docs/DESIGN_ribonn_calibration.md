@@ -427,7 +427,12 @@ model = api.resolve_expression_backend(
     cell_types=("HEK293T",), use_attested=True,
 )
 assert model.calibrated  # refuses on species / cell-type / top_k / UTR / weight mismatch
+api.candidates(protein, predictor=model)   # the head must be HANDED to the flow
 ```
+
+The opt-in governs *promotion*, not *selection*: `api.candidates` with no `predictor=`
+still uses the neutral placeholder, so exporting the variables cannot change what a
+script that never asked for RiboNN does.
 
 ## The wiring (landed 2026-08) and the scope it binds
 
