@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import pathlib
+import re
 
 import pytest
 
@@ -271,35 +272,73 @@ def test_the_placeholder_can_never_be_promoted() -> None:
     assert resolve_backend("null", use_attested=True).calibrated is False
 
 
-@pytest.mark.parametrize(
-    ("overrides", "match"),
-    [
-        ({"top_k": 7}, r"earned at top_k=5, predictor ensembles top_k=7"),
-        ({"utr5": "AAAAAA"}, "not one this attestation covers"),
-        ({"utr3": "TTTTTT"}, "not one this attestation covers"),
-        ({"species": "mouse"}, "covers species 'human', predictor is 'mouse'"),
-        ({"cell_types": ("HeLa",)}, r"covers cell types \['HEK293T'\]"),
-        ({"cell_types": ()}, "different quantity"),
-    ],
-)
+# Each scope axis a promotion binds, paired with a `match` that is unique to
+# `verified_predictor`'s wording. Hoisted to a constant so the collision guard below can
+# check the same list the parametrization uses, rather than a copy that could drift.
+_SCOPE_MISMATCHES: list[tuple[dict[str, object], str]] = [
+    ({"top_k": 7}, r"earned at top_k=5, predictor ensembles top_k=7"),
+    ({"utr5": "AAAAAA"}, "not one this attestation covers"),
+    ({"utr3": "TTTTTT"}, "not one this attestation covers"),
+    ({"species": "mouse"}, "covers species 'human', predictor is 'mouse'"),
+    ({"cell_types": ("HeLa",)}, r"covers cell types \['HEK293T'\]"),
+    ({"cell_types": ()}, r"predictor scores \[\]"),
+]
+
+
+@pytest.mark.parametrize(("overrides", "match"), _SCOPE_MISMATCHES)
 def test_promotion_refuses_every_scope_mismatch(
     overrides: dict[str, object], match: str
 ) -> None:
     # Each of these changes the number the gate measured, so the gated head is not this
     # head. The refusal is loud: a silent downgrade would hand a caller who asked for a
     # calibrated ranking an uncalibrated one with no way to notice.
+    #
+    # Both fixtures are built OUTSIDE the raises block on purpose. Built inside, a
+    # fixture that raised a matching error would satisfy the assertion with
+    # `promote_if_attested` never called -- and it happened: `attest_expression` and
+    # `verified_predictor` share the phrases "different quantity" and "not an attestable
+    # expression head", so sabotaging the attest side left these tests green while the
+    # binding under test was dead. Every `match` below is a clause unique to
+    # `verified_predictor`, and `_no_collision` pins that.
+    attestation = _attestation()
+    head = _head(**overrides)
     with pytest.raises(ExpressionAttestationError, match=match):
-        promote_if_attested(
-            _head(**overrides), enabled=True, attestation=_attestation()
-        )
+        promote_if_attested(head, enabled=True, attestation=attestation)
+
+
+def test_the_scope_matches_cannot_be_satisfied_by_the_attest_side() -> None:
+    """The guard that keeps the test above honest.
+
+    A `match` string shared with `attest_expression` turns a fixture failure into a
+    false pass. This asserts every one of them is unique to the promotion path, so the
+    collision cannot silently return.
+    """
+    # Every message `attest_expression` can produce for the same panel/scope family.
+    attest_side: list[str] = []
+    for kwargs in (
+        {"backend": "nope"},
+        {"species": "mouse"},
+        {"cell_types": ("HeLa",)},
+        {},
+    ):
+        try:
+            attest_expression(
+                _comparison(), readout="mrl", bt4_version="0", **kwargs  # type: ignore[arg-type]
+            )
+        except ExpressionAttestationError as exc:
+            attest_side.append(str(exc))
+    assert attest_side, "the attest side must be reachable for this guard to mean anything"
+    for _overrides, pattern in _SCOPE_MISMATCHES:
+        assert not any(re.search(pattern, message) for message in attest_side), pattern
 
 
 def test_promotion_refuses_an_attestation_for_another_backend() -> None:
     # Reachable only from a hand-edited record, since attest_expression derives the
     # backend from the run -- which is exactly why promotion re-checks it.
     edited = dataclasses.replace(_attestation(), backend="something_else")
+    head = _head()
     with pytest.raises(ExpressionAttestationError, match="attestation is for"):
-        promote_if_attested(_head(), enabled=True, attestation=edited)
+        promote_if_attested(head, enabled=True, attestation=edited)
 
 
 def test_a_record_whose_backend_and_species_disagree_is_refused() -> None:
@@ -341,8 +380,9 @@ def test_promotion_refuses_mismatched_weight_hashes() -> None:
     edited = dataclasses.replace(
         _attestation(), weight_sha256=(("human/fake/state_dict.pth", "0" * 64),)
     )
+    head = _head()
     with pytest.raises(ExpressionAttestationError, match="weight hashes do not match"):
-        promote_if_attested(_head(), enabled=True, attestation=edited)
+        promote_if_attested(head, enabled=True, attestation=edited)
 
 
 def test_batch_and_worker_knobs_are_deliberately_not_bound() -> None:
@@ -502,8 +542,9 @@ def test_an_explicit_opt_in_that_cannot_be_fulfilled_refuses(
     # `enabled=True` is a request about this call. Answering it with a silently
     # uncalibrated head is the failure the layer exists to prevent.
     monkeypatch.delenv(ATTESTATION_PATH_ENV_VAR, raising=False)
+    head = _head()
     with pytest.raises(ExpressionAttestationError, match="no attestation resolves"):
-        promote_if_attested(_head(), enabled=True)
+        promote_if_attested(head, enabled=True)
     # The placeholder is simply not attestable, so it still passes through untouched.
     assert promote_if_attested(NullExpressionModel(), enabled=True).calibrated is False
 

@@ -304,7 +304,7 @@ def test_promotion_refuses_a_different_cell_type_selection() -> None:
     # types -- those are different quantities.
     attestation = _attestation()
     all_cell_types = RiboNNExpressionModel(species="human", utr5=PANEL_UTR5, utr3=PANEL_UTR3)
-    with pytest.raises(ExpressionAttestationError, match="different quantity"):
+    with pytest.raises(ExpressionAttestationError, match=r"predictor scores \[\]"):
         verified_predictor(all_cell_types, attestation)
 
     other_line = RiboNNExpressionModel(
@@ -367,8 +367,15 @@ def test_promotion_refuses_a_hand_edited_pooled_or_slack_attestation() -> None:
 
 
 def test_promotion_refuses_a_non_attestable_predictor() -> None:
-    with pytest.raises(ExpressionAttestationError, match="not an attestable"):
-        verified_predictor(NullExpressionModel(), _attestation())
+    # The fixture is built OUTSIDE the raises block, and the match names the PREDICTOR
+    # type. `attest_expression`'s own refusal for a non-attestable head shares the
+    # phrase "not an attestable expression head", so matching on that alone left this
+    # test green when the fixture raised and `verified_predictor` was never called.
+    attestation = _attestation()
+    with pytest.raises(
+        ExpressionAttestationError, match="NullExpressionModel is not an attestable"
+    ):
+        verified_predictor(NullExpressionModel(), attestation)
 
 
 def test_the_default_head_is_still_the_uncalibrated_placeholder() -> None:
