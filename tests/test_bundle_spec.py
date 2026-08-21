@@ -10,9 +10,12 @@ imports) matched none of the patterns -- so the packaged app raised
 passed. The committed splice fidelity attestations were missing from the bundle for
 the same reason, and failed quieter: an absent attestation file reads as "none ships".
 
-The check mirrors PyInstaller's own mechanism exactly -- ``collect_data_files``
-resolves its ``includes`` with :meth:`pathlib.Path.glob` against the package
-directory -- so a pattern that passes here collects the same files there.
+The check mirrors PyInstaller's own mechanism: ``collect_data_files`` resolves its
+``includes`` with :meth:`pathlib.Path.glob` against the package directory, then
+resolves ``excludes`` the same way and *discards* what they match (a matching
+directory takes everything under it). Both passes are reproduced here, because a
+guard that read only ``includes`` would keep passing while an ``excludes`` entry
+quietly dropped a file from the bundle -- the same defect one level down.
 """
 
 from __future__ import annotations
@@ -28,12 +31,16 @@ _SPEC_PATH = Path(__file__).resolve().parents[1] / "packaging" / "bt4-studio.spe
 _PACKAGE_DIR = Path(bt4.__file__).resolve().parent
 
 
-def _spec_include_patterns() -> list[str]:
-    """Return the ``includes`` patterns the spec passes to ``collect_data_files("bt4")``.
+def _spec_clude_patterns() -> tuple[list[str], list[str]]:
+    """Return the ``(includes, excludes)`` the spec passes to ``collect_data_files("bt4")``.
 
-    Parsed from the spec's source with :mod:`ast` rather than executed: the spec
-    imports PyInstaller and is evaluated in PyInstaller's own namespace (``Analysis``,
-    ``EXE``, ``PYZ`` are injected), so it is not importable from a test run.
+    Parsed from the spec's source with :mod:`ast` rather than executed: the spec imports
+    PyInstaller and is evaluated in PyInstaller's own namespace (``Analysis``, ``EXE``,
+    ``PYZ`` are injected), so it is not importable from a test run.
+
+    ``excludes`` is read even though the spec does not currently pass one, because the
+    day it does, a guard that ignored it would certify a coverage the bundle no longer
+    has.
     """
     tree = ast.parse(_SPEC_PATH.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
@@ -44,10 +51,41 @@ def _spec_include_patterns() -> list[str]:
         first = node.args[0] if node.args else None
         if not (isinstance(first, ast.Constant) and first.value == "bt4"):
             continue
+        cludes: dict[str, list[str]] = {"includes": [], "excludes": []}
         for kw in node.keywords:
-            if kw.arg == "includes":
-                return [ast.literal_eval(elt) for elt in kw.value.elts]  # type: ignore[attr-defined]
+            if kw.arg in cludes and isinstance(kw.value, ast.List):
+                cludes[kw.arg] = [ast.literal_eval(elt) for elt in kw.value.elts]
+        if not cludes["includes"]:
+            continue
+        return cludes["includes"], cludes["excludes"]
     raise AssertionError(f"no collect_data_files('bt4', includes=...) call in {_SPEC_PATH}")
+
+
+def _spec_include_patterns() -> list[str]:
+    """Return just the ``includes`` patterns (see :func:`_spec_clude_patterns`)."""
+    return _spec_clude_patterns()[0]
+
+
+def _collected_by_the_spec() -> set[Path]:
+    """Return the files the spec's patterns actually collect, includes minus excludes.
+
+    Reproduces ``collect_data_files``'s two passes: glob the includes and add, then glob
+    the excludes and discard -- where a pattern matching a *directory* takes every file
+    under it, which is how PyInstaller treats it.
+    """
+    includes, excludes = _spec_clude_patterns()
+
+    def _walk(patterns: list[str]) -> set[Path]:
+        found: set[Path] = set()
+        for pattern in patterns:
+            for path in _PACKAGE_DIR.glob(pattern):
+                if path.is_dir():
+                    found |= {p for p in path.rglob("*") if p.is_file()}
+                elif path.is_file():
+                    found.add(path)
+        return found
+
+    return _walk(includes) - _walk(excludes)
 
 
 def _shipped_data_files() -> set[Path]:
@@ -74,12 +112,7 @@ def test_bundle_collects_every_shipped_data_file() -> None:
     test suite structurally cannot see -- it only appears once the app is frozen and
     launched, i.e. for the user.
     """
-    collected = {
-        path
-        for pattern in _spec_include_patterns()
-        for path in _PACKAGE_DIR.glob(pattern)
-        if path.is_file()
-    }
+    collected = _collected_by_the_spec()
     missing = sorted(str(p.relative_to(_PACKAGE_DIR)) for p in _shipped_data_files() - collected)
     assert not missing, (
         "packaging/bt4-studio.spec does not collect these data files, so they are "
@@ -110,10 +143,34 @@ def test_the_files_that_broke_the_bundle_are_collected(relative: str) -> None:
     """The three files the old pattern missed are named, so a regression is legible."""
     target = _PACKAGE_DIR / relative
     assert target.is_file(), f"{relative} is no longer shipped; update this test"
-    collected = {
-        path
-        for pattern in _spec_include_patterns()
-        for path in _PACKAGE_DIR.glob(pattern)
-        if path.is_file()
-    }
-    assert target in collected
+    assert target in _collected_by_the_spec()
+
+
+def test_an_excludes_entry_cannot_hide_a_dropped_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spec that excludes a shipped file fails the guard.
+
+    The first version of this module read only ``includes``, so adding
+    ``excludes=["**/*.attestation.json"]`` to the spec would have dropped both committed
+    splice attestations from the bundle while every test here still passed -- the same
+    defect this module exists to catch, one level down. Rebuilt against a real spec file
+    rather than trusting a reading of PyInstaller's source.
+    """
+    spec = tmp_path / "excluding.spec"
+    spec.write_text(
+        'datas = collect_data_files(\n'
+        '    "bt4", includes=["**/*.tsv", "**/*.json", "py.typed"],\n'
+        '    excludes=["**/*.attestation.json"],\n'
+        ')\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(globals(), "_SPEC_PATH", spec)
+
+    includes, excludes = _spec_clude_patterns()
+    assert includes and excludes == ["**/*.attestation.json"]
+    dropped = _shipped_data_files() - _collected_by_the_spec()
+    assert any(p.name.endswith(".attestation.json") for p in dropped)
+
+    with pytest.raises(AssertionError, match=r"attestation\.json"):
+        test_bundle_collects_every_shipped_data_file()

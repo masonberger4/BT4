@@ -17,7 +17,10 @@ solve is deterministic. A no-budget call is cross-checked against
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Callable, Sequence
+
+import pytest
 
 from bt4 import api
 from bt4._accel import gc_count, max_homopolymer_run
@@ -26,6 +29,7 @@ from bt4.domain.certificate import OptimalityStatus
 from bt4.domain.genetic_code import STOP, synonymous_codons, translate
 from bt4.optimize.exact_dp import InfeasibleError, solve_exact
 from bt4.optimize.lagrangian import solve_lagrangian
+from bt4.pipeline import optimize as pipeline_optimize
 
 ScalarDelta = Callable[[str, str, int], float]
 
@@ -368,3 +372,51 @@ def test_infeasible_budget_still_raises_under_beam() -> None:
         raised = True
         assert "gc_max" in exc.constraints
     assert raised
+
+
+# --------------------------------------------------------------------------
+# The GC budget must work in an install without OR-Tools (i.e. the shipped app)
+
+
+def test_gc_budget_without_ortools_falls_back_to_the_exact_dp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pure-additive GC budget still solves when CP-SAT cannot be imported.
+
+    The packaged BT4 Studio bundle carries no OR-Tools, so before this fallback a user
+    of the shipped app who set a GC budget with every local rule switched off got a raw
+    ``ModuleNotFoundError: No module named 'ortools'`` out of a control the app offers
+    them -- and, being inside a frozen bundle, no way to install anything. The
+    Lagrangian backend needs only the pure core and solves that case exactly.
+
+    Asserted on the delivered sequence, not on which backend ran: the budget must
+    actually hold, the protein must still round-trip, and the certificate must be the
+    one the backend that ran emits.
+    """
+    monkeypatch.setattr(pipeline_optimize, "_cpsat_available", lambda: False)
+    protein = "MKWVTFISLLFLFSS"
+    result = api.optimize(
+        protein,
+        api.OptimizeConfig(
+            organism="homo_sapiens", gc_min=20, gc_max=30, max_homopolymer=None
+        ),
+    )
+    assert translate(result.dna) == protein + STOP
+    assert 20 <= gc_count(result.dna) <= 30
+    assert result.certificate.status in {
+        OptimalityStatus.PROVEN_OPTIMAL,
+        OptimalityStatus.BEAM_TRUNCATED,
+    }
+
+
+def test_cpsat_availability_is_probed_not_assumed() -> None:
+    """``_cpsat_available`` reports on the actual environment.
+
+    Pins that the fallback is driven by a real probe: it must agree with whether
+    ``ortools`` can be imported here, so the branch cannot silently be always-on (which
+    would bypass CP-SAT even where it is installed) or always-off (which would restore
+    the crash in the bundle).
+    """
+    assert pipeline_optimize._cpsat_available() is (
+        importlib.util.find_spec("ortools") is not None
+    )

@@ -31,11 +31,15 @@ Three facts shape this module, each an honesty rule made structural:
   to reproduce upstream Pangolin's own scores on a captured reference panel
   (:func:`verify_pangolin_fidelity`) -- *not* a from-scratch training gate, just
   proof the adapter faithfully reproduces the published model (CLAUDE.md section
-  6). No reference panel ships (capturing it needs the GPL weights and produces
-  GPL-derived numbers), so the shipped adapter is always ``calibrated is False``
-  and :func:`bt4.biomodels.splice.default` keeps returning the labeled PWM
-  baseline. Until the gate passes, Pangolin's numbers are a strong prior, never a
-  validated result.
+  6). That gate has since PASSED on a maintainer machine holding the weights, and its
+  license-clean attestation ships (the reference *panel* still does not -- it is the
+  licensed model's own output). So the shipped adapter is ``calibrated is False``
+  **by default**, and reports ``True`` only under the explicit
+  ``BT4_SPLICE_USE_ATTESTED=1`` opt-in; :func:`bt4.biomodels.splice.default` keeps
+  returning the labeled PWM baseline either way. Even promoted, the flag asserts
+  *integration fidelity* -- the adapter reproduces the published model -- never that
+  the scores are calibrated probabilities for designed coding sequence. Pangolin's
+  numbers are a strong prior, never a validated expression or splicing result.
 
 * **Weights are hash-pinned and verified before they are unpickled.** Every
   weight file is checked against :data:`PINNED_WEIGHT_SHA256` (the SHA-256 of the
@@ -383,8 +387,9 @@ class PangolinSplicePredictor:
             :data:`_WEIGHTS_ENV_VAR` env var or the installed ``pangolin`` package.
         fidelity_verified: Whether this instance has passed
             :func:`verify_pangolin_fidelity` against a captured upstream panel.
-            Mirrored by :attr:`calibrated`; ``False`` by default and in every
-            shipped configuration (no reference panel ships).
+            Mirrored by :attr:`calibrated`; ``False`` by default. A committed
+            attestation ships and can flip it, but only under the explicit
+            ``BT4_SPLICE_USE_ATTESTED=1`` opt-in.
     """
 
     tissues: tuple[str, ...] = DEFAULT_TISSUES
@@ -421,8 +426,11 @@ class PangolinSplicePredictor:
         Mirrors :attr:`fidelity_verified`. Wrapping a validated model is not the
         same as verifying the wrapping, so this stays ``False`` until
         :func:`verify_pangolin_fidelity` confirms the adapter reproduces upstream
-        Pangolin's own scores. No reference panel ships, so shipped instances are
-        always uncalibrated (CLAUDE.md sections 6 and 10.6).
+        Pangolin's own scores -- which it has, on a maintainer machine holding the
+        weights. Shipped instances are uncalibrated by default and report ``True``
+        only under the ``BT4_SPLICE_USE_ATTESTED=1`` opt-in, where it means the
+        adapter is faithful, not that the scores are calibrated for designed coding
+        sequence (CLAUDE.md sections 6 and 10.6).
         """
         return self.fidelity_verified
 
