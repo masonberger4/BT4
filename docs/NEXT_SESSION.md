@@ -415,7 +415,7 @@ items 1–3 are in
    the artifact users download. What remains is human: macOS/Windows verification
    on real hardware, signing (a deliberate non-goal today), and the tag push /
    release cut (HTTP 403 in the sandbox).
-10. **[Pangolin DONE 2026-08 · SpliceAI still human-gated] Splice CNN calibration.**
+10. **[Part A DONE 2026-08 — both CNNs passed · Part B `BLOCKED-data`] Splice CNN calibration.**
     **Pangolin passed its integration-fidelity gate**, on a maintainer machine
     holding the GPL weights: 18 cases, tolerance 1e-3, **max abs deviation exactly
     0.0** — BT4's adapter reproduces upstream's per-position scores bit-for-bit.

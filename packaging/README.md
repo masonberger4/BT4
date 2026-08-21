@@ -33,19 +33,36 @@ pyinstaller --clean --noconfirm bt4-studio.spec
 The result lands in `packaging/dist/`: a single `BT4 Studio` / `BT4 Studio.exe`
 file on Linux/Windows, and a `BT4 Studio.app` folder on macOS. Just run it.
 
-On a headless Linux box you'll need the Qt runtime libraries to launch it, e.g.
-`sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3`.
-The CI release job installs exactly these before building the Linux one-file app.
+On a headless Linux box you'll need the Qt runtime libraries to launch it. **Install
+the full set, not the minimum that makes the build succeed** — see the `bundle` job of
+[`ci.yml`](../.github/workflows/ci.yml) for the exact list:
 
-**That set is enough to build and to run `--self-test` under `QT_QPA_PLATFORM=offscreen`
--- it is NOT enough to display the app on a real X11 desktop.** The offscreen platform
-plugin needs almost none of X; `libqxcb.so` needs a dozen more `libxcb-*` libraries, and
-without them the app aborts at startup with *"Could not load the Qt platform plugin
-xcb"*. A normal desktop install already has them, so the gap only bites minimal,
-server, WSL and container installs -- which is exactly where a maintainer tends to test.
-The full list a user needs is in [`docs/INSTALL.md`](../docs/INSTALL.md#linux-it-wont-run);
-it was read off the shipped binary's `NEEDED` entries and verified by launching the
-packaged app on a bare system.
+```bash
+sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libdbus-1-3 libxkbcommon0 \
+  libxkbcommon-x11-0 libx11-xcb1 libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-icccm4 \
+  libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 \
+  libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 \
+  libxi6 libxrender1
+```
+
+**Why that list is load-bearing rather than convenience.** PyInstaller embeds the shared
+libraries it finds *on the build machine*, so what you have installed decides what the
+shipped binary contains. Both workflows used to install only the first five, which is
+enough to build and to run `--self-test` under `QT_QPA_PLATFORM=offscreen` — the
+offscreen platform plugin needs almost none of X. The resulting one-file app therefore
+went out with none of the `libxcb-*` libraries the real `xcb` plugin needs, and aborted
+on any user's machine that did not already have them, with *"Could not load the Qt
+platform plugin xcb"* and nothing else. Building with the full set makes the download
+genuinely standalone: measured on this repo, a bundle built that way still launches and
+designs after every one of those packages is **removed** from the machine running it,
+because it carries its own copies. What it then needs from the system is only base
+graphics — libc, `libEGL`/`libGL`, `libdrm`, `libxcb1` — which any desktop has, and
+that shorter list is what [`docs/INSTALL.md`](../docs/INSTALL.md#linux-it-wont-run)
+tells users.
+
+Note that offscreen success proves nothing about the X path, so `--self-test` under
+`QT_QPA_PLATFORM=offscreen` (what CI runs) cannot catch this class on its own; it was
+found by opening the built app on a real display.
 
 ## Code signing (intentionally skipped)
 

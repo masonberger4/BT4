@@ -47,6 +47,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: The tag must match the version inside the package
+        # A tag is just a label a human types, and nothing else compares it to
+        # `bt4.__version__` -- so `git tag v0.5.1` on a tree that still says 0.5.0
+        # publishes assets whose filenames, release page and `bt4 --version` disagree,
+        # and the manifest inside every result stamps the wrong one. Cheap to check,
+        # impossible to fix after the fact without deleting a published release.
+        # Skipped on a dispatch with no `ref` (that build publishes nothing).
+        if: startsWith(github.ref, 'refs/tags/') || inputs.ref != ''
+        shell: bash
+        env:
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          version=$(grep -oP '^__version__ = "\K[^"]+' src/bt4/__init__.py)
+          if [ "${TAG}" != "v${version}" ]; then
+            echo "::error::tag ${TAG} does not match __version__ ${version} (expected v${version})"
+            exit 1
+          fi
+          echo "tag ${TAG} matches __version__ ${version}"
       - name: Build
         run: |
           python -m pip install --upgrade pip build
@@ -81,9 +99,25 @@ jobs:
           python-version: "3.12"
       - name: System Qt libraries (Linux)
         if: runner.os == 'Linux'
+        # PyInstaller embeds the shared libraries it finds ON THE BUILD MACHINE, so
+        # this list decides what the SHIPPED binary contains -- it is not just build
+        # scaffolding. With only the five libraries this step used to install, the
+        # bundle came out missing every `libxcb-*` the Qt `xcb` platform plugin needs,
+        # and the published app aborted on any machine that did not happen to have
+        # them with "Could not load the Qt platform plugin xcb" and nothing else.
+        # Installing the full set makes the one-file download genuinely standalone:
+        # measured, a bundle built this way still launches and designs after all of
+        # these packages are REMOVED from the machine running it, because it carries
+        # its own copies. What it then needs from the system is only base graphics
+        # (libc, libEGL/libGL, libdrm, libxcb1), which any desktop already has.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3
+          sudo apt-get install -y \
+            libegl1 libgl1 libglib2.0-0 libdbus-1-3 libxkbcommon0 \
+            libxkbcommon-x11-0 libx11-xcb1 libxcb1 libxcb-cursor0 libxcb-glx0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 \
+            libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 libxi6 libxrender1
       - name: Install (app + packaging)
         run: |
           python -m pip install --upgrade pip
@@ -92,12 +126,14 @@ jobs:
         working-directory: packaging
         run: pyinstaller --clean --noconfirm bt4-studio.spec
       - name: Smoke-launch the built app (offscreen)
-        # Actually OPEN the freshly built bundle and construct the main window
-        # (--self-test builds StudioWindow, which loads the bundled codon data and
-        # the Qt/pyqtgraph stack, then exits 0 without the event loop). This is the
-        # only step that runs the PACKAGED app per-OS, so a bundle that builds but
-        # crashes on first launch -- e.g. a macOS .app that can't find its bundled
-        # data -- fails HERE instead of shipping to users.
+        # Actually OPEN the freshly built bundle and DESIGN with it. --self-test
+        # builds StudioWindow (the bundled codon data, the Qt/pyqtgraph stack) and
+        # then runs two real solves through bt4.api, requiring a restriction rule to
+        # change the delivered sequence -- so it fails both on a bundle that cannot
+        # open and on one that opens and cannot work. It exits 0 without entering the
+        # event loop. Since v0.5.0 the same check also runs per-OS in ci.yml on every
+        # PR, so a broken bundle fails before a tag is pushed rather than after; this
+        # step remains the last gate on the exact artifact being published.
         timeout-minutes: 3
         shell: bash
         working-directory: packaging/dist

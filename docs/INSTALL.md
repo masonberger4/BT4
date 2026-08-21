@@ -6,8 +6,12 @@ command line — you download one file and open it, just like any other app.
 
 A few reassurances before we start:
 
-- **Everything runs on your own computer.** BT4 Studio is 100% local and offline.
-  Nothing you paste in is ever uploaded anywhere.
+- **Everything runs on your own computer.** BT4 Studio designs, scores and exports
+  entirely offline — nothing you paste in leaves your machine on its own. The single
+  exception is the **"Validate with ASSP"** button, an optional second opinion from an
+  online service: it sends the designed sequence, it asks you first and names the
+  service, and it is the only thing in the app that ever transmits anything. Leave it
+  alone and the app never touches the network.
 - **The first-time security warning is normal.** The app isn't code-signed, so the
   very first time you open it, your operating system shows a one-time "we don't
   recognize this app" message. This is expected and safe, and below we show you
@@ -165,35 +169,45 @@ The first line marks the file as runnable; the second one starts it.
 If running it that way prints something like
 
 ```
-qt.qpa.plugin: From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed to load the
-Qt xcb platform plugin.
+qt.qpa.plugin: Could not load the Qt platform plugin "xcb" in "" even though it
+was found.
 This application failed to start because no Qt platform plugin could be initialized.
 ```
 
-then the download is fine and your Linux install is simply missing some of the
-X11 system libraries every Qt app needs in order to draw a window. A normal
-desktop install usually already has them; a **minimal, server, WSL, or container**
-install often does not.
+then the download is fine — something the app needs to *draw a window* is missing
+from your system. The app carries its own copy of Qt and of the X11 helper
+libraries Qt uses, so this is usually one of two things:
 
-On Debian / Ubuntu (and derivatives like Mint or Pop!_OS):
+**1. There is no graphical display.** Over plain `ssh`, in a container, or in a
+bare WSL install, there is no screen to open a window on — no package fixes that.
+Log in at the machine's own desktop, use `ssh -X`, or (on Windows) use WSLg, which
+ships a display. A quick check: `echo $DISPLAY` prints nothing when there is none.
+
+**2. The base graphics libraries are missing.** On a minimal or server install,
+even the bottom layer can be absent. On Debian / Ubuntu:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
-  libxkbcommon0 libxkbcommon-x11-0 libx11-xcb1 libxcb1 libxcb-cursor0 \
-  libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-  libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 \
-  libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 libxi6 libxrender1
+sudo apt-get install -y libegl1 libgl1 libxcb1 libdrm2
 ```
 
-Then start the app again. Installing a package you already have does nothing, so
-it is safe to run the whole line.
+Those four are what the app genuinely needs from *your* system; everything else Qt
+requires travels inside the download. On other distributions the package names
+differ, but the error message names the library it could not load — install
+whichever package provides that file.
 
-On other distributions the package **names** differ, but the error message always
-names the library it could not load -- install whichever package provides that
-file. The list above is not guesswork: it is every X11 library the app's bundled
-Qt build links against but does not carry itself, read off the shipped binary and
-checked by running it on a bare system with none of them installed.
+> **Releases before v0.5.0 need more.** The Linux app was built on a machine that
+> did not have the `libxcb-*` libraries installed, so PyInstaller had nothing to
+> embed and those builds expect your system to supply about twenty of them. If you
+> are running an older download and the command above did not help, the simplest
+> fix is to get the current release; otherwise install the full set:
+>
+> ```bash
+> sudo apt-get install -y libxkbcommon0 libxkbcommon-x11-0 libx11-xcb1 \
+>   libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+>   libxcb-randr0 libxcb-render0 libxcb-render-util0 libxcb-shape0 \
+>   libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
+> ```
 
 ---
 
