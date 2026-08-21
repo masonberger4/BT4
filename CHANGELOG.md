@@ -66,10 +66,13 @@ from an uncalibrated score. What shipped is the
 apparatus that could *earn* a calibration claim, and the surfaces that keep an
 uncalibrated number from being read as one.
 
-> The expression-promotion seam below (#131) landed on `main` *after* the version bump
-> and originally sat under `[Unreleased]`. Because the `v0.5.0` tag had not been pushed
-> yet, it ships in this release — so it is documented here rather than left describing
-> an unreleased state it is not in.
+> The expression-promotion seam below and its two follow-ups (#131, #132, #133) landed
+> on `main` *after* the version bump and originally sat under `[Unreleased]`. Because
+> the `v0.5.0` tag had not been pushed yet, they ship in this release — so they are
+> documented here rather than left describing an unreleased state they are not in.
+> `[Unreleased]` is therefore empty at the tag: everything on `main` at that commit is
+> accounted for below. Tag **this** commit rather than whatever `main` reaches later,
+> so the section stays exactly true of what it labels.
 
 ### Added
 - **The expression head can finally be promoted -- and BT4 Studio can use it.**
