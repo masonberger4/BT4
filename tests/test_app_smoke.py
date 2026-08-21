@@ -424,7 +424,7 @@ def test_candidates_worker_forwards_the_predictor() -> None:
 
 
 def _attestation() -> api.ExpressionAttestation:
-    """A passing attestation for a HEK293T panel, built the only sanctioned way."""
+    """A passing attestation for a HEK293T panel (a test double -- see below)."""
     rows = [
         api.PanelRow(
             group=f"P{g:02d}",
@@ -448,8 +448,18 @@ def _attestation() -> api.ExpressionAttestation:
         cell_types=("HEK293T",),
         head_scores=[row.measured for row in panel.rows],
     )
+    # A test double: relabelled as a gate-scored RiboNN run, which is the only way to
+    # reach a promotable record without the Sanofi non-commercial weights. Production
+    # refuses both overrides (see tests/test_expression_promotion.py).
+    import dataclasses
+
+    as_ribonn = dataclasses.replace(
+        comparison,
+        backend="ribonn[human]",
+        scope=dataclasses.replace(comparison.scope, scoring_source="gate"),
+    )
     return api.attest_expression(
-        comparison, readout="mean_ribosome_load", bt4_version="0.0.0-test"
+        as_ribonn, readout="mean_ribosome_load", bt4_version="0.0.0-test"
     )
 
 
@@ -476,8 +486,12 @@ def test_attestation_toggle_lights_up_and_names_its_scope(
 
     window = StudioWindow()
     window._ribonn_available = True
+    # CI has no RiboNN checkout, so the offerability probe says no; the attestation half
+    # is what this test is about.
+    window._expr_attestable = True
     window.ribonn_check.setEnabled(True)
     window.ribonn_check.setChecked(True)
+    window._update_ribonn_enabled(True)
 
     assert window._expr_attestation is not None
     assert window.expr_attested_check.isEnabled()
@@ -498,6 +512,13 @@ def test_attestation_toggle_lights_up_and_names_its_scope(
     window.expr_attested_check.setChecked(False)
     assert window.expr_scope_label.text() == ""
     assert window.ribonn_species_combo.isEnabled()
+
+    # And unticking the HEAD clears the claim too: a scope for a head that is no longer
+    # in the run would be a calibration statement about nothing.
+    window.expr_attested_check.setChecked(True)
+    assert "HEK293T" in window.expr_scope_label.text()
+    window.ribonn_check.setChecked(False)
+    assert window.expr_scope_label.text() == ""
 
 
 def test_attestation_toggle_promotes_the_head_it_covers(
@@ -560,10 +581,53 @@ def test_a_head_outside_the_attested_scope_is_refused_not_downgraded(
     assert "UTR context" in window.statusBar().currentMessage()
 
 
+def test_losing_the_attestation_before_a_run_refuses_rather_than_downgrading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The window opened with a record; by Run time it is gone. Refuse, do not downgrade.
+
+    Building an uncalibrated head here would answer "give me a calibrated ranking" with
+    an uncalibrated one and say nothing -- the failure this whole layer exists to
+    prevent, and one the user has no way to notice from the run itself.
+    """
+    import json
+
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(_attestation().to_dict()), encoding="utf-8")
+    monkeypatch.setenv(api.EXPRESSION_ATTESTATION_ENV_VAR, str(path))
+
+    window = StudioWindow()
+    window._ribonn_available = True
+    window.ribonn_check.setEnabled(True)
+    window.ribonn_check.setChecked(True)
+    window.expr_attested_check.setEnabled(True)
+    window.expr_attested_check.setChecked(True)
+    window.utr5_edit.setText("GCCACC")
+    window.utr3_edit.setText("GCTAAT")
+    assert window._prepare_predictor()[0] is True  # it works while the record is there
+
+    path.unlink()
+    ok, predictor = window._prepare_predictor()
+    assert ok is False
+    assert predictor is None
+    assert "not a readable file" in window.statusBar().currentMessage()
+
+    # A corrupt record is refused the same way, and named.
+    path.write_text("{not json", encoding="utf-8")
+    ok, predictor = window._prepare_predictor()
+    assert ok is False
+    assert predictor is None
+    assert "not valid JSON" in window.statusBar().currentMessage()
+
+
 def test_the_banner_names_the_scope_when_the_ranking_is_calibrated() -> None:
     """A calibrated set flips the banner to a ranking -- and says what it covers."""
     window = StudioWindow()
-    window._expr_attestation = _attestation()
+    attestation = _attestation()
+    window._expr_attestation = attestation
+    # The banner names a scope only for the record that actually promoted this run's
+    # head, not merely for one that happens to be loaded.
+    window._run_attestation_sha = attestation.content_hash()
 
     worker = CandidatesWorker(
         "MAALKHETQW",
@@ -591,6 +655,36 @@ def test_the_banner_names_the_scope_when_the_ranking_is_calibrated() -> None:
 
     window._render_candidates(uncalibrated)
     assert "not a ranking" in window.cand_banner.text().lower()
+
+
+def test_the_banner_refuses_to_name_a_scope_that_did_not_promote_this_set() -> None:
+    """A loaded attestation is not evidence about the head that produced a set.
+
+    If the record on disk changed between opening the window and running, naming its
+    scope would attribute one calibration's claim to another's numbers. The banner
+    compares the promoting head's own recorded hash and declines rather than guessing.
+    """
+    import dataclasses
+
+    window = StudioWindow()
+    window._expr_attestation = _attestation()
+    window._run_attestation_sha = "0" * 64  # a different record promoted this run
+
+    worker = CandidatesWorker(
+        "MAALKHETQW",
+        api.OptimizeConfig(max_homopolymer=5),
+        steps=5,
+        n=4,
+        repeat_variants=0,
+        include_cnns=False,
+    )
+    calibrated = dataclasses.replace(
+        worker.compute().candidate_set, calibrated=True, order_basis="expression_rank"
+    )
+    window._render_candidates(calibrated)
+    text = window.cand_banner.text()
+    assert "scope unavailable" in text
+    assert "HEK293T" not in text
 
 
 # --------------------------------------------------------------------------- #

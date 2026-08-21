@@ -372,7 +372,7 @@ file — together they are the record.
 
 | Result | Meaning | Action |
 |---|---|---|
-| `promotable: true` — within-protein bootstrap CI lower bound beats **every** baseline, coverage within tolerance, width/IQR < 1 | RiboNN genuinely ranks synonymous variants in this scope | Commit an `ExpressionAttestation` (below); update CLAUDE.md §6/§9, `NEXT_SESSION.md` item 11, CHANGELOG |
+| `promotable: true` — within-protein bootstrap CI lower bound beats **every** baseline, coverage within tolerance, width/IQR < 1 | RiboNN genuinely ranks synonymous variants in this scope | Write an `ExpressionAttestation` (below) — commit it only if the panel is public, else keep it local via `$BT4_EXPRESSION_ATTESTATION`; update CLAUDE.md §6/§9, `NEXT_SESSION.md` item 11, CHANGELOG |
 | Ranking passes but does not beat **CAI-only** | No value over what BT4 already computes for free, in-loop | Stays `False`; documented with the numbers |
 | Ranking fails | RiboNN does not do BT4's job | Stays `False` **for this regime**; evidence into `RESEARCH_ribonn_calibration.md`; item 11 closes as **answered**, not pending. Fine-tuning is a separate, much larger project |
 | Ranking passes, coverage fails | Orders variants usefully; error bars lie | Report both. The gate requires both halves, so the default is "stays `False`". A rank-only promotion would be a deliberate contract change, not a slip-in |
@@ -427,7 +427,12 @@ model = api.resolve_expression_backend(
     cell_types=("HEK293T",), use_attested=True,
 )
 assert model.calibrated  # refuses on species / cell-type / top_k / UTR / weight mismatch
+api.candidates(protein, predictor=model)   # the head must be HANDED to the flow
 ```
+
+The opt-in governs *promotion*, not *selection*: `api.candidates` with no `predictor=`
+still uses the neutral placeholder, so exporting the variables cannot change what a
+script that never asked for RiboNN does.
 
 ## The wiring (landed 2026-08) and the scope it binds
 

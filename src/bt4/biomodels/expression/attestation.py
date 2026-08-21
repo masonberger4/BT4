@@ -49,6 +49,17 @@ override. Where the panel itself declares a fact (its ``species`` / ``cell_type`
 :attr:`ExpressionAttestation.verified_against_panel` records exactly which fields got
 that second check, so a reader can tell a verified scope from a merely-declared one.
 
+**The model's own identity is bound the same way, and that is the sharpest of these.**
+An earlier version derived species, cell types, readout, ``top_k`` and the UTR context
+from the run but still took ``backend`` as free text -- so a gate run against the neutral
+placeholder (or any other head) could be filed as a RiboNN result, and
+:func:`verified_predictor` would then promote a real RiboNN head against it, because it
+only ever compared the *label the caller typed*. It is now derived from
+``comparison.backend`` -- the ``name`` of the predictor the gate actually constructed --
+and a run whose scores were **handed in** rather than computed by the gate
+(``scoring_source != "gate"``) cannot be attested at all: there is no way, after the
+fact, to tie supplied numbers to the model the record names.
+
 **Two more things the scope binds, because they change the number.**
 :attr:`~ExpressionAttestation.top_k` (how many cross-validation runs were ensembled) and
 :attr:`~ExpressionAttestation.utr_context_sha256` (the UTR contexts the panel was
@@ -137,6 +148,14 @@ _ALLOWED_FIELDS = frozenset(
     }
 )
 
+SCHEMA_VERSION = 2
+"""Current attestation schema. Bumped from 1 when the scope stopped being declarable."""
+
+_V2_FIELDS = frozenset(
+    {"top_k", "utr_context_sha256", "verified_against_panel", "scoring_source"}
+)
+"""What schema 2 added. Named so a v1 record gets an explanation, not just a field list."""
+
 # Domain separation, so a UTR hash can never collide with any other SHA-256 in this
 # record and a reader can tell what was hashed from the tag alone.
 _UTR_HASH_TAG = "bt4-expression-utr-context-v1"
@@ -178,6 +197,9 @@ class _ComparisonLike(Protocol):
 
     @property
     def panel_hash(self) -> str: ...
+
+    @property
+    def backend(self) -> str: ...
 
     @property
     def head(self) -> Any: ...
@@ -314,7 +336,7 @@ class ExpressionAttestation:
     verified_against_panel: tuple[str, ...]
     scoring_source: str
     bt4_version: str
-    schema_version: int = 2
+    schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-ready mapping (weight and cell-type tuples become lists)."""
@@ -362,15 +384,31 @@ class ExpressionAttestation:
             raise ExpressionAttestationError(
                 f"unexpected attestation field(s): {sorted(extra)}"
             )
+        version = int(data.get("schema_version", 1))
+        if version > SCHEMA_VERSION:
+            raise ExpressionAttestationError(
+                f"attestation schema_version {version} is newer than this BT4 "
+                f"understands ({SCHEMA_VERSION}); upgrade rather than guessing at fields"
+            )
         missing = _ALLOWED_FIELDS - set(data) - {"schema_version"}
         if missing:
+            hint = ""
+            if version < SCHEMA_VERSION and missing <= _V2_FIELDS:
+                hint = (
+                    f" -- this looks like a schema_version {version} record, written "
+                    "before the scope was bound to the run. Re-run the gate; those "
+                    "fields cannot be filled in after the fact, which is the point."
+                )
             raise ExpressionAttestationError(
-                f"attestation is missing field(s): {sorted(missing)}"
+                f"attestation is missing field(s): {sorted(missing)}{hint}"
             )
         return cls(
             backend=str(data["backend"]),
             species=str(data["species"]),
-            cell_types=tuple(str(name) for name in data["cell_types"]),
+            # Sorted on the way in, matching how attest_expression writes them: a
+            # content hash that moved when someone reordered a JSON list would not be a
+            # content hash, and verified_predictor compares these tuples exactly.
+            cell_types=tuple(sorted(str(name) for name in data["cell_types"])),
             readout=str(data["readout"]),
             within_group=bool(data["within_group"]),
             recalibrate=bool(data["recalibrate"]),
@@ -388,16 +426,16 @@ class ExpressionAttestation:
             best_baseline_spearman=float(data["best_baseline_spearman"]),
             panel_sha256=str(data["panel_sha256"]),
             weight_sha256=tuple(
-                (str(pair[0]), str(pair[1])) for pair in data["weight_sha256"]
+                sorted((str(pair[0]), str(pair[1])) for pair in data["weight_sha256"])
             ),
             top_k=int(data["top_k"]),
-            utr_context_sha256=tuple(str(h) for h in data["utr_context_sha256"]),
+            utr_context_sha256=tuple(sorted(str(h) for h in data["utr_context_sha256"])),
             verified_against_panel=tuple(
-                str(name) for name in data["verified_against_panel"]
+                sorted(str(name) for name in data["verified_against_panel"])
             ),
             scoring_source=str(data["scoring_source"]),
             bt4_version=str(data["bt4_version"]),
-            schema_version=int(data.get("schema_version", 2)),
+            schema_version=version,
         )
 
     def content_hash(self) -> str:
@@ -439,7 +477,7 @@ def _require_scope(comparison: _ComparisonLike) -> _ScopeLike:
 def attest_expression(
     comparison: _ComparisonLike,
     *,
-    backend: str = "ribonn",
+    backend: str | None = None,
     species: str | None = None,
     cell_types: tuple[str, ...] | None = None,
     readout: str | None = None,
@@ -459,12 +497,21 @@ def attest_expression(
       coverage tolerance clears :data:`MAX_ATTESTATION_COVERAGE_TOLERANCE`, so a
       threshold set to pass cannot self-certify.
 
-    **The scope comes from the run.** ``species``, ``cell_types`` and ``readout`` are
-    taken from ``comparison.scope`` -- what the gate actually scored. Passing them
-    explicitly asks for a **cross-check**: a value that disagrees with the run is a
-    refusal, not an override. This is the hole that made the previous version's scope
-    decorative: a run averaging all 78 cell types could be filed as a HEK293T result and
-    nothing downstream could tell.
+    **The scope comes from the run.** ``backend``, ``species``, ``cell_types`` and
+    ``readout`` are taken from the comparison -- what the gate actually constructed and
+    scored. Passing them explicitly asks for a **cross-check**: a value that disagrees
+    with the run is a refusal, not an override. This is the hole that made the previous
+    version's scope decorative: a run averaging all 78 cell types could be filed as a
+    HEK293T result, and -- worse -- a run against the neutral placeholder could be filed
+    as a RiboNN result, with nothing downstream able to tell.
+
+    **A run whose scores were handed in cannot be attested.** ``run_panel_gate`` accepts
+    pre-computed ``head_scores``, which is useful for exploring a panel; it is also the
+    exact point at which the link between the backend named in the record and the numbers
+    stops being mechanical. There is no after-the-fact check that recovers it, so this
+    refuses rather than recording a caveat nobody downstream reads. The maintainer path
+    that used to need it -- gate once, attest from a second run -- is served by
+    ``run_expression_gate.py --attest``, which attests from the same comparison.
 
     Where the panel declares the same fact in its own ``species`` / ``cell_type`` /
     ``readout`` columns, that is checked too, and the field is listed in
@@ -473,7 +520,7 @@ def attest_expression(
 
     Args:
         comparison: A gate comparison (see :mod:`bt4.pipeline.expression_gate`).
-        backend: Which head is attested.
+        backend: Optional cross-check against the head the gate constructed.
         species: Optional cross-check against the species the gate ran with.
         cell_types: Optional cross-check against the cell-type selection it scored.
         readout: What the panel measured. Optional when the panel's own ``readout``
@@ -485,14 +532,24 @@ def attest_expression(
         The :class:`ExpressionAttestation`.
 
     Raises:
-        ExpressionAttestationError: On an unknown backend, any unearned claim, or any
+        ExpressionAttestationError: On an unknown or non-attestable backend, a run whose
+            scores were supplied rather than computed, any unearned claim, or any
             declared scope value that disagrees with the run or the panel.
     """
-    if backend not in _BACKENDS:
-        raise ExpressionAttestationError(
-            f"unknown expression backend {backend!r}; known: {list(_BACKENDS)}"
-        )
     scope = _require_scope(comparison)
+    run_backend, name_species = _attested_backend(comparison.backend)
+    if backend is not None and backend != run_backend:
+        raise ExpressionAttestationError(
+            f"declared backend {backend!r} but the gate constructed "
+            f"{comparison.backend!r}; the record names the model that was scored"
+        )
+    if scope.scoring_source != "gate":
+        raise ExpressionAttestationError(
+            f"refusing to attest a run whose scores were {scope.scoring_source!r} rather "
+            "than computed by the gate: nothing ties those numbers to "
+            f"{comparison.backend!r}. Re-run without head_scores (and use "
+            "run_expression_gate.py --attest, which attests from the same comparison)."
+        )
     head = comparison.head
     if not head.passed:
         raise ExpressionAttestationError(
@@ -529,6 +586,11 @@ def attest_expression(
     run_species, run_cell_types, run_readout, verified = _resolved_scope(
         scope, species=species, cell_types=cell_types, readout=readout
     )
+    if name_species != run_species:
+        raise ExpressionAttestationError(
+            f"the gate constructed {comparison.backend!r} but recorded species "
+            f"{run_species!r}; the two must agree or the record names neither"
+        )
 
     pinned = _pinned_weights(run_species)
     if not pinned:
@@ -541,7 +603,7 @@ def attest_expression(
             "transcript context it was earned in"
         )
     return ExpressionAttestation(
-        backend=backend,
+        backend=run_backend,
         species=run_species,
         cell_types=run_cell_types,
         readout=run_readout,
@@ -566,6 +628,27 @@ def attest_expression(
         verified_against_panel=verified,
         scoring_source=scope.scoring_source,
         bt4_version=bt4_version,
+    )
+
+
+def _attested_backend(name: str) -> tuple[str, str]:
+    """Map a predictor's own ``name`` to ``(attestable backend id, species)``.
+
+    Derived from what the gate *constructed*, never from a string a caller typed. A head
+    that is not attestable -- the neutral placeholder above all -- is refused here, which
+    is what stops a gate run against something else being filed as a RiboNN result.
+
+    Raises:
+        ExpressionAttestationError: If ``name`` is not an attestable head.
+    """
+    for key in _BACKENDS:
+        prefix = f"{key}["
+        if name.startswith(prefix) and name.endswith("]"):
+            return key, name[len(prefix) : -1]
+    raise ExpressionAttestationError(
+        f"the gate scored {name!r}, which is not an attestable expression head "
+        f"(known: {list(_BACKENDS)}). A record must name the model that produced the "
+        "numbers."
     )
 
 
@@ -626,10 +709,16 @@ def _resolved_scope(
         )
     panel_readouts = tuple(sorted({name for name in scope.panel_readouts if name}))
     if panel_readouts:
-        if run_readout not in panel_readouts:
+        if len(panel_readouts) > 1:
             raise ExpressionAttestationError(
-                f"declared readout {run_readout!r} is not one the panel measures "
-                f"({list(panel_readouts)})"
+                f"the panel mixes readouts {list(panel_readouts)}; one label cannot name "
+                "what a mixed-assay panel measured, and rows from the other assay were "
+                "still scored. Gate one assay at a time."
+            )
+        if run_readout != panel_readouts[0]:
+            raise ExpressionAttestationError(
+                f"declared readout {run_readout!r} is not what the panel measures "
+                f"({panel_readouts[0]!r})"
             )
         verified.append("readout")
 
@@ -640,12 +729,22 @@ def load_expression_attestation(path: str | Path) -> ExpressionAttestation:
     """Load an attestation from JSON on disk.
 
     Raises:
-        ExpressionAttestationError: If the file is malformed or carries an unexpected
-            field.
+        ExpressionAttestationError: If the file is not valid JSON, is not an object, or
+            carries an unexpected/missing field. Unparseable JSON is wrapped rather than
+            left as a bare ``JSONDecodeError``: callers that handle "this attestation is
+            unusable" catch this type, and a stray ``ValueError`` from the stdlib would
+            escape them -- which is how a hand-edited file took BT4 Studio down at
+            startup rather than greying out one checkbox.
         OSError: If the file cannot be read.
     """
-    with Path(path).open(encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with Path(path).open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ExpressionAttestationError(
+            f"{path} is not valid JSON ({exc}); refusing to treat a corrupt attestation "
+            "as an absent one"
+        ) from exc
     if not isinstance(data, dict):
         raise ExpressionAttestationError("attestation file must contain a JSON object")
     return ExpressionAttestation.from_dict(data)

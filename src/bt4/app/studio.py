@@ -227,11 +227,15 @@ def _expression_scope_line(attestation: api.ExpressionAttestation) -> str:
     shown what they are trusting rather than just the word "calibrated".
     """
     cells = ", ".join(attestation.cell_types) or "all cell types"
+    # Which parts of that scope the panel independently confirmed, and which were the
+    # maintainer's word. Showing only the scope would present the two as equivalent.
+    checked = ", ".join(attestation.verified_against_panel) or "none"
     return (
         f"{attestation.species} weights - {cells} - {attestation.readout} - "
         f"top_k={attestation.top_k} - "
         f"{len(attestation.utr_context_sha256)} UTR context(s) - "
-        f"panel {attestation.panel_sha256[:12]}..."
+        f"panel {attestation.panel_sha256[:12]}... - "
+        f"verified against the panel: {checked}"
     )
 
 
@@ -471,6 +475,12 @@ class StudioWindow(QtWidgets.QMainWindow):
         # the Candidates tab's expression group is built; declared here so nothing can
         # read it before that.
         self._expr_attestation: api.ExpressionAttestation | None = None
+        self._expr_attestable = False
+        # Content hash of the attestation that promoted the head behind the CURRENT
+        # candidate set (empty when none did). The banner names a scope only when this
+        # matches the attestation it is about to describe, so a record edited on disk
+        # mid-session cannot make the UI attribute one calibration's scope to another.
+        self._run_attestation_sha = ""
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         controls_scroll = QtWidgets.QScrollArea()
@@ -1464,9 +1474,11 @@ class StudioWindow(QtWidgets.QMainWindow):
                 "Annotate every candidate with the wrapped RiboNN translation-"
                 "efficiency model (your own checkout and weights, hash-verified "
                 "before loading). Runs once over the whole set, off the GUI thread. "
-                "RiboNN is UNCALIBRATED for BT4's CDS-variant regime, so it only "
-                "annotates: the table stays in discovery order and the solver's "
-                "pick stays delivered. Requires the 5'/3' UTR context below."
+                "RiboNN is UNCALIBRATED for BT4's CDS-variant regime, so on its own it "
+                "only annotates: the table stays in discovery order and the solver's "
+                "pick stays delivered. That changes only if you also tick the "
+                "attestation box below, which promotes it inside the scope a passing "
+                "acceptance gate measured. Requires the 5'/3' UTR context below."
             )
         else:
             ribonn_tip = (
@@ -1517,6 +1529,11 @@ class StudioWindow(QtWidgets.QMainWindow):
             "Honor an expression acceptance-gate attestation"
         )
         self._expr_attestation = _resolve_expression_attestation()
+        # The api-level "is this offerable here" probe (installed AND carrying a
+        # resolvable record), evaluated once. The window also holds the attestation
+        # itself, because it has to display the scope -- but the offer/don't-offer
+        # decision goes through the same public predicate any other frontend would use.
+        self._expr_attestable = "ribonn" in api.attested_expression_backends()
         self.expr_attested_check.toggled.connect(self._update_expr_attested)
         self._add_row(
             form, "Attestation", self.expr_attested_check,
@@ -1550,7 +1567,15 @@ class StudioWindow(QtWidgets.QMainWindow):
         run time rather than silently promoted.
         """
         attestation = self._expr_attestation
-        active = checked and attestation is not None
+        # Gated on the HEAD being selected too, not just the box being ticked: unticking
+        # RiboNN would otherwise leave a "Calibrated only for: ..." claim on screen for a
+        # head that is no longer in the run at all.
+        active = (
+            checked
+            and attestation is not None
+            and self.ribonn_check.isChecked()
+            and self._ribonn_available
+        )
         if active and attestation is not None:
             index = self.ribonn_species_combo.findText(attestation.species)
             if index >= 0:
@@ -1580,9 +1605,7 @@ class StudioWindow(QtWidgets.QMainWindow):
         """
         for widget in (self.utr5_edit, self.utr3_edit):
             widget.setEnabled(checked and self._ribonn_available)
-        self.expr_attested_check.setEnabled(
-            checked and self._ribonn_available and self._expr_attestation is not None
-        )
+        self.expr_attested_check.setEnabled(checked and self._expr_attestable)
         # Delegated, so the species control has exactly one owner: it is the user's
         # while the head is uncalibrated and the attestation's while it is honoured.
         self._update_expr_attested(self.expr_attested_check.isChecked())
@@ -1598,6 +1621,7 @@ class StudioWindow(QtWidgets.QMainWindow):
             been shown and the run must not start. Refusing here, rather than
             letting the engine raise mid-run, keeps the failure legible.
         """
+        self._run_attestation_sha = ""
         if not (self.ribonn_check.isChecked() and self._ribonn_available):
             return True, None
         utr5 = "".join(self.utr5_edit.text().split()).upper()
@@ -1630,8 +1654,37 @@ class StudioWindow(QtWidgets.QMainWindow):
         # RAISES rather than downgrading, so it is caught here and explained: a user who
         # ticked "calibrated ranking" and silently got an uncalibrated one is exactly the
         # failure the attestation layer exists to prevent.
+        # Re-resolve at run time: the file may have appeared, changed or gone since the
+        # window opened, and the promotion below reads it again anyway.
+        wants_attested = self.expr_attested_check.isChecked()
+        if wants_attested:
+            try:
+                self._expr_attestation = api.expression_attestation("ribonn")
+            except (api.ExpressionAttestationError, OSError) as exc:
+                self._expr_attestation = None
+                self._warn(
+                    "That attestation can no longer be read",
+                    str(exc),
+                    "It resolved when this window opened. Fix or remove the file, or "
+                    "untick the attestation to run RiboNN uncalibrated.",
+                )
+                self._update_expr_attested(True)
+                return False, None
         attestation = self._expr_attestation
-        use_attested = self.expr_attested_check.isChecked() and attestation is not None
+        if wants_attested and attestation is None:
+            # Ticked, but nothing resolves any more. Building an uncalibrated head here
+            # would answer "give me a calibrated ranking" with an uncalibrated one and
+            # say nothing -- the exact failure this whole layer exists to prevent.
+            self._warn(
+                "No attestation to honor",
+                "The attestation that was available when this window opened no longer "
+                "resolves, so RiboNN cannot be promoted for this run.",
+                "Untick the attestation to run RiboNN uncalibrated (annotation only), "
+                f"or point ${api.EXPRESSION_ATTESTATION_ENV_VAR} at a valid record.",
+            )
+            self._update_expr_attested(True)
+            return False, None
+        use_attested = wants_attested and attestation is not None
         # Under promotion the scope is the attestation's, not the form's: the gate
         # measured one species / cell-type selection / ensemble size and certifies that
         # one, so the head is built to match rather than being built loosely and then
@@ -1660,6 +1713,9 @@ class StudioWindow(QtWidgets.QMainWindow):
                 "untick the attestation to run RiboNN uncalibrated (annotation only).",
             )
             return False, None
+        # Not "an attestation was available" but "THIS head was promoted by THIS record":
+        # the flag lives on the predictor, set only by the promotion seam.
+        self._run_attestation_sha = str(getattr(predictor, "attestation_sha256", ""))
         return True, predictor
 
     def _build_library_tab(self) -> QtWidgets.QWidget:
@@ -3309,10 +3365,13 @@ class StudioWindow(QtWidgets.QMainWindow):
             # banner names that scope rather than just saying "calibrated". A promotion
             # can only have come through the attestation seam, so one is resolvable
             # here; the fallback text keeps the claim honest if it somehow is not.
+            attestation = self._expr_attestation
             scope = (
-                _expression_scope_line(self._expr_attestation)
-                if self._expr_attestation is not None
-                else "scope unavailable"
+                _expression_scope_line(attestation)
+                if attestation is not None
+                and attestation.content_hash() == self._run_attestation_sha
+                else "scope unavailable (this set was not promoted by the attestation "
+                "loaded here)"
             )
             basis = (
                 f"<b>Ranked by predicted expression</b> ({escape(model)}); the ★ "

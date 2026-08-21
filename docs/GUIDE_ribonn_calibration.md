@@ -876,10 +876,21 @@ export BT4_EXPRESSION_USE_ATTESTED=1
 ```
 
 With those set, `api.resolve_expression_backend("ribonn", ...)` returns a **calibrated**
-head, `api.candidates` **ranks** the set by predicted expression instead of returning it
-in discovery order, and the delivered pick becomes the head's top scorer. The run
-manifest records the attestation's content hash, so a design produced this way is
-distinguishable from one produced without it.
+head. Hand that head to the design flow and the set becomes a real ranking:
+
+```python
+from bt4 import api
+head = api.resolve_expression_backend(
+    "ribonn", species="human", utr5="...", utr3="...", cell_types=("HEK293T",),
+)
+result = api.candidates("MKAYVQTL...", predictor=head)   # ranked, not discovery order
+```
+
+⚠️ **The environment variable governs promotion, not selection.** `api.candidates` with
+no `predictor=` still uses the neutral placeholder however many variables you export —
+exporting them does not silently change what a script that never asked for RiboNN does.
+The run manifest records the attestation's content hash, so a design produced with a
+promoted head is distinguishable from one produced without it.
 
 In **BT4 Studio**: Candidates tab → *Expression head* → tick **honor expression
 attestation**. The box is greyed out with an explanatory tooltip when no attestation
@@ -1036,7 +1047,7 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
 | **GC3** | The G/C content of just the *third* letter of each codon — the letter you are usually free to change without changing the protein. |
 | **CAI** | A simple arithmetic score for how closely a sequence uses an organism's preferred codons. BT4 computes it instantly, in-loop, for free. |
 | **tAI** | A second codon-quality score, weighted by how much of each matching tRNA the cell actually has. |
-| **`top_k`** | How many of RiboNN's ensemble members to average (default 5). It changes the score, and it is not recorded in the gate's output — so write it in your pre-registration file. |
+| **`top_k`** | How many of RiboNN's ensemble members to average (default 5). It changes the score, so it is part of the scope: the gate records it, and a promotion refuses a head that ensembles a different number. |
 | **Coverage** | Of everything the model said "I'm 90% sure", how often was it right? |
 | **Conformal interval** | The error bar. Built from how wrong the model was on data it hadn't seen. |
 | **Within-group** | Comparing only spellings of the *same* protein — BT4's actual job, and the strict version of the test. |
