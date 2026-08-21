@@ -35,6 +35,7 @@ from dataclasses import dataclass
 
 import pytest
 
+import bt4
 from bt4 import api
 from bt4.biomodels.expression.base import ExpressionResult
 from bt4.biomodels.splice import (
@@ -170,7 +171,9 @@ def test_flanked_predictor_keeps_the_backend_name() -> None:
 def _passing_attestation():
     """Build a passing Pangolin attestation over the full pinned weight map."""
     report = FidelityReport(passed=True, max_abs_deviation=1e-6, n_cases=5, tolerance=1e-3)
-    return attest_backend("pangolin", report, dict(PINNED_WEIGHT_SHA256), bt4_version="0.4.0")
+    return attest_backend(
+        "pangolin", report, dict(PINNED_WEIGHT_SHA256), bt4_version=bt4.__version__
+    )
 
 
 def test_default_tissue_set_promotes() -> None:

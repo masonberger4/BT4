@@ -3584,8 +3584,49 @@ def main() -> int:
         # Headless startup check used by the packaging CI. Constructing
         # StudioWindow already exercised the things that break a frozen bundle --
         # bundled-resource loading (available_organisms), the Qt platform plugin,
-        # and pyqtgraph -- so flush pending events and exit 0 without entering the
-        # blocking event loop. Lets CI assert the packaged app actually opens.
+        # and pyqtgraph -- so flush pending events, then run one real design
+        # (_self_test_engine, which raises on failure) and exit 0 without entering
+        # the blocking event loop. Lets CI assert the packaged app opens AND works.
         app.processEvents()
+        _self_test_engine()
         return 0
     return app.exec()
+
+
+def _self_test_engine() -> None:
+    """Run one real design, so a bundle that *opens* but cannot *work* fails here.
+
+    Opening the window proves the Qt stack and the codon tables the organism picker
+    reads are present. It does not prove the packaged app can design anything: a data
+    file reachable only from a run -- the REBASE enzyme catalog is the likeliest to be
+    missed by packaging, since nothing loads it until a rule needs it -- would
+    otherwise ship and surface as a crash on the user's first click. This is the only
+    check that runs the engine inside the frozen bundle.
+
+    Deliberately silent on success (only ``cli`` prints, CLAUDE.md section 3); a
+    failure raises, and the non-zero exit is the signal CI reads.
+
+    Raises:
+        RuntimeError: If the design does not come back well-formed, or carries the
+            very site it was told to avoid.
+    """
+    protein = "MKWVTFISLL"
+    result = api.optimize(
+        protein,
+        api.OptimizeConfig(
+            organism="homo_sapiens",
+            restriction_enzymes=("EcoRI",),
+            max_homopolymer=5,
+            seed=0,
+        ),
+    )
+    expected_nt = 3 * (len(protein) + 1)  # the CDS plus its stop codon
+    if len(result.dna) != expected_nt:
+        raise RuntimeError(
+            f"self-test: designed {len(result.dna)} nt for a {len(protein)}-residue "
+            f"protein, expected {expected_nt}"
+        )
+    if "GAATTC" in result.dna:
+        raise RuntimeError("self-test: the EcoRI site the run was told to avoid is present")
+    if not api.available_organisms():
+        raise RuntimeError("self-test: no organism tables resolved from the bundle")

@@ -144,7 +144,8 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 | **AAV/LVV packaging accounting** (report only — BT4 controls no lever) | DONE | n/a | `pipeline/packaging.py` |
 | **BT4 Studio** — Design / Candidates+splice-audit / Library tabs, RiboNN + ASSP surfaced, menus + runtime theming | DONE | n/a | `app/studio.py`, `app/worker.py`, `app/theme.py` |
 | Expression backend registry (`available_expression_backends` / `resolve_expression_backend`) | DONE | n/a | `biomodels/expression/__init__.py`, `api/` |
-| Packaged installers (PyInstaller/Briefcase) | NOT-STARTED | n/a | `packaging/` |
+| Packaged app bundle (PyInstaller one-file / `.app`) | **DONE for Linux, verified by launching it** (2026-08-20); macOS/Windows built by CI, unverified here | n/a | `packaging/bt4-studio.spec`, `tests/test_bundle_spec.py` |
+| Signed, double-clickable *installers* (`.dmg` niceties, MSI, code signing) | NOT-STARTED (signing is a deliberate non-goal, `packaging/README.md`) | n/a | `packaging/` |
 
 The **expression/splice design flow**
 ([`DESIGN_expression_splice_flow.md`](DESIGN_expression_splice_flow.md)) is
@@ -400,9 +401,20 @@ items 1–3 are in
 8. **[self-contained] External-validation report** — compare BT4 output
    codon/GC/CpG distributions against real highly-expressed gene panels (§8), using
    public data and BT4's own recompute functions.
-9. **[self-contained → then human] Packaged installers** — PyInstaller/Briefcase
-   for macOS/Windows/Linux. Advance up to the point where signing / tag-pushing /
-   release-cutting is needed; those steps are human-only (HTTP 403 in the sandbox).
+9. **[Linux DONE 2026-08-20 · rest human] Packaged installers.** The Linux
+   one-file bundle now **builds and runs here** — the sandbox can install the Qt
+   runtime and drive a real X display (`Xvfb`), so the old "can't self-test in this
+   sandbox" limitation is retired: the packaged app was launched, given a protein,
+   and produced a `PROVEN_OPTIMAL` design, a ranked candidate set and a sampled
+   library. Doing that for the first time found a **release-blocking defect no
+   from-source gate could see** — the spec collected `**/*.provenance.json`, so
+   `ribonn_sha256.json` (read at import) was absent and the frozen app died before
+   its first window. Fixed, pinned by `tests/test_bundle_spec.py`, and
+   `--self-test` now runs a real design rather than only building the window.
+   **Build the bundle and open it before every tag**; a green suite does not cover
+   the artifact users download. What remains is human: macOS/Windows verification
+   on real hardware, signing (a deliberate non-goal today), and the tag push /
+   release cut (HTTP 403 in the sandbox).
 10. **[Pangolin DONE 2026-08 · SpliceAI still human-gated] Splice CNN calibration.**
     **Pangolin passed its integration-fidelity gate**, on a maintainer machine
     holding the GPL weights: 18 cases, tolerance 1e-3, **max abs deviation exactly

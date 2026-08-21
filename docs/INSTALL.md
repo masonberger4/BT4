@@ -160,6 +160,41 @@ chmod +x "BT4-Studio-Linux-x86_64"
 
 The first line marks the file as runnable; the second one starts it.
 
+#### "Could not load the Qt platform plugin"
+
+If running it that way prints something like
+
+```
+qt.qpa.plugin: From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed to load the
+Qt xcb platform plugin.
+This application failed to start because no Qt platform plugin could be initialized.
+```
+
+then the download is fine and your Linux install is simply missing some of the
+X11 system libraries every Qt app needs in order to draw a window. A normal
+desktop install usually already has them; a **minimal, server, WSL, or container**
+install often does not.
+
+On Debian / Ubuntu (and derivatives like Mint or Pop!_OS):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
+  libxkbcommon0 libxkbcommon-x11-0 libx11-xcb1 libxcb1 libxcb-cursor0 \
+  libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+  libxcb-render0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 \
+  libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 libxi6 libxrender1
+```
+
+Then start the app again. Installing a package you already have does nothing, so
+it is safe to run the whole line.
+
+On other distributions the package **names** differ, but the error message always
+names the library it could not load -- install whichever package provides that
+file. The list above is not guesswork: it is every X11 library the app's bundled
+Qt build links against but does not carry itself, read off the shipped binary and
+checked by running it on a bare system with none of them installed.
+
 ---
 
 ## "My antivirus flagged it"

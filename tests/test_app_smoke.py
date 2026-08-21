@@ -1570,3 +1570,38 @@ def test_metrics_table_grows_with_the_audit() -> None:
         for r in range(window.metrics_table.rowCount())
     }
     assert "could not be removed" in shown["Max repeat"]
+
+
+def test_self_test_engine_runs_a_real_design() -> None:
+    """``--self-test`` designs a real sequence, not just a window.
+
+    This is the check that runs inside the *frozen* bundle, where a data file the
+    engine loads lazily (the REBASE catalog) is absent unless packaging collected it.
+    """
+    studio._self_test_engine()  # raises on failure; silent on success
+
+
+def test_self_test_engine_rejects_a_malformed_design(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The self-test is not vacuous: a bad design fails it.
+
+    Pins the guard itself. A smoke check that passes whatever the engine returns
+    would have let the broken bundle through just as quietly as no check at all.
+    """
+
+    class _Stub:
+        dna = "ATG"  # far too short for a 10-residue protein
+
+    monkeypatch.setattr(studio.api, "optimize", lambda *a, **k: _Stub())
+    with pytest.raises(RuntimeError, match="expected 33"):
+        studio._self_test_engine()
+
+
+def test_self_test_engine_rejects_an_unavoided_site(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A design carrying the site it was told to avoid fails the self-test."""
+
+    class _Stub:
+        dna = "ATGAAGTGGGTGACCTTCATCTCCGAATTC"[:30] + "TAA"
+
+    monkeypatch.setattr(studio.api, "optimize", lambda *a, **k: _Stub())
+    with pytest.raises(RuntimeError, match="EcoRI"):
+        studio._self_test_engine()

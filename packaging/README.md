@@ -14,7 +14,11 @@ non-technical user downloads one file and opens it:
 - `bt4-studio.spec` — the PyInstaller spec. It emits a **single file** on Windows
   and Linux and a **`.app` bundle** on macOS (`_onefile = not _is_mac`). It
   collects the Qt runtime (via PySide6's own hook), pyqtgraph (skipping its GUI
-  `examples`), and BT4's packaged codon tables.
+  `examples`), and every non-Python file BT4 ships (the codon / tRNA / enzyme
+  tables, their provenance sidecars, the weight-hash pins and the committed splice
+  attestations). Those patterns are pinned by `tests/test_bundle_spec.py`, because
+  an enumeration of today's data files silently falls behind the tree -- and the
+  resulting bundle fails only once it is launched.
 - `bt4_studio_entry.py` — the entry script PyInstaller analyzes; it just calls
   `bt4.app.main`.
 
@@ -32,6 +36,16 @@ file on Linux/Windows, and a `BT4 Studio.app` folder on macOS. Just run it.
 On a headless Linux box you'll need the Qt runtime libraries to launch it, e.g.
 `sudo apt-get install -y libegl1 libgl1 libglib2.0-0 libxkbcommon0 libdbus-1-3`.
 The CI release job installs exactly these before building the Linux one-file app.
+
+**That set is enough to build and to run `--self-test` under `QT_QPA_PLATFORM=offscreen`
+-- it is NOT enough to display the app on a real X11 desktop.** The offscreen platform
+plugin needs almost none of X; `libqxcb.so` needs a dozen more `libxcb-*` libraries, and
+without them the app aborts at startup with *"Could not load the Qt platform plugin
+xcb"*. A normal desktop install already has them, so the gap only bites minimal,
+server, WSL and container installs -- which is exactly where a maintainer tends to test.
+The full list a user needs is in [`docs/INSTALL.md`](../docs/INSTALL.md#linux-it-wont-run);
+it was read off the shipped binary's `NEEDED` entries and verified by launching the
+packaged app on a bare system.
 
 ## Code signing (intentionally skipped)
 

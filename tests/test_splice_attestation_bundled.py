@@ -25,6 +25,7 @@ plus public weight hashes, and promotion only sets a flag.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -161,10 +162,30 @@ def test_both_backends_attest_the_same_number_of_cases() -> None:
 
 @pytest.mark.parametrize("backend", ["pangolin", "spliceai"])
 def test_attestation_records_the_producing_version(backend: str) -> None:
-    """Provenance: the attestation names the BT4 that produced it."""
+    """Provenance: the attestation names the BT4 that produced it.
+
+    Deliberately **not** ``== bt4.__version__``. The gate ran on a maintainer machine
+    holding the licensed weights, at whatever version was current *then*; cutting a
+    new BT4 does not re-run it, and rewriting the recorded version to match the
+    running one would falsify the single field whose whole job is to say which build
+    took the measurement. Promotion agrees: :func:`verified_predictor` gates on the
+    backend, ``passed``, the tolerance floor and an exact weight-SHA match -- never on
+    the version -- so a release neither re-certifies nor silently invalidates an
+    attestation. (This assertion *was* an equality, and the v0.5.0 bump is what
+    surfaced it: an equality here makes every version bump either a licensed re-run
+    the sandbox cannot do, or an edit to a provenance record.)
+
+    What must hold is weaker and true: the field carries a real, parseable version, and
+    not one from the future -- an attestation claiming to come from a BT4 that does not
+    exist yet is a corrupt record, not a stale one.
+    """
     att = bundled_attestation(backend)
     assert att is not None
-    assert att.bt4_version == bt4.__version__
+    recorded = re.match(r"^(\d+)\.(\d+)\.(\d+)", att.bt4_version)
+    current = re.match(r"^(\d+)\.(\d+)\.(\d+)", bt4.__version__)
+    assert recorded is not None, f"unparseable attestation version {att.bt4_version!r}"
+    assert current is not None
+    assert tuple(map(int, recorded.groups())) <= tuple(map(int, current.groups()))
 
 
 # --------------------------------------------------------------------------
