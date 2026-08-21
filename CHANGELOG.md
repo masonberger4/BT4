@@ -16,27 +16,31 @@ its first tagged release.
   would instead report that it could not find `runs.csv`. Steps 5-7 now carry `cmd.exe`
   forms, the `%USERPROFILE%` clone path, `set` vs `setx`, and the Windows extraction
   block (Windows `tar` reads zip, unlike GNU `tar`).
-- **Miniforge is no longer presented as a prerequisite.** Miniconda and Anaconda are
-  equivalent here: every command in the guide names its channel, and RiboNN's own
-  `environment.yml` pins `conda-forge` (verified upstream). `mamba` is a speed
-  convenience, and the guide now gives the `conda`-only path and the libmamba-solver
-  switch instead of implying a second installer is required.
-- **The RiboNN / splice-CNN environment conflict is now written down.** RiboNN pins torch
-  **1.13.1** + `numpy<2`; the `splice-pangolin` extra needs torch **>= 2.2**, so they
-  should not share an environment — a maintainer who already had Pangolin working would
-  reasonably have tried. Stated with the mechanism that was actually established: the
-  `torch>=2.2` floor is **BT4's own** (upstream Pangolin declares no `install_requires`),
-  so installing the extra would upgrade torch off RiboNN's pin; whether Pangolin runs on
-  1.13.1 is untested rather than impossible. Recorded with what the separation costs (the wrapped splice CNNs
+- **Miniforge is no longer presented as a prerequisite.** Miniconda and Anaconda work
+  too, and `mamba` is a speed convenience — conda has defaulted to the libmamba solver
+  since 23.10. One difference survives and is now stated rather than waved away:
+  `conda env create -f environment.yml` names no channel, so on Miniconda/Anaconda the
+  `defaults` channel is consulted unless `nodefaults` is added to RiboNN's file.
+- **The RiboNN / Pangolin environment conflict is now written down.** A maintainer who
+  already had Pangolin working would reasonably have tried to reuse that environment.
+  Stated with the mechanism that was actually established, and only in the guide's Step 5
+  so there is one copy: the `torch>=2.2` floor is **BT4's own** (upstream Pangolin
+  declares no `install_requires` at all, and nothing checks a torch version at runtime),
+  so installing the extra would upgrade torch off RiboNN's pin — whether Pangolin *runs*
+  on 1.13.1 is untested rather than impossible. SpliceAI is explicitly left as a separate,
+  untested question: its extra is TensorFlow-only, so the torch reason does not reach it.
+  Recorded with what the separation costs (the wrapped splice CNNs
   are unavailable inside the RiboNN environment, so one run cannot use both) and why
   installing BT4 into both is safe (BT4's core has zero dependencies; the
   `expression-ribonn` extra is floors, not pins, so it upgrades nothing already present).
 - **`conda activate` is shell state, which agent-driven shells lose**, silently running a
   verification step against the wrong Python. The guide now gives
   `conda run -n RiboNN --no-capture-output ...` for that case.
-- `docs/NEXT_SESSION.md` records that the **Sanofi licence was granted in writing
-  (2026-08)** — an *affiliation* grant, resolved before any weights were downloaded — so
-  item 11's blocker is now the panel, not the licence.
+- `docs/NEXT_SESSION.md` records **the maintainer's report that the Sanofi licence was
+  granted in writing (2026-08)** — marked as reported rather than verified, since no
+  artifact in this repo can confirm an off-repo event. What upstream's own LICENSE files
+  do verify is the grant's *shape* (an affiliation grant, academic/non-profit). Item 11's
+  blocker is recorded as the panel rather than the licence.
 
 ### Fixed
 - **Two promotion tests passed while the code they name was never called.** Both built

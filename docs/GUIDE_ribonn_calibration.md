@@ -219,14 +219,22 @@ BT4 loads it directly.
 > running `conda install -n base -c conda-forge conda-libmamba-solver -y` and
 > `conda config --set solver libmamba`.
 
-> ⚠️ **Do not reuse an environment you built for Pangolin or SpliceAI.** RiboNN's
-> `environment.yml` pins **torch 1.13.1** and **numpy 1.22.4** exactly, while BT4's
-> `splice-pangolin` extra declares **torch >= 2.2** — so installing that extra here would
-> upgrade torch straight off RiboNN's pin. (Upstream Pangolin itself declares no torch
-> floor at all; `torch>=2.2` is BT4's own, shared with the `[ml]` extra. Whether Pangolin
-> runs on torch 1.13.1 is untested — nobody has tried, so treat "they cannot share an
-> environment" as the safe arrangement rather than a measured impossibility.) RiboNN gets
-> its own environment: that is what the `-n RiboNN` below is for, not tidiness. You will install BT4 into this new environment as well as
+> ⚠️ **Give RiboNN its own environment — do not reuse one you built for Pangolin.**
+> RiboNN's `environment.yml` pins **torch 1.13.1** and **numpy 1.22.4** exactly, while
+> BT4's `splice-pangolin` extra declares **torch >= 2.2**, so installing that extra here
+> would upgrade torch straight off RiboNN's pin. That is what the `-n RiboNN` below is
+> for, not tidiness. **This is the whole scope of the claim** — `torch>=2.2` is BT4's own
+> floor (shared with `[ml]`); upstream Pangolin declares no torch requirement at all, and
+> nothing checks a torch version at runtime. Whether Pangolin would actually *run* on
+> 1.13.1 is untested, so treat separate environments as the safe arrangement rather than a
+> measured impossibility.
+>
+> **SpliceAI is a different question and is not answered here.** Its extra is
+> `tensorflow>=2.6,<2.16` with no torch at all, so the reason above does not reach it. The
+> plausible collision is numpy — TensorFlow 2.15 requires `numpy>=1.23.5`, above RiboNN's
+> 1.22.4 pin — but nobody has tried it, and `NEXT_SESSION.md` records a *measured* finding
+> that Pangolin and SpliceAI share one environment more easily than their metadata
+> suggested. Do not assume; if you need both, measure. You will install BT4 into this new environment as well as
 > the old one (Step 7); an editable install points both at the same source folder, so
 > nothing is duplicated except the dependency set. The consequence to know: inside the
 > `RiboNN` environment the wrapped splice CNNs are simply not available and BT4 falls back
@@ -1028,7 +1036,7 @@ proteins that don't exist.
 | # | Trap | Why it hurts |
 |---|---|---|
 | 1 | Two Python environments | BT4 loads RiboNN's code *into itself*. Separate environments can never see each other. |
-| 1b | Reusing your Pangolin/SpliceAI environment | RiboNN pins torch 1.13.1; `splice-pangolin` needs torch >= 2.2. Build RiboNN its own, and install BT4 into both. |
+| 1b | Reusing your Pangolin environment | Installing `[splice-pangolin]` there would upgrade torch off RiboNN's pin. Build RiboNN its own and install BT4 into both. Versions and the exact scope of the claim: Step 5. |
 | 2 | Adding the `[ml]` extra | Pulls in newer PyTorch/NumPy than RiboNN tolerates. |
 | 3 | Weights folder not named `models` | RiboNN hard-codes that name; the fallback needs admin rights on Windows. (On Linux/macOS `$BT4_RIBONN_WEIGHTS` lets any name work.) |
 | 3b | `tar -xf weights.zip` on Linux | GNU `tar` cannot read zip. Use `unzip -q weights.zip -d models`. (Windows `tar` reads zip fine.) |
@@ -1045,7 +1053,7 @@ proteins that don't exist.
 | 13 | Expecting a green test suite to mean a real run works | Every RiboNN test uses a stand-in. |
 | 14 | Comparing against raw protein output | Re-introduces the exact quantity RiboNN's output divides out. |
 | 15 | Expecting a pass to change things for users *automatically* | It doesn't, by design — but the opt-in exists now (`BT4_EXPRESSION_USE_ATTESTED`, or the Studio checkbox), and a head outside the attested scope is refused rather than quietly downgraded. |
-| 15b | An agent or script running the commands for you | `conda activate` is shell state; a fresh shell per command loses it. Use `conda run -n RiboNN --no-capture-output ...`. |
+| 15b | An agent or script running the commands for you | `conda activate` **and** `BT4_RIBONN_DIR` are both shell state; a fresh shell per command loses both, and `conda run` alone only replaces the first. See Step 7. |
 | 16 | Committing an attestation for a private panel | It carries the panel hash and a hash per UTR context; a *short* UTR is brute-forceable from its hash. Use `$BT4_EXPRESSION_ATTESTATION` locally instead. |
 
 ---
@@ -1115,14 +1123,19 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
     `cmd.exe` forms, the `%USERPROFILE%` clone path, `set` vs `setx`, and the
     `conda run -n RiboNN --no-capture-output` form for anything running commands in a
     fresh shell each time.
-15. **Miniforge was presented as a prerequisite.** It is not: Miniconda and Anaconda work
-    identically here, because every command names its channel explicitly and RiboNN's own
-    `environment.yml` pins `conda-forge` itself. `mamba` is a speed convenience, not a
-    requirement — `conda` runs the same commands.
-16. **The Pangolin/RiboNN environment conflict was recorded nowhere.** RiboNN pins torch
-    1.13.1 and `numpy<2`; BT4's `splice-pangolin` extra needs torch >= 2.2. A maintainer
-    who already had a Pangolin environment would reasonably try to reuse it. Step 5 now
-    says not to, and says what the separation costs (no CNN splice audit in the same run).
+15. **Miniforge was presented as a prerequisite.** It is not — Miniconda and Anaconda work
+    too, and `mamba` is a speed convenience rather than a requirement. One difference does
+    survive, and an earlier draft of this very item wrongly denied it by claiming "every
+    command names its channel": `conda env create -f environment.yml` names none, so on
+    Miniconda/Anaconda the `defaults` channel is consulted unless `nodefaults` is added to
+    RiboNN's `environment.yml`. Step 5 has the accurate version.
+16. **The Pangolin/RiboNN environment conflict was recorded nowhere.** A maintainer who
+    already had a Pangolin environment would reasonably try to reuse it; Step 5 now says
+    not to, why, and what the separation costs (no CNN splice audit in the same run).
+    Version numbers and the scope of the claim live in Step 5 **only** — an earlier draft
+    restated them here and in `NEXT_SESSION.md`, and the three copies had already drifted
+    apart within a single commit, which is §10.11's hazard demonstrated rather than
+    described.
 17. **"Nothing calls `verified_predictor`"** — true when this guide landed, and the reason
     old Step 21 was titled "the part that still won't work". No longer: the promotion seam
     ships (`BT4_EXPRESSION_USE_ATTESTED`, `$BT4_EXPRESSION_ATTESTATION`, a BT4 Studio
