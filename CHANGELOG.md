@@ -7,6 +7,35 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Added
+- **A pre-registered round 2 of the RiboNN redundancy test, frozen with its own code and
+  panel** (`docs/PREREG_ribonn_part3_round2.md`, `scripts/prereg_round2_*.py`,
+  `scripts/data/prereg_round2_panel.json`). Round 1 failed its own gate
+  (median |ρ(GC3)| 0.7385 > 0.70) and that verdict stands; round 2 does **not** relax the
+  threshold, it replaces an endpoint that had no meaningful zero. Two things drove the
+  design. First, "the score moved" cannot be an endpoint: RiboNN is deterministic, so a
+  non-zero response is guaranteed before the run — and no score here is evidence about
+  translation efficiency, since the round uses no measured data at all. Second, the
+  decision-relevant quantity does have a real null: after regressing out the features BT4
+  already optimizes for free, is the **residual** both substantial *and* stable across
+  four UTR contexts?
+- **The gate was wrong twice, and a ground-truth self-test caught both**
+  (`scripts/prereg_round2_selftest.py`, committed because it is the evidence the gate
+  works). Scoring three known-answer regimes showed that *stability alone* passes a pure
+  GC/CAI blend — the post-fit residual is deterministic dust, hence identical in every
+  context, hence correlated at exactly 1.0 — and that *size × stability against
+  single-feature baselines* still passes a blend, because the fit is in rank space and a
+  monotone transform of a blend is not linear in the ranked features. The shipped gate is
+  size × stability against a family of 24 seeded random free-feature blends, and it now
+  fails both known negatives (−0.074, −0.072) while passing the positive (+0.828).
+  Neither flaw was visible from the definitions.
+- Panel provenance is pinned end to end: NCBI **MANE release 1.5** (SHA-256 recorded, 19,363
+  MANE Select rows) drawn by seeded rule, sequences from Ensembl, a `--verify` mode that
+  re-draws and diffs, and a `content_hash` over the drawn panel that deliberately excludes
+  incidental skip tallies so verification proves the *draw* reproduces. Recorded in
+  `THIRD_PARTY_DATA.md`. **RiboNN remains `calibrated=False`**; a pass would be a necessary
+  condition and a licence to look for a panel, never evidence of skill.
+
 ### Changed
 - **The RiboNN guide's CPU-only environment could not be built on Windows, and the whole
   install has now been run end-to-end to prove the replacement.** The previous entry added
