@@ -541,7 +541,10 @@ BT4 already has the seam to fix this: `ConstructContext` carries the 5′UTR and
 and `score_in_context` routes them to the CNNs. What this measurement adds is that using
 it is **not a refinement — it changes the answer**, by ~0.19 of median peak score, in the
 direction that matters at a 0.5 cutoff. A splice number computed on the `N`-padded path
-should be read as a lower bound on that model's response, not as its estimate.
+should be read as a lower bound on that model's response, not as its estimate — **against
+real genomic flank**. The flank sweep later in this document measures the opposite sign
+against designed-CDS flank, so the bound's *direction* is not regime-independent; only
+"not an estimate" is.
 
 ## The detection floor — measured (2026-08-20)
 
@@ -893,10 +896,24 @@ splice signal.** The absolute peak falls 1.75× while the ratio to local backgro
 in a tight 7.9–12.7× band.
 
 *This runs opposite to the earlier real-genomic-flank result in this document (0.545 →
-0.656 as flank grew). Both are consistent: real genomic flank supplies intron/exon
-architecture that makes a site more plausible, while more exon-like designed CDS makes it
-less so. The direction of the flank effect depends on what the flank is — which is
-precisely why a fixed absolute cutoff cannot be regime-independent.*
+0.656 as flank grew, the same planted donor). There is no logical conflict — two flank
+types, two directions — but **the mechanism is not measured here and must not be
+asserted.** The tempting story, that real genomic flank supplies intron/exon architecture
+making a site more plausible, is contradicted by this document's own four-arm control: the
+**composition-matched shuffle scored highest of the four** (0.4944 vs real chr1 0.3691),
+and a shuffle carries no architecture at all, while random uniform ACGT scored *below*
+`N`. The recorded account — distribution shift, not restored function — covers both
+directions and this one adds no evidence for anything narrower. What the sweep does
+establish is the directional fact: **the direction of the flank effect depends on what the
+flank is**, which is precisely why a fixed absolute cutoff cannot be regime-independent.*
+
+**This bounds an already-shipped claim.** BT4 states in several places that a splice
+number from the `N`-padded path is a *lower bound* on the model's response. That was
+measured against **real genomic** flank and still holds there. Against **designed-CDS**
+flank the same planted donor falls 0.6554 → 0.3742, so the padded number over-reads — an
+upper bound in that regime. What is regime-independent is only the weaker half: the padded
+number is **not an estimate**. Its sign as a bound is a function of the flank, so the word
+"lower" is only correct with the flank type named.
 
 ### The acceptor arm, built to the published architecture
 
@@ -930,9 +947,38 @@ the donor scramble is constrained to avoid a junction `GT`.
 | **absolute peak** | 0.1890 | 0.0856 | 2.21× | (0.086, 0.189) |
 | **peak / local background** | 3.32× | 1.60× | 2.08× | (1.60, 3.32) |
 
-**At the shipped 0.5, 11 of 14 true sites are missed — 79%**, including full-consensus
-donors at three of five flank lengths and the fully-formed acceptor. A ratio cutoff of
-**3.0×** produces **zero false positives and zero false negatives** across all 21.
+**What enters the pool** (stated so the two headline numbers below are reproducible from
+this document): **14 positives** — the 300-nt ladder's L2 (0.1890) and L1 (0.3206); the
+acceptor arm's A1 (0.4879) and A2 (0.3486); and the flank sweep's five L2 rows
+(0.4357/0.3393/0.3040/0.2521/0.1994) and five L1 rows
+(0.6554/0.5484/0.5084/0.4487/0.3742). **7 negatives** — four host/control rows
+(0.0569/0.0562/0.0552/0.0582), plus A0 (0.0536), A3 (0.0856) and A4 (0.0513). The flank
+sweep's five L0 host rows and the failed A5 scramble control (0.2328) are **excluded**;
+the A5 exclusion is load-bearing and is stated with the 3.0× result below.
+
+**At the shipped 0.5, 11 of the 14 positives fall below the cutoff — 79%**, including
+the full-consensus donor at the **two longest** designed-CDS flank lengths (0.4487 at
+500 nt, 0.3742 at 1,000 nt) *and* on the 300-nt ladder host (0.3206), plus the
+fully-formed acceptor. A ratio cutoff of **3.0×** separates all 21 with **zero false
+positives and zero false negatives** — *after excluding A5*, see below.
+
+**Three qualifiers this number does not survive without.** (a) **The denominator is
+measurements, not independent sites.** Ten of the 14 are the *same two motifs* re-measured
+at five flank lengths, and all three that clear 0.5 are the same full-consensus donor at
+≤ 250 nt of flank. 79% is a miss rate over measurements. (b) **These are planted motifs
+with ground truth assumed, not assayed** — the count bounds an interval, it does not
+measure a false-negative rate. (c) **The 3.0× zero-error result depends on excluding A5**
+(0.2328): counted as a negative it exceeds the lowest positive (0.1890) and both the
+absolute interval and the zero-error claim collapse. The exclusion is defensible —
+permuting a pyrimidine-rich cassette accidentally recreated a tract followed by `AG`, so
+A5 is a failed control rather than a negative — but it is a judgement call and must travel
+with the number.
+
+*(Corrected: this passage previously read "at three of five flank lengths", which its own
+table above contradicts — three of the five clear 0.5. Three full-consensus donors are
+missed in total, but only two of them are flank-sweep rows; the third is the 300-nt ladder
+host, a different arm. "True sites" was also narrowed to "positives", since none was
+assayed.)*
 
 An absolute cutoff near **0.13** (the geometric midpoint of the pooled interval) also
 separates this set — but its usable window is narrow and, as the flank sweep shows, it
@@ -1048,11 +1094,22 @@ regime-*transferred*, and BT4 designs in the models' weakest regime (exonic prAU
 | # | panel | N | why it ranks here | licence posture |
 |---|---|---|---|---|
 | 1 | **MaPSy** (Soemedi 2017) | 4,964 exonic | best exonic + **full WT/MT 170-mer sequence pairs**; ~10% splice-altering; 81% patient-tissue concordance | subscription supplement — hash-pin, don't vendor |
-| 2 | **Vex-seq** (Adamson 2018) | 2,059 | **CC BY 4.0** with oligo sequences in Table S1 — the only legally bundleable one | bundle |
+| 2 | **Vex-seq** (Adamson 2018) | 2,059 | oligo sequences in the paper's Table S1 | **unresolved — verify before bundling** (see note) |
 | 3 | **Rosenberg** (2015) | >2M synthetic | the sequence *is* the read; continuous inclusion ratio; fully synthetic | hash-pin |
 | 4 | **MFASS** (Cheung 2019) | 27,733 | 3.8% SDV, 83% outside canonical — but the label is exon **skipping**, the inverse of BT4's cryptic-site **gain** | no LICENSE file — hash-pin |
 | 5 | **SpliceVarDB** (Sullivan 2024) | 50,715 | coordinates + label, **not the tested sequence** | external check only |
 | 6 | **BRCA1-SGE** (Findlay 2018) | ~4,000 | label conflates splicing with protein LoF + NMD | weak fit |
+
+*Two notes on this table.* (a) It **re-ranks an inventory this repo already carries**
+([`RESEARCH_splice_cnn_calibration.md`](RESEARCH_splice_cnn_calibration.md)) rather than
+introducing one; new here are Rosenberg 2015 and the ranking rationale, and the notable
+*change* is demoting BRCA1-SGE, which that document previously listed among the best fits
+for BT4's regime. (b) **The Vex-seq licence posture is unresolved.** That document records
+it as *GEO terms* (GSE113163); the CC BY 4.0 reading applies to the paper's supplementary
+table. These are different redistribution rights and the repo must not ship both answers
+as fact — a licence claim is the one class of error with consequences outside the repo, so
+it is recorded as open and **must be verified against the primary sources before anything
+is bundled**.
 
 ## The perturbation ladder, completed
 

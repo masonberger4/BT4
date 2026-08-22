@@ -246,10 +246,11 @@ def test_zero_and_nearly_zero_stay_distinguishable_in_the_report() -> None:
 def test_the_probe_carries_a_background_free_response_beside_the_risk() -> None:
     """The risk pooling is degenerate in this panel's regime; the response is not.
 
-    Measured against the hash-verified Pangolin weights, no position on any of the 93
-    sequences reached the 0.5 background, so every risk Δ was exactly zero. Without a
-    second, background-free statistic the probe's central question — does a synonymous
-    change move the score at all — is unanswerable here by construction.
+    Measured against the hash-verified Pangolin weights, only 6 of the 93 sequences
+    carried any position above the 0.5 background — all six designs of a single protein —
+    so for the other two proteins every risk Δ was exactly zero. Without a second,
+    background-free statistic the probe's central question — does a synonymous change move
+    the score at all — is unanswerable for those groups by construction.
     """
     from bt4.pipeline.splice_gate import probe_designed_cds
 
