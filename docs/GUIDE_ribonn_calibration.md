@@ -266,11 +266,86 @@ mamba create -n RiboNN -c conda-forge -y python=3.10.13 pytorch=1.13.1 \
     mlflow=2.18.0 numpy=1.22.4 pandas=2.2.3 scikit-learn=1.0.2
 ```
 
+> ⚠️ **On Windows that line cannot work — and the obvious repair is a trap.** Both were
+> measured on a CPU-only Windows 10 (19045) box in 2026-08; use the recipe below instead.
+>
+> **`pytorch=1.13.1` does not exist for win-64 on conda-forge.** Its earliest build for
+> that platform is **2.5.1**, so the command fails at the solve with
+> `PackagesNotFoundInChannelsError`, before installing anything. (It is fine on linux-64,
+> which is presumably where it was written.)
+>
+> **The natural fix makes things worse.** The official `pytorch` channel *does* carry
+> `pytorch 1.13.1 py3.10_cpu_0 win-64`. It installs, and every one of its **10,672 files
+> verifies against its recorded SHA-256** — and then `import torch` dies with
+> `OSError: [WinError 182]`. Read that message carefully: it names **`shm.dll`**, but
+> `shm.dll` is fine — it fails only because it depends on **`torch_cpu.dll`**, which is
+> what actually will not load. Chasing the named file is the wrong afternoon. And 182
+> normally means a missing or wrong-architecture dependency, which it is not here either:
+> every module in the 200-node import graph resolves to an x86-64 binary (bar the OS
+> API-set stubs the loader supplies itself), all 722 symbols `torch_cpu.dll` imports from
+> its four bundled dependencies are present in their export tables, and the image is a
+> structurally sound PE. **The cause was not established** — this is recorded so you
+> recognise it, not so you fix it. Get torch from **pip** instead; that build runs fine on
+> the same machine.
+>
+> Two pins also have to move, for reasons that are **not** Windows-specific and are worth
+> checking on Linux too:
+>
+> - **`numpy` up, to 1.23.5.** The pip torch wheel is compiled against a newer NumPy ABI
+>   than RiboNN's `numpy=1.22.4`. The mismatch is a **warning**, not an error —
+>   `Failed to initialize NumPy: module compiled against API version 0x10 but this version
+>   of numpy is 0xf` — and the process carries on with `torch.from_numpy` broken. It is the
+>   quietest failure in this whole guide. **1.23.5 is the version measured here**; the
+>   constraint is that NumPy's `0x10` ABI starts at 1.23, and RiboNN's existing `numpy<2`
+>   ceiling still applies above. Nothing between 1.22.4 and 1.23.5 was tested.
+> - **`pytorch-lightning` and `torchmetrics` from pip too**, because they are what drag
+>   conda's torch back in.
+>
+> The whole thing, in **Anaconda Prompt**, measured end to end:
+>
+> ```
+> conda create -n RiboNN -c conda-forge -y python=3.10.13 numpy=1.23.5 pandas=2.2.3 scikit-learn=1.0.2 mlflow=2.18.0
+> conda activate RiboNN
+> pip install "setuptools<82"
+> pip install "torch==1.13.1" --index-url https://download.pytorch.org/whl/cpu
+> pip install "pytorch-lightning==1.8.5" "torchmetrics==1.3.1" "lightning-utilities==0.10.1"
+> ```
+>
+> Keep that order. `--index-url` replaces PyPI *entirely* for that one line, so torch's
+> sole dependency (`typing-extensions`) has to be present already — and it is, because
+> conda pulled it in with `mlflow` one step earlier. Use `--index-url` rather than
+> `--extra-index-url`: the `+cpu` build is the one measured here, and an extra index leaves
+> pip free to pick the other. *(This is about which build you get, not about size — PyPI's
+> own `torch==1.13.1` Windows wheel is 0.16 GB, about the same as the `+cpu` one, so if
+> you have read elsewhere that the PyPI wheel is a multi-gigabyte CUDA build, that is not
+> true for this version.)*
+>
+> Then carry on to Step 6 unchanged; Step 7's `pip install -e ".[expression-ribonn,dev]"`
+> is the same on this path.
+>
+> **If you built the environment the conda way anyway**, one more thing will break: nothing
+> pins protobuf, so you get protobuf 5 beside the tensorboardX **2.5** that *conda-forge's*
+> pytorch-lightning recipe hard-pins (`>=2.2,<=2.5.1`), and `import pytorch_lightning`
+> raises `TypeError: Descriptors cannot be created directly`. RiboNN's own `src/predict.py`
+> imports pytorch_lightning, so nothing runs at all. conda cannot solve `protobuf<4` there
+> — libmamba aborts with `RuntimeError: bad variant access` — so use
+> `pip install "protobuf<4"`. **The recipe above does not need this**, and that is not
+> luck: upstream pytorch-lightning declares only `tensorboardX (>=2.2)`, with **no** upper
+> bound, so pip picks a tensorboardX new enough to have regenerated its protobuf stubs. The
+> `<=2.5.1` ceiling is conda-forge's addition, not upstream's.
+
 > **Heads-up for CPU-only machines:** RiboNN loads its saved model files without telling
 > PyTorch "there is no graphics card here". If the released files were saved from a GPU,
 > loading them on a CPU-only box can fail outright. That is RiboNN's behaviour, not a BT4
 > bug — but it means a CPU-only setup may simply not work, and you want to discover that
 > at Step 8, not at Step 18.
+>
+> **Measured (2026-08): it did not fail.** On a CPU-only Windows 10 box (Skylake, no
+> NVIDIA adapter) the published Zenodo weights loaded and scored without a
+> `map_location` error, and Step 8 returned in about 20 seconds. So the risk above is
+> real in principle but is **not** what the released files actually do. It stays written
+> down because one machine cannot prove the general case — treat a `torch.load` failure
+> at Step 8 as the thing this note predicted, not as a new mystery.
 
 ## Step 6 — Download the model weights
 
@@ -368,6 +443,24 @@ check that `~/RiboNN/src/` and `~/RiboNN/models/human/` both exist.
 > permanently once (`setx BT4_RIBONN_DIR "%USERPROFILE%\RiboNN"`, then open a new
 > terminal) so every shell inherits it. `--no-capture-output` is what lets you see
 > progress while it runs rather than only at the end.
+>
+> ⚠️ **`conda run` cannot take a multi-line `python -c` argument**, and every remaining
+> step in this guide is written as one. Measured on conda 26.5.3:
+>
+> ```
+> NotImplementedError: Support for scripts where arguments contain newlines not implemented.
+> ```
+>
+> It is a refusal, not a crash — conda says it will not transform the command rather than
+> running something different — but it means the two forms recommended here do not compose.
+> **Write the snippet to a `.py` file and run that instead:**
+>
+> ```bash
+> conda run -n RiboNN --no-capture-output python step8.py
+> ```
+>
+> A human typing at an activated Anaconda Prompt is unaffected; this bites only the
+> stateless form above, which is exactly the one an agent will reach for.
 
 ### First: getting the sequences you'll need
 
@@ -1037,7 +1130,10 @@ proteins that don't exist.
 |---|---|---|
 | 1 | Two Python environments | BT4 loads RiboNN's code *into itself*. Separate environments can never see each other. |
 | 1b | Reusing your Pangolin environment | Installing `[splice-pangolin]` there would upgrade torch off RiboNN's pin. Build RiboNN its own and install BT4 into both. Versions and the exact scope of the claim: Step 5. |
+| 1c | Running the CPU-only `mamba create` line on Windows | conda-forge ships **no** `pytorch` below 2.5.1 for win-64, so the pin cannot solve; and the obvious repair — the official `pytorch` channel, which does have `1.13.1` — installs a byte-perfect package that then fails to import. Step 5 has the recipe that was measured to work. |
 | 2 | Adding the `[ml]` extra | Pulls in newer PyTorch/NumPy than RiboNN tolerates. |
+| 2b | Keeping `numpy=1.22.4` alongside a **pip** torch | The pip wheel is built against a newer NumPy ABI, so torch prints `Failed to initialize NumPy` *as a warning* and carries on with `from_numpy` broken. It does not crash, which is what makes it dangerous. Step 5. |
+| 2c | Solving RiboNN's pins fresh **through conda** today | Nothing in `environment.yml` pins protobuf, so you get protobuf 5 next to the tensorboardX 2.5 that *conda-forge's* pytorch-lightning recipe hard-pins — and `import pytorch_lightning` dies on `Descriptors cannot be created directly`. That import is on RiboNN's own `src/predict.py` path, so *nothing* works. Step 5's recipe sidesteps it (upstream sets no such ceiling), and `pip install "protobuf<4"` fixes it if you hit it. |
 | 3 | Weights folder not named `models` | RiboNN hard-codes that name; the fallback needs admin rights on Windows. (On Linux/macOS `$BT4_RIBONN_WEIGHTS` lets any name work.) |
 | 3b | `tar -xf weights.zip` on Linux | GNU `tar` cannot read zip. Use `unzip -q weights.zip -d models`. (Windows `tar` reads zip fine.) |
 | 3c | Cloning to `C:\RiboNN` on Windows | Step 9 defaults to `~/RiboNN/models`, so it looks somewhere else and reports it cannot find `runs.csv`. Clone into `%USERPROFILE%` instead. |
@@ -1054,6 +1150,7 @@ proteins that don't exist.
 | 14 | Comparing against raw protein output | Re-introduces the exact quantity RiboNN's output divides out. |
 | 15 | Expecting a pass to change things for users *automatically* | It doesn't, by design — but the opt-in exists now (`BT4_EXPRESSION_USE_ATTESTED`, or the Studio checkbox), and a head outside the attested scope is refused rather than quietly downgraded. |
 | 15b | An agent or script running the commands for you | `conda activate` **and** `BT4_RIBONN_DIR` are both shell state; a fresh shell per command loses both, and `conda run` alone only replaces the first. See Step 7. |
+| 15c | Passing this guide's multi-line snippets to `conda run ... python -c` | conda **refuses** (`Support for scripts where arguments contain newlines not implemented`). The two forms this guide recommends do not compose. Write a `.py` file and run that. Step 7. |
 | 16 | Committing an attestation for a private panel | It carries the panel hash and a hash per UTR context; a *short* UTR is brute-forceable from its hash. Use `$BT4_EXPRESSION_ATTESTATION` locally instead. |
 
 ---
@@ -1143,6 +1240,59 @@ Where [`DESIGN_ribonn_calibration.md`](DESIGN_ribonn_calibration.md) differs:
     comparison the verdict came from, so the second scoring pass is gone. What has **not**
     changed: nothing is bundled, nothing auto-promotes, and a head outside the attested
     scope is refused rather than downgraded.
+
+18. **This guide's own CPU-only environment could not be built on Windows — four separate
+    ways.** Item 14 added Windows guidance by reading the code; this one comes from
+    executing it, on a CPU-only Windows 10 (19045) machine in 2026-08, and every claim
+    below is a measured result rather than an inference. Step 5 is rewritten accordingly.
+    (a) The CPU-only `mamba create` line **cannot solve on win-64**: conda-forge's earliest
+    `pytorch` for that platform is **2.5.1**, so `pytorch=1.13.1`
+    is `PackagesNotFoundInChannelsError`. It is fine on linux-64, which is presumably where
+    it was written. (b) The obvious repair is worse than useless: the official `pytorch`
+    channel *does* carry `pytorch 1.13.1 py3.10_cpu_0 win-64`, and it installs, verifies
+    **10,672 / 10,672 files against their SHA-256**, and then **fails to import** —
+    `OSError: [WinError 182]` on `torch_cpu.dll` under every combination of loader search
+    flags. That error normally means a dependency is missing or the wrong architecture, and
+    neither is true here: walking the import graph finds **200 modules**, every one of
+    which resolves to an x86-64 PE (the OS API-set stubs aside, which the loader satisfies
+    internally); all **722** symbols `torch_cpu.dll` imports from its four non-system
+    dependencies are present in those DLLs' export tables; there is no delay-load or
+    bound-import directory to go stale; and the image is a structurally sound PE32+ that
+    maps fine as a datafile. So the diagnosis is only that it does not load — the cause was
+    not established, and this entry deliberately stops short of naming one.
+    A clean install that passes its own integrity check and still cannot load is
+    exactly the failure a reader will not guess, so it is written down rather than left as
+    "use pip". The **pip** build (`torch==1.13.1` from `download.pytorch.org/whl/cpu`)
+    imports and runs on the same machine. (c) That pip wheel is compiled against a newer
+    NumPy ABI than RiboNN's `numpy=1.22.4` pin, so torch emits `Failed to initialize NumPy:
+    module compiled against API version 0x10 but this version of numpy is 0xf` — a
+    **warning**, not an error — and continues with `from_numpy` disabled. `numpy=1.23.5` is
+    the version measured here — NumPy's `0x10` ABI starts at 1.23, and nothing between
+    1.22.4 and 1.23.5 was tried. (d) `environment.yml` pins no protobuf, so a **conda**
+    solve today pairs protobuf 5.29.3 with tensorboardX 2.5 — and `import pytorch_lightning`
+    raises `TypeError: Descriptors cannot be created directly`. That import is on RiboNN's
+    own `src/predict.py` path, so the adapter cannot run at all. conda cannot solve
+    `protobuf<4` in that environment either — libmamba aborts with `RuntimeError: bad
+    variant access` — so the fix is `pip install "protobuf<4"`. The ceiling turns out to be
+    **conda-forge's**, not upstream's: pytorch-lightning 1.8.5's own metadata says
+    `tensorboardX (>=2.2)` with no upper bound, so pip resolves to a tensorboardX whose
+    protobuf stubs have been regenerated, and Step 5's recipe needs no protobuf pin at all
+    — checked both ways, with identical scores. **On platform scope:** (a) and (b) are
+    win-64-specific; (c) and (d) follow from pins that are the same everywhere and are
+    worth checking on Linux too.
+
+    The replacement recipe was **not** just assembled from these findings and published —
+    it was built from scratch in a separate environment and run through Steps 7–8, and it
+    reproduced the score of the environment repaired step-by-step **bit for bit**
+    (`1.6359811782836915` from both). That is the check this appendix's existence implies
+    and earlier entries did not always get.
+19. **`conda run` and a multi-line `python -c` do not compose**, and this guide recommends
+    both in the same breath (item 15b's stateless form, plus every snippet from Step 8 on).
+    On conda 26.5.3 it is a flat refusal — `NotImplementedError: Support for scripts where
+    arguments contain newlines not implemented` — so an agent following the advice in Step 7
+    could not run the step Step 7 exists to set up. Step 7 now says to write the snippet to
+    a `.py` file. A human at an activated prompt was never affected, which is why it
+    survived review.
 
 ---
 

@@ -590,8 +590,13 @@ items 1–3 are in
     LICENSE.txt` grant use "to any person from academic research or non-profit
     organizations", so it is an **affiliation** grant, not merely a non-commercial one,
     and the guide's Step 1 has it resolved with `patent.gos@sanofi.com` before any
-    download. Guide Steps 5–9 (install + verify) are the step in progress; the
-    Windows-specific corrections learned there are in the gotchas section below.
+    download. **Guide Steps 5–9 (install + verify) are now DONE** on the maintainer's
+    CPU-only Windows machine (2026-08): the weights are downloaded, the adapter scores a
+    real CDS in `RiboNN CLR-residual TE` units with `calibrated = False`, the same sequence
+    scores byte-identically twice, and `max_shift` is `0` in both weight sets. Getting
+    there needed four corrections to this guide's own CPU recipe — see the gotchas section
+    below, and guide Step 5 for the recipe. **The next step is therefore the panel, not the
+    install.**
     **Remaining
     (human):** run the free sanity checks against the licensed weights, obtain a
     licence-clean regime-matched **CDS-variant** panel — no public dataset fully
@@ -759,6 +764,60 @@ Four more, learned while walking a maintainer through a real Windows install (20
   lose both.** `conda run` replaces only the first — it inherits the parent environment —
   so a half-fix runs the right Python against an unset variable and fails with "RiboNN
   clone not found", which looks nothing like the cause. Guide Step 7 has the full form.
+
+**The install has now been completed end-to-end on that machine (2026-08), and the guide's
+CPU-only recipe did not survive contact with it.** Four measured findings; the working
+recipe lives in guide Step 5 **only**, and is deliberately not restated here:
+
+- **`pytorch=1.13.1` does not exist for win-64 on conda-forge** — its earliest build for
+  that platform is **2.5.1**, so the guide's CPU-only `mamba create` line was
+  `PackagesNotFoundInChannelsError` on Windows from the day it was written. It is fine on
+  linux-64.
+- **The official `pytorch` channel's win-64 `1.13.1` installs but will not import.** All
+  10,672 files verify against their SHA-256, then `import torch` raises
+  `OSError: [WinError 182]`. The traceback names **`shm.dll`**, which is a red herring —
+  `shm.dll` fails only because it imports `torch_cpu.dll`, and `torch_cpu.dll` is what
+  will not load, under every loader search-flag combination —
+  with a 200-module import graph in which everything resolves to an x86-64 PE, all 722
+  symbols imported from its four non-system dependencies present in their export tables,
+  no delay-load or bound-import directory, and an image that maps cleanly as a datafile.
+  **The cause was not established**; what is established is that the **pip** build
+  (`torch==1.13.1` from `download.pytorch.org/whl/cpu`) works on the same machine.
+- **The pip wheel and `numpy=1.22.4` are ABI-incompatible**, and it fails *quietly*: torch
+  prints `Failed to initialize NumPy: module compiled against API version 0x10 but this
+  version of numpy is 0xf` as a **warning** and runs on with `from_numpy` broken. This is
+  the one gotcha above whose shorthand — "needs `numpy<2`" — is actively misleading, since
+  the real constraint on the pip path is a *floor*, not only a ceiling. `numpy=1.23.5` is
+  the version measured here — NumPy's `0x10` ABI starts at 1.23, and nothing between
+  1.22.4 and 1.23.5 was tried.
+- **A fresh *conda* solve pairs protobuf 5 with tensorboardX 2.5 and breaks `import
+  pytorch_lightning`.** `environment.yml` pins no protobuf, and tensorboardX 2.5's
+  generated `_pb2.py` raise `TypeError: Descriptors cannot be created directly` against
+  protobuf ≥ 4. RiboNN's own `src/predict.py` imports `pytorch_lightning`, so **nothing**
+  runs. conda cannot solve `protobuf<4` in that environment either (libmamba aborts with
+  `RuntimeError: bad variant access`); `pip install "protobuf<4"` fixes it. The
+  `<=2.5.1` ceiling is **conda-forge's recipe**, not upstream — pytorch-lightning 1.8.5's
+  own metadata declares `tensorboardX (>=2.2)` unbounded — so the pip-based recipe needs
+  no protobuf pin, verified both ways.
+
+And one that is about tooling rather than RiboNN: **`conda run` refuses a multi-line
+`python -c` argument** (`NotImplementedError: Support for scripts where arguments contain
+newlines not implemented`, conda 26.5.3), so the stateless form recommended for agents
+does not compose with the multi-line snippets the guide is written in. Write them to a
+`.py` file.
+
+**What the completed install produced** (guide Steps 8–9, human `HBB` UTRs and CDS from
+Ensembl `ENST00000335295`): a score in `RiboNN CLR-residual TE` units with
+**`calibrated = False`**, byte-identical across two runs, and `params.max_shift = [0]` for
+both the human and mouse weight sets — so the determinism hazard above is **absent from
+the released weights**, and `torch.load`'s missing `map_location` did **not** bite on a
+CPU-only box. None of this is calibration: it is the adapter proven to run.
+
+The replacement recipe was then rebuilt from scratch in a second environment and scored the
+same sequence: **bit-for-bit the same number** as the environment that had been repaired
+step by step. So the guide's recipe is the one that was measured, not one reconstructed
+from the findings afterwards — and the score does not depend on which of the two ways the
+environment was assembled.
 
 ## Splice CNN environment gotchas (learned on real hardware)
 
