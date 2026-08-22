@@ -8,6 +8,39 @@ its first tagged release.
 ## [Unreleased]
 
 ### Measured
+- **RiboNN Part 3 round 2 ran and is VOID** —
+  [`docs/RESULT_ribonn_part3_round2.md`](docs/RESULT_ribonn_part3_round2.md). 2,560
+  scorings (16 MANE proteins × 40 variants × 4 UTR contexts, ~2 h 40 m) against the design
+  frozen in #141. It failed its pre-registered sanity floor (`within_over_between` 0.180 <
+  0.20), which §3 binds in advance as *void*, neither pass nor fail. **The gate came back
+  +0.4124, CI [0.329, 0.553], with all 16 proteins positive** — it would have passed, and
+  is reported here precisely because suppressing a positive that a floor disqualifies is
+  the failure mode pre-registration exists to prevent. Nothing about RiboNN follows from
+  it; `calibrated` stays `False`, and round 1's "stop" remains the only completed verdict.
+- **Why it voided, measured rather than assumed.** The first explanation offered — that 16
+  diverse proteins widened the denominator — was **wrong**, and checking took minutes: the
+  denominator shrank too (between-protein SD 0.621 → 0.394) while the numerator collapsed
+  far harder (median within-protein SD **0.252 → 0.071**). Root cause is the variant
+  recipe: `api.library` at a single `temperature=1.0` samples the natural codon
+  distribution and clusters tightly, spanning **0.020–0.055 in GC** against the 0.062–0.145
+  of the optimizer outputs that produced round 1's usable signal. RiboNN responded weakly
+  because the design space shown to it was narrow.
+- **An adequacy floor computed from the model's own output cannot do its job.**
+  `within_over_between` returns the same number for "the panel is too narrow" and "the
+  model is insensitive" — opposite conclusions, one voiding the run and the other *being*
+  the finding. Round 2 was rescued only by input-side evidence after the fact. Round 3
+  therefore checks adequacy on the **sequences** (within-protein GC and CAI spans), which
+  is model-independent, anchored to the minimum round 1 actually achieved, verified
+  achievable *before* being committed to, and evaluated **before** scoring so an
+  inadequate panel costs seconds rather than three hours.
+- **The pre-registered frontier stratum could never have worked.** Round 2 §2 specified
+  `api.candidates(..., n=24)` as a secondary stratum; measured, it returns **3–4 distinct
+  sequences** per protein after de-duplication, below the ≥ 12 the analysis requires. It
+  was bound as "never decisive" so nothing rested on it, but it would have failed silently.
+  Round 3 drops it and uses a **temperature ladder** instead — chosen on measurement, since
+  temperature does not *widen* a sample (each rung spans ~0.02–0.05 GC) but *moves* it, so
+  the union across six rungs reaches 0.093–0.113 GC and 0.247–0.288 CAI, at or above round
+  1's amplitude.
 - **At the shipped `DEFAULT_SITE_PROBABILITY = 0.5`, 11 of 14 planted positives fall
   below the cutoff (79%).** The Pangolin weights turned out to be present in the working
   container and all 12 pins match `PINNED_WEIGHT_SHA256`, so this replaces quotation with

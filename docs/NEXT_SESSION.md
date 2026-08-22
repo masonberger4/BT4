@@ -592,13 +592,35 @@ items 1–3 are in
     LICENSE.txt` grant use "to any person from academic research or non-profit
     organizations", so it is an **affiliation** grant, not merely a non-commercial one,
     and the guide's Step 1 has it resolved with `patent.gos@sanofi.com` before any
-    download. **Guide Steps 5–9 (install + verify) are now DONE** on the maintainer's
+    download. **Guide Steps 5–9 (install + verify) are DONE** on the maintainer's
     CPU-only Windows machine (2026-08): the weights are downloaded, the adapter scores a
     real CDS in `RiboNN CLR-residual TE` units with `calibrated = False`, the same sequence
     scores byte-identically twice, and `max_shift` is `0` in both weight sets. Getting
     there needed four corrections to this guide's own CPU recipe — see the gotchas section
-    below, and guide Step 5 for the recipe. **The next step is therefore the panel, not the
-    install.**
+    below, and guide Step 5 for the recipe.
+    **Part 3 (the free experiments that gate spending) has since run twice:**
+    - **Round 1 — STOP.** Guide Steps 10–13 on the bundled 93-sequence Ranaghan panel,
+      HBB UTRs, HEK293T. `within_over_between` 0.4062 passed its ≥ 0.20 bar;
+      `median_abs_gc3_spearman` **0.7385 failed** its ≤ 0.70 bar, and the pre-registered
+      rule was "continue only if both hold". Step 13 corroborated weakly at best (3/3
+      direction but p = 0.25 and GC-confounded by construction; a 3-rung, non-monotone
+      ladder). **This is still the only completed verdict.**
+    - **Round 2 — VOID.** [`PREREG_ribonn_part3_round2.md`](PREREG_ribonn_part3_round2.md)
+      (frozen, #141) → [`RESULT_ribonn_part3_round2.md`](RESULT_ribonn_part3_round2.md).
+      2,560 scorings over 16 MANE proteins × 40 variants × 4 UTR contexts, ~2 h 40 m.
+      Failed the sanity floor (`within_over_between` 0.180 < 0.20). The gate came back
+      **+0.4124, CI [0.329, 0.553]**, all 16 proteins positive — it *would* have passed,
+      and is **not** a result. Cause measured, not assumed: within-protein score SD
+      collapsed 0.252 → 0.071 because the variants were drawn at a single
+      `temperature=1.0`, spanning only 0.020–0.055 in GC against round 1's 0.062–0.145.
+    - **Round 3 — pending**, [`PREREG_ribonn_part3_round3.md`](PREREG_ribonn_part3_round3.md).
+    **Two design lessons worth more than either verdict.** (a) A gate must be validated
+    against known-answer regimes before it is trusted: two successive versions of round 2's
+    gate passed a pure GC/CAI blend, and only `scripts/prereg_round2_selftest.py` caught
+    it. (b) An adequacy floor computed from **the model's own output** cannot distinguish
+    "the panel is too narrow" from "the model is insensitive" — opposite conclusions, same
+    number — so round 3 checks adequacy on the **input** GC/CAI spans instead.
+    **The next step is round 3, then the panel — not the install.**
     **Remaining
     (human):** run the free sanity checks against the licensed weights, obtain a
     licence-clean regime-matched **CDS-variant** panel — no public dataset fully
