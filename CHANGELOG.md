@@ -7,6 +7,66 @@ its first tagged release.
 
 ## [Unreleased]
 
+### Measured
+- **The shipped `DEFAULT_SITE_PROBABILITY = 0.5` misses 79% of real splice sites.**
+  The Pangolin weights turned out to be present in the working container and all 12
+  pins match `PINNED_WEIGHT_SHA256`, so this replaces quotation with first-hand
+  measurement. Pooling 21 planted-site measurements -- the donor ladder, a flank sweep
+  and a new acceptor cassette arm -- 0.5 misses **11 of 14** true sites, including
+  full-consensus donors and a fully formed acceptor (branch point + polypyrimidine
+  tract + `YAG`, 0.4879). **No threshold was changed and no `calibrated` flag moved.**
+- **The absolute score is flank-dependent; the ratio is not.** The identical textbook
+  donor scores **0.6554** bare and **0.3742** inside 1 kb of designed CDS -- crossing
+  0.5 purely because of surrounding sequence carrying no splice signal -- while the
+  ratio to local background stays in a 7.9-12.7x band. This runs *opposite* to the
+  real-genomic-flank result in #126, and both are consistent: real flank supplies gene
+  architecture, more exon-like CDS does not. A fixed absolute cutoff therefore cannot
+  be regime-independent.
+- **No published source thresholds the quantity BT4 thresholds.** SpliceAI's
+  0.2/0.5/0.8, Walker's ClinGen LR bands and Pangolin's 0.14 are all cutoffs on a
+  *delta between two sequences*; the only published treatment of the raw per-position
+  score uses top-k, a *floating* threshold. So 0.5 does not inherit SpliceAI's
+  authority -- it is the same number attached to a different quantity. The one
+  precedent that does threshold an absolute score with no reference is MaxEntScan's
+  de-novo-creation rule set (`ALT >= 4 bits` at `REF = 0`, `ALT >= 1.25 x REF`
+  otherwise, plus the MES-NCSS competition test) -- the same *relative* structure the
+  measurements arrived at independently.
+- **Both of BT4's splice defenses only catch the strongest sites.**
+  `avoid_splice_sites` changed **0 of 12** random proteins, cost **0.0000** CAI and
+  fired **once** across 9,000 nt. Both halves are correct -- positive controls fire --
+  but CAI-max drives GC3 to 99.5% (native KRAS 31.7%) and the consensus motifs are
+  AT-rich, so they never arise. The CNN threshold then misses the intermediate-strength
+  sites cryptic splicing actually uses, leaving the middle of the distribution uncovered.
+
+### Fixed
+- **The attested-splice switch leaked across the whole test session.**
+  `--use-attested-splice` is a process-wide switch (`os.environ[...] = "1"`), so a test
+  driving `main()` with the flag mutated the environment for every test after it, and
+  `monkeypatch.delenv` does not undo an assignment it never made. Measured: the variable
+  escaped `test_use_attested_splice_flag_is_wired` and stayed set for the rest of the
+  session. On CI this is invisible -- no CNN weights are installed, so
+  `promote_if_attested` is a no-op -- but on a machine holding the licensed weights it
+  silently promoted Pangolin to `calibrated=True` across the suite, exactly the
+  "promotion leaked into the default path" failure the opt-in design exists to prevent.
+  A new `tests/conftest.py` snapshots and restores the switch around every test, autouse
+  and unconditional.
+- **One test asserted a fact about the environment rather than about BT4.**
+  `test_audit_candidate_set_defaults_reference_to_delivered` asserted the PWM baseline
+  was the *only* available backend, which passes in CI and fails on any machine with the
+  weights installed. It now asserts what matters: the baseline leads, and no backend
+  claims calibration, whatever is installed.
+- **A false claim survived in `base.py`.** The `DEFAULT_SITE_PROBABILITY` docstring still
+  said "no position on any sequence exceeded 0.5"; the #122 correction to *6 of 93*
+  missed it.
+- **The GC3 claim is withdrawn as stated.** That high GC3 mechanically strips AT-rich
+  splice motifs is not supported: bare `GT` moves 32 -> 29, `AG` 57 -> 43, and the PWM
+  flags the *same* 16 donors in native and designed KRAS. The accurate statement is
+  narrower -- CAI-max never *generates* the AT-rich consensus in the first place.
+- **Three literature numbers marked not-citable** after adversarial verification: the
+  "SpliceAI 0.5 = 5% FPR" figure is unsupported by the paper (it reports validation rate
+  and sensitivity); "8,451 true donors" is a transcription error for **8,415**; and the
+  MaxEntScan weak/strong bit bands are an informal heuristic, not a primary convention.
+
 ### Changed
 - **The RiboNN guide's CPU-only environment could not be built on Windows, and the whole
   install has now been run end-to-end to prove the replacement.** The previous entry added

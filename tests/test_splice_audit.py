@@ -220,8 +220,14 @@ def test_audit_candidate_set_defaults_reference_to_delivered() -> None:
     delivered_audit = next(c for c in rep.candidates if c.dna == delivered_dna)
     for ba in delivered_audit.by_backend:
         assert ba.delta_splicing == pytest.approx(0.0)
-    # Only the honest baseline is available in CI (no CNN install).
-    assert [b.name for b in available_splice_backends()] == ["consensus-pwm-baseline"]
+    # The honest baseline is always present and always leads. Any wrapped CNN the
+    # developer happens to have installed may follow it -- asserting the baseline is
+    # the *only* backend would pass in CI and fail on a machine with the weights,
+    # which is an assertion about the environment rather than about BT4.
+    names = [b.name for b in available_splice_backends()]
+    assert names[0] == "consensus-pwm-baseline"
+    # What actually matters: no backend claims calibration, whatever is installed.
+    assert all(not b.calibrated for b in available_splice_backends())
     assert rep.all_calibrated is False
 
 
