@@ -65,9 +65,11 @@ calibration pending) · `BLOCKED-data` (needs a matched-regime panel) ·
 > decimals (real context is a stable background), random uniform ACGT scores *below* `N`
 > (so it is not "any bases beat `N`"), and a composition-matched **shuffle inflates
 > scores 9/9** (so the lift is distribution shift, not restored function). Consequence:
-> a splice number from the `N`-padded path is a **lower bound**, and passing a real
-> `ConstructContext` changes the answer rather than refining it. It licenses **no**
-> threshold change — there are no labels, and a higher score is not a more correct one.
+> a splice number from the `N`-padded path is **not an estimate**, and passing a real
+> `ConstructContext` changes the answer rather than refining it. *(Scoped 2026-08-22: it
+> is a **lower** bound against real genomic flank only. Against designed-CDS flank the
+> same planted donor falls 0.6554 → 0.3742 across 1 kb, so the padded number over-reads
+> there.)* It licenses **no** threshold change — there are no labels, and a higher score is not a more correct one.
 >
 > ✅ **The models are NOT blind in BT4's regime (measured 2026-08-20).** A planted
 > textbook donor lifts the local peak **0.052 → 0.570 (~11×)** at exactly the anchor base

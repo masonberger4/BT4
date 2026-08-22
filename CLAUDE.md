@@ -77,10 +77,11 @@ junction-correct, `junction_window()` folds the initiation region, and
 context is reachable and a junction defect is visible. **What has not changed is
 the claim BT4 is entitled to make.** Supplying context is optional and often
 omitted, and on the bare-CDS path folding still sees only `CDS[0:48]` and the
-splice CNNs still see the CDS padded with literal `N` — a measured *lower bound* on
-those models' response, not their estimate (§6). Real flanks for the wrapped splice
-CNNs remain unbuilt. So "expression-relevant objectives" stays the accurate claim —
-a validated *expression outcome* is not one BT4 can make, and must not be written
+splice CNNs still see the CDS padded with literal `N` — measured *not to be an
+estimate* of those models' response, and a *lower bound* only against real genomic
+flank (§6). Real flanks for the wrapped splice CNNs remain unbuilt. So
+"expression-relevant objectives" stays the accurate claim — a validated
+*expression outcome* is not one BT4 can make, and must not be written
 as though it were. For the measured evidence behind the context work, see
 [`docs/REVIEW_2026-08_expression_and_context.md`](docs/REVIEW_2026-08_expression_and_context.md)
 for the measured evidence and
@@ -387,9 +388,13 @@ aborting with "no feasible codon".
   on the same 9-sequence set, enough to move designed sequences across the 0.5 cutoff — while three *different* real
   regions agree to three decimals and a shuffled control (same composition) inflates
   scores in 9 of 9, so the effect is distribution shift, not "any bases beat `N`". A
-  splice number computed on the `N`-padded path is a **lower bound** on that model's
-  response, not its estimate; supplying the real `ConstructContext` changes the answer
-  rather than refining it. None of this licenses moving the cutoff — there are no labels,
+  splice number computed on the `N`-padded path is therefore **not an estimate** of that
+  model's response, and supplying the real `ConstructContext` changes the answer rather
+  than refining it. **Its direction as a bound is regime-dependent, and the earlier
+  universal "lower bound" was too broad:** that was measured against *real genomic* flank
+  and holds there, but against *designed-CDS* flank the identical planted donor falls
+  **0.6554 -> 0.3742** across 1 kb, so the padded number over-reads. Name the flank type,
+  or say only "not an estimate". None of this licenses moving the cutoff — there are no labels,
   and a higher score is not a more correct one. **And the models are not inert here:**
   a textbook donor consensus planted into a designed CDS lifts the local peak from 0.052
   to 0.570 (~11x) at exactly the anchor base, while a composition-matched scramble and a

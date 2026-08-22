@@ -8,20 +8,64 @@ its first tagged release.
 ## [Unreleased]
 
 ### Measured
-- **The shipped `DEFAULT_SITE_PROBABILITY = 0.5` misses 79% of real splice sites.**
-  The Pangolin weights turned out to be present in the working container and all 12
-  pins match `PINNED_WEIGHT_SHA256`, so this replaces quotation with first-hand
-  measurement. Pooling 21 planted-site measurements -- the donor ladder, a flank sweep
-  and a new acceptor cassette arm -- 0.5 misses **11 of 14** true sites, including
-  full-consensus donors and a fully formed acceptor (branch point + polypyrimidine
-  tract + `YAG`, 0.4879). **No threshold was changed and no `calibrated` flag moved.**
+- **At the shipped `DEFAULT_SITE_PROBABILITY = 0.5`, 11 of 14 planted positives fall
+  below the cutoff (79%).** The Pangolin weights turned out to be present in the working
+  container and all 12 pins match `PINNED_WEIGHT_SHA256`, so this replaces quotation with
+  first-hand measurement. Pooling 21 measurements -- 14 planted positives and 7 negatives
+  and unmodified-host controls, drawn from the donor ladder, a flank sweep and a new
+  acceptor cassette arm -- 0.5 is missed by the full-consensus donor at the two longest
+  designed-CDS flank lengths (**0.4487** at 500 nt, **0.3742** at 1,000 nt) and on the
+  300-nt ladder host (**0.3206**), and by a fully formed acceptor (branch point +
+  polypyrimidine tract + `YAG`, **0.4879**). **Three qualifiers are part of the result,
+  not footnotes to it.** (a) The denominator is *measurements, not independent sites* --
+  ten of the 14 are the same two motifs re-measured across the flank sweep, and all three
+  that clear 0.5 are the same donor at <= 250 nt. (b) Every positive is a motif **planted
+  here, on one backend, with ground truth assumed from consensus architecture rather than
+  assayed** -- this bounds an interval, it is not a measured false-negative rate. (c) **No
+  threshold was changed and no `calibrated` flag moved.**
+- **A background-relative statistic survives what the absolute one does not.** Across the
+  same 21 points the absolute scale separates only thinly -- lowest positive **0.1890** vs
+  highest negative **0.0856** -- while a **peak / local-background ratio of 3.0x** splits
+  all 21 without error. Two things travel with that number and must: the points were
+  **chosen to be separable**, so it is a sanity floor rather than a measured error rate;
+  and the zero-error result **depends on excluding the failed A5 scramble control**
+  (0.2328), which counted as a negative exceeds the lowest positive and collapses the
+  separating interval. Permuting a pyrimidine-rich cassette tends to *recreate* a tract
+  followed by `AG`, so an acceptor scramble must be constrained against a terminal `AG`
+  exactly as the donor scramble is against a junction `GT` -- this arm therefore has one
+  fewer working negative control than the donor arm.
 - **The absolute score is flank-dependent; the ratio is not.** The identical textbook
   donor scores **0.6554** bare and **0.3742** inside 1 kb of designed CDS -- crossing
   0.5 purely because of surrounding sequence carrying no splice signal -- while the
-  ratio to local background stays in a 7.9-12.7x band. This runs *opposite* to the
-  real-genomic-flank result in #126, and both are consistent: real flank supplies gene
-  architecture, more exon-like CDS does not. A fixed absolute cutoff therefore cannot
-  be regime-independent.
+  ratio to local background stays in the **7.9-12.7x** band the review document prints.
+  This runs *opposite* to the real-genomic-flank result in #126 -- two flank types, two
+  directions, no logical conflict. **The mechanism is deliberately not asserted:** the
+  tempting story, that real flank supplies gene architecture, is contradicted by this
+  document's own four-arm
+  control, where the composition-matched *shuffle* -- which has no architecture at all --
+  scored highest of the four (0.4944 vs real chr1 0.3691), and random uniform ACGT scored
+  *below* `N`. The recorded distribution-shift account already covers both directions.
+  What is established is the directional fact, and it is the concrete reason a fixed
+  absolute cutoff cannot be regime-independent. The scoping deliberately stops there:
+  asserting that the padded path is an *upper* bound against designed-CDS flank would be
+  the same over-generalization pointed the other way, on one motif, one host, one plant
+  position, one backend and five rows.
+- **This bounds an already-shipped claim: the `N`-padded "lower bound" was a universal
+  and is now scoped.** CLAUDE.md §1/§6 and `docs/NEXT_SESSION.md` asserted without
+  qualification that a splice number from the `N`-padded path is a *lower bound* on the
+  model's response. That was measured against **real genomic** flank and still holds
+  there -- but against **designed-CDS** flank the same planted donor falls 0.6554 ->
+  0.3742, so the padded number *over*-reads. The regime-independent half is only "**not an
+  estimate**"; the word *lower* is correct only with the flank type named. **Seven places
+  asserted the universal, not the four found first** -- a line-based grep misses it where
+  the phrase wraps or is bolded mid-word. Four are corrected in the live docs (CLAUDE.md
+  twice, `docs/NEXT_SESSION.md`, `docs/REVIEW_splice_calibration.md`); a fifth is corrected
+  in `scripts/probe_splice_detection_floor.py`, which is the only one that reached a user
+  **at runtime** -- it printed "read peaks as a lower bound" with no flank named, and now
+  prints that the padded path is not an estimate in either direction. The remaining two are
+  in released `[0.5.0]` notes and are annotated in place rather than rewritten, per this
+  file's own convention for a shipped record. No measurement is retracted -- the earlier
+  one was right about the flank it used.
 - **No published source thresholds the quantity BT4 thresholds.** SpliceAI's
   0.2/0.5/0.8, Walker's ClinGen LR bands and Pangolin's 0.14 are all cutoffs on a
   *delta between two sequences*; the only published treatment of the raw per-position
@@ -30,13 +74,23 @@ its first tagged release.
   precedent that does threshold an absolute score with no reference is MaxEntScan's
   de-novo-creation rule set (`ALT >= 4 bits` at `REF = 0`, `ALT >= 1.25 x REF`
   otherwise, plus the MES-NCSS competition test) -- the same *relative* structure the
-  measurements arrived at independently.
+  measurements here arrived at, and the same family of answer as the background
+  normalization Smith & Kitzman already recommend, so not an independent arrival. Only
+  the structure transfers: the bit values cannot be mapped onto a 0-1 pseudo-probability,
+  and they are cited from the literature sweep rather than verified against primary
+  sources.
 - **Both of BT4's splice defenses only catch the strongest sites.**
-  `avoid_splice_sites` changed **0 of 12** random proteins, cost **0.0000** CAI and
-  fired **once** across 9,000 nt. Both halves are correct -- positive controls fire --
-  but CAI-max drives GC3 to 99.5% (native KRAS 31.7%) and the consensus motifs are
-  AT-rich, so they never arise. The CNN threshold then misses the intermediate-strength
-  sites cryptic splicing actually uses, leaving the middle of the distribution uncovered.
+  Three separate measurements, not one experiment: `avoid_splice_sites=True` changed the
+  delivered sequence of **0 of 12** random proteins; on **KRas4B** it cost **0.0000** CAI
+  (1.0000 -> 1.0000) and removed zero flagged sites; and over a *separate* 20-design set
+  (**9,000 nt**) it fired **once**. The first figure is instrument-independent; the
+  "removed zero flagged sites" half is counted with the PWM, which the same review shows
+  is saturated. The rule is not broken -- positive controls fire on `GTAAGT` and
+  `TTTTTTTTTTCTTCTAGG` -- but CAI-max drives GC3 to 99.5% (native KRAS 31.7%) and the
+  consensus motifs are AT-rich, so they never arise. Paired with the recorded detection
+  floor (a weakened-but-real donor at 0.357 clears nothing), the constraint catches only
+  full consensus and the CNN threshold only near-consensus, leaving the intermediate-
+  strength sites cryptic splicing actually uses between them.
 
 ### Added
 - **A pre-registered round 2 of the RiboNN redundancy test, frozen with its own code and
@@ -73,28 +127,83 @@ its first tagged release.
   driving `main()` with the flag mutated the environment for every test after it, and
   `monkeypatch.delenv` does not undo an assignment it never made. Measured: the variable
   escaped `test_use_attested_splice_flag_is_wired` and stayed set for the rest of the
-  session. On CI this is invisible -- no CNN weights are installed, so
-  `promote_if_attested` is a no-op -- but on a machine holding the licensed weights it
-  silently promoted Pangolin to `calibrated=True` across the suite, exactly the
-  "promotion leaked into the default path" failure the opt-in design exists to prevent.
-  A new `tests/conftest.py` snapshots and restores the switch around every test, autouse
-  and unconditional.
+  session. On CI this is invisible -- no CNN weights are installed there, so the audit
+  path's `promote_if_attested` is a no-op. Verified by forcing the variable on for a whole
+  run, which reproduced the clean result exactly (2031 passed, 16 skipped). On a machine
+  holding the licensed weights it *would* have promoted
+  Pangolin to `calibrated=True` across the suite -- the attestation ships and
+  `promote_if_attested` honours the variable -- turning the `all_calibrated is False`
+  assertions into tests about the environment. **That consequence is inferred from the code
+  path, not observed.** *(The two statements about weights in this entry are not in
+  conflict: #130's splice measurements were run by the maintainer in a container that did
+  hold the Pangolin weights, which is what made them first-hand; the environment that ran
+  this verification does not, which is why the promotion consequence could only be
+  inferred. Neither is CI, which never holds them.)* It is exactly the "promotion leaked
+  into the default path" failure the opt-in design exists to prevent. A new
+  `tests/conftest.py` snapshots and restores the switch around every test, autouse and
+  unconditional.
 - **One test asserted a fact about the environment rather than about BT4.**
   `test_audit_candidate_set_defaults_reference_to_delivered` asserted the PWM baseline
   was the *only* available backend, which passes in CI and fails on any machine with the
   weights installed. It now asserts what matters: the baseline leads, and no backend
   claims calibration, whatever is installed.
-- **A false claim survived in `base.py`.** The `DEFAULT_SITE_PROBABILITY` docstring still
-  said "no position on any sequence exceeded 0.5"; the #122 correction to *6 of 93*
-  missed it.
-- **The GC3 claim is withdrawn as stated.** That high GC3 mechanically strips AT-rich
-  splice motifs is not supported: bare `GT` moves 32 -> 29, `AG` 57 -> 43, and the PWM
-  flags the *same* 16 donors in native and designed KRAS. The accurate statement is
-  narrower -- CAI-max never *generates* the AT-rich consensus in the first place.
+- **A false claim survived in `base.py`, and a second one in the tests.** The
+  `DEFAULT_SITE_PROBABILITY` docstring still said "no position on any sequence exceeded
+  0.5"; the #122 correction to *6 of 93* missed it. The argument it supports -- that the
+  hinge discards the CNN's signal -- survives intact, since that part never depended on
+  the quantifier; its *scope* was narrowed in the same edit, from `delta_splicing` being
+  zero for every candidate to only the sub-background ones. A second residual, in the
+  `tests/test_designed_cds_panel.py` docstring, is corrected the same way here -- and so
+  are **two more that a line-based grep could not see**, in `biomodels/splice/base.py` and
+  `tests/test_splice_pooling_background.py`, where the sentence wraps mid-phrase. A
+  multiline-aware search now finds no assertion of the retracted quantifier anywhere in
+  `src/`, `tests/` or `scripts/`; the only surviving occurrences are this file quoting it
+  inside a retraction.
+- **The GC3 claim is not supported as stated.** That high GC3 mechanically strips
+  AT-rich splice motifs does not hold up: bare `GT` moves 32 -> 29, `AG` 57 -> 43, and the
+  PWM flags the same *number* of donors in native and designed KRAS (16 vs 16 -- counts,
+  not identities; overlap was not measured). The accurate statement is narrower -- CAI-max
+  never *generates* the AT-rich consensus in the first place. This weakens the claim
+  rather than settling it: one protein, measured on the PWM baseline, which the same
+  review shows firing on 93 of 93 designed sequences. The discriminating test needs the
+  CNN weights. *(It also corrects working notes, not the shipped record -- no such claim
+  was ever in the repo.)*
 - **Three literature numbers marked not-citable** after adversarial verification: the
   "SpliceAI 0.5 = 5% FPR" figure is unsupported by the paper (it reports validation rate
   and sensitivity); "8,451 true donors" is a transcription error for **8,415**; and the
   MaxEntScan weak/strong bit bands are an informal heuristic, not a primary convention.
+  **None of the three was ever in the shipped record** -- they are retracted working
+  notes, recorded so they are not re-derived.
+- **Six residuals of corrections this project had already made were still asserted
+  somewhere, because the earlier sweeps were line-based greps.** A phrase that wraps
+  mid-sentence, or is bolded mid-word, is invisible to `grep`. Found with a multiline-aware
+  search and fixed: the retracted 93-sequence quantifier in `biomodels/splice/base.py` and
+  `tests/test_splice_pooling_background.py`; the retracted past-tense "silently promoted
+  Pangolin to `calibrated=True`" in `tests/conftest.py`, now conditional there as in this
+  entry; the "arrived at independently" claim in `docs/REVIEW_splice_calibration.md`; the
+  `~0.19` flank magnitude that same document retracts in favour of **+0.093**, still
+  asserted twice, once inside a sentence this change rewrote; and a "lowest true site"
+  table header left behind by that document's own narrowing of *true site* to *positive*.
+  The MaxEntScan bit values are additionally now marked **in the document itself** as
+  sweep-cited and not primary-verified, which is what this entry says of them.
+- **A doc summary contradicted its own table, and a licence claim contradicted the repo.**
+  The pooled-threshold section read "full-consensus donors at three of five flank
+  lengths", where its table shows three of five *clearing* 0.5; three are missed in total
+  but only two are flank-sweep rows. Separately, the panel table recorded Vex-seq as
+  **CC BY 4.0 and "the only legally bundleable" panel**, while
+  `docs/RESEARCH_splice_cnn_calibration.md` records it under **GEO terms** -- two
+  different redistribution rights, and a licence claim is the one class of error with
+  consequences outside the repo. It is now marked **unresolved, to be verified against
+  primary sources before anything is bundled** -- and unresolved in *both* directions:
+  naming which grant covers which artefact would itself be a licence determination from a
+  secondary reading, so only the disagreement is recorded. The "only bundleable" half was
+  independently wrong: the same document's opening section records an MIT-licensed panel
+  (Smith & Kitzman, Zenodo 8351879) already downloaded and hash-verified. The table is
+  labelled as *re-ranking*
+  an inventory that document already carries (adding Rosenberg 2015, demoting BRCA1-SGE)
+  rather than introducing one. The review document also now lists **which rows enter the
+  21-point pool**, without which the 11-of-14 and 3.0x results were not reproducible
+  from it.
 
 ### Changed
 - **The RiboNN guide's CPU-only environment could not be built on Windows, and the whole
@@ -231,7 +340,8 @@ the shipped one (93 of 93) — so a floored zero is now distinguishable from a
 measured one, with a background-free ranking statistic beside it and the
 threshold deliberately left where it was. The adapters' `N`-padding was shown
 **not to be neutral**, making an `N`-padded splice number a lower bound rather
-than an estimate. The models were shown **not to be blind** on designed CDS (a
+than an estimate. *(Scoped in [Unreleased]: that direction is established against
+real genomic flank only.)* The models were shown **not to be blind** on designed CDS (a
 planted donor lifts the local peak ~11x at exactly the predicted anchor) while
 the detection floor was shown to be **high** enough that intermediate-strength
 sites clear nothing. And the candidate ranking was shown **reliable** —
@@ -700,7 +810,9 @@ uncalibrated number from being read as one.
   out "any real bases beat `N`". **Licenses no threshold change**: there are no labels
   here, a higher score is not a more correct score, and the honest consequence is that a
   number from the `N`-padded path is a lower bound while passing a real `ConstructContext`
-  changes the answer rather than refining it.
+  changes the answer rather than refining it. *(Scoped in [Unreleased]: the lower-bound
+  direction holds against real genomic flank; against designed-CDS flank the same planted
+  donor scores lower, and no bound in either direction is established there.)*
 
 ### Fixed
 - **Corrected a false claim this project had just written into its own constitution.**

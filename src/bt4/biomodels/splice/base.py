@@ -206,9 +206,10 @@ def pool_top_k_logit(probs: Iterable[float], top_k: int = DEFAULT_TOP_K) -> floa
     which pooled risk is not: :func:`pool_log_odds` floors each of its ``top_k``
     contributions at zero, so once every position falls below background the pooled
     risk is a **constant zero** and the differences between sequences are gone.
-    Measured on Pangolin over designed CDS, that is not a corner case -- no position
-    on any sequence reached 0.5, so every pooled risk and every ``delta_splicing``
-    was identically zero while the underlying scores varied by more than twofold.
+    Measured on Pangolin over designed CDS, that is not a corner case -- only 6 of
+    93 sequences carried any position above 0.5, all six designs of a single protein,
+    so for the other two proteins every pooled risk and every ``delta_splicing`` was
+    identically zero while the underlying scores varied by more than twofold.
     This statistic answers the question that survives there: **does the model respond
     to the change at all, and do two backends rank the candidates the same way?**
 
