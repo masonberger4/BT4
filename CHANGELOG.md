@@ -37,12 +37,11 @@ its first tagged release.
 - **The absolute score is flank-dependent; the ratio is not.** The identical textbook
   donor scores **0.6554** bare and **0.3742** inside 1 kb of designed CDS -- crossing
   0.5 purely because of surrounding sequence carrying no splice signal -- while the
-  ratio to local background stays in the **7.9-12.7x** band the review document prints
-  (from 4-dp columns; 0.6554/0.0514 is 12.75, so the top of that band is the document's
-  rounding, not a fifth significant figure). This runs *opposite* to the
-  real-genomic-flank result in #126 -- two flank types, two directions, no logical
-  conflict. **The mechanism is deliberately not asserted:** the tempting story, that real
-  flank supplies gene architecture, is contradicted by this document's own four-arm
+  ratio to local background stays in the **7.9-12.7x** band the review document prints.
+  This runs *opposite* to the real-genomic-flank result in #126 -- two flank types, two
+  directions, no logical conflict. **The mechanism is deliberately not asserted:** the
+  tempting story, that real flank supplies gene architecture, is contradicted by this
+  document's own four-arm
   control, where the composition-matched *shuffle* -- which has no architecture at all --
   scored highest of the four (0.4944 vs real chr1 0.3691), and random uniform ACGT scored
   *below* `N`. The recorded distribution-shift account already covers both directions.
@@ -101,8 +100,8 @@ its first tagged release.
   escaped `test_use_attested_splice_flag_is_wired` and stayed set for the rest of the
   session. On CI this is invisible -- no CNN weights are installed there, so the audit
   path's `promote_if_attested` is a no-op. Verified by forcing the variable on for a whole
-  run: the same 2031 tests pass, and the result is indistinguishable from the clean run in
-  the same environment. On a machine holding the licensed weights it *would* have promoted
+  run, which reproduced the clean result exactly (2031 passed, 16 skipped). On a machine
+  holding the licensed weights it *would* have promoted
   Pangolin to `calibrated=True` across the suite -- the attestation ships and
   `promote_if_attested` honours the variable -- turning the `all_calibrated is False`
   assertions into tests about the environment. **That consequence is inferred from the code
@@ -111,8 +110,9 @@ its first tagged release.
   hold the Pangolin weights, which is what made them first-hand; the environment that ran
   this verification does not, which is why the promotion consequence could only be
   inferred. Neither is CI, which never holds them.)* It is exactly the "promotion leaked
-  into the default path" failure the opt-in design exists to prevent. A new `tests/conftest.py` snapshots and restores the switch around every test,
-  autouse and unconditional.
+  into the default path" failure the opt-in design exists to prevent. A new
+  `tests/conftest.py` snapshots and restores the switch around every test, autouse and
+  unconditional.
 - **One test asserted a fact about the environment rather than about BT4.**
   `test_audit_candidate_set_defaults_reference_to_delivered` asserted the PWM baseline
   was the *only* available backend, which passes in CI and fails on any machine with the
