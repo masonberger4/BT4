@@ -8,6 +8,49 @@ its first tagged release.
 ## [Unreleased]
 
 ### Changed
+- **The RiboNN guide's CPU-only environment could not be built on Windows, and the whole
+  install has now been run end-to-end to prove the replacement.** The previous entry added
+  Windows guidance by reading the code; this one comes from executing it on a CPU-only
+  Windows 10 machine, so every claim is a measured result. Four defects, each fatal on its
+  own: (1) the CPU-only `mamba create` line pins `pytorch=1.13.1`, and **conda-forge's
+  earliest win-64 `pytorch` is 2.5.1** — the command could never have solved on Windows,
+  though it is fine on linux-64; (2) the obvious repair is a trap — the official `pytorch`
+  channel *does* carry `1.13.1` for win-64, and it installs, verifies **10,672/10,672 files
+  against their SHA-256**, and then **fails to import** with `OSError: [WinError 182]` on
+  `torch_cpu.dll`, with a 200-module import graph that fully resolves to x86-64 PEs, all 722
+  symbols present in their exporters, and an image that maps fine as a datafile. *The cause
+  was not established and the guide says so*; what is established is that the **pip** build
+  from `download.pytorch.org/whl/cpu` works on the same machine; (3) that pip wheel is built
+  against a newer NumPy ABI than RiboNN's `numpy=1.22.4` pin, so torch reports
+  `Failed to initialize NumPy` **as a warning** and continues with `from_numpy` broken —
+  `numpy=1.23.5` is the version measured here (NumPy's `0x10` ABI starts at 1.23; nothing
+  in between was tried); (4) `environment.yml` pins no
+  protobuf, so a **conda** solve today pairs protobuf 5 with tensorboardX 2.5, and
+  `import pytorch_lightning` — which RiboNN's own `src/predict.py` performs — dies on
+  `Descriptors cannot be created directly`. conda cannot solve `protobuf<4` there either
+  (libmamba aborts with `bad variant access`), so pip does it. That ceiling turns out to be
+  **conda-forge's recipe rather than upstream's** — pytorch-lightning 1.8.5 declares
+  `tensorboardX (>=2.2)` unbounded — so the new pip-based recipe needs no protobuf pin,
+  checked both ways. The replacement was **built from scratch in a second environment and
+  run through Steps 7–8 before being written down**, and it reproduced the repaired
+  environment's score bit for bit (`1.6359811782836915` from both), so the recipe in the
+  guide is the one that was measured rather than one reconstructed from the findings.
+  Recorded once in the guide's Step 5, with `NEXT_SESSION.md` pointing at it rather than
+  restating the recipe.
+- **`conda run` and a multi-line `python -c` do not compose**, which the guide recommended
+  in the same breath. On conda 26.5.3 it is a refusal, not a crash —
+  `NotImplementedError: Support for scripts where arguments contain newlines not
+  implemented` — so an agent following Step 7's stateless form could not run any step from
+  Step 8 on. Write the snippet to a `.py` file. A human at an activated prompt was never
+  affected, which is why it survived review.
+- **Two of the guide's standing warnings are now measured rather than predicted.** RiboNN
+  calls `torch.load` with no `map_location`, and the guide warned a CPU-only box might
+  therefore fail outright: on a CPU-only Windows machine the released Zenodo weights
+  **loaded and scored** in about 20 seconds. And the `max_shift` determinism hazard is
+  **absent from the released weights** — `params.max_shift = [0]` for both the human and
+  mouse sets. Both warnings stay written down, since one machine cannot prove the general
+  case, but they are now labelled with what actually happened. **RiboNN remains
+  `calibrated=False`**: an adapter proven to run is not a calibrated head.
 - **The RiboNN install guide now covers Windows, and one line of its Windows advice was
   wrong.** Found while walking a maintainer through a real install on Windows, and
   verified against the code rather than assumed: Step 7's inline comment suggested
