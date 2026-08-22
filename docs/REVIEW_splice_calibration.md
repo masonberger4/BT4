@@ -791,3 +791,299 @@ across every host and position tried.
   opposite implications and the panel as built cannot separate them.
 - Deciding whether the attested-promotion opt-in should become the default, and a Studio
   checkbox for it.
+
+---
+
+# The operating point — what the literature can and cannot settle (2026-08-21)
+
+Prompted by a direct design question: set the site threshold "low enough that we remove
+any real risk of splicing occurring while preserving protein expression." Two halves —
+where the threshold should sit, and what it costs. A six-facet primary-source sweep plus
+measurements run here.
+
+## The decisive negative result
+
+**No published source thresholds the quantity BT4 thresholds.** BT4 compares a *raw
+per-position* pseudo-probability `P(site)` on a *single* designed CDS against a fixed
+constant. Neither model's authors ever do this:
+
+| published number | what it actually thresholds | transfers to BT4? |
+|---|---|---|
+| SpliceAI 0.2 / 0.5 / 0.8 | `max(DS_AG, DS_AL, DS_DG, DS_DL)` — a **delta** between two sequences | **no** |
+| Walker 2023 LR bands (≤0.1, 0.1–0.2, ≥0.2) | SpliceAI **max delta** score | **no** |
+| Pangolin `-s SCORE_CUTOFF` | `|change in score|` between ref and alt | **no** |
+| Pangolin 0.14 (~5% false-sign rate) | **delta** in splice-site *usage*, human vs chimp | **no** |
+| SpliceAI top-k 0.95, Pangolin top-1 79% | raw per-position `P(site)` — but with a **floating** threshold set so #predicted = #true | **no** (not a fixed cutoff) |
+
+The one family of published results that *is* about the raw per-position score
+characterizes it with **top-k accuracy**, where the threshold floats with the number of
+true sites. Neither paper ever says "call a site when raw `P(site) > c`."
+
+So `DEFAULT_SITE_PROBABILITY = 0.5` does not inherit SpliceAI's authority. It is the same
+*number* as SpliceAI's recommended cutoff attached to a **different quantity** — and that
+coincidence is very likely where it came from.
+
+**Consequence:** the literature cannot hand BT4 this threshold. It has to be derived.
+
+## What the literature *does* settle: direction, and the cost of being wrong
+
+Two opposing pressures, both primary-verified.
+
+**Toward a lower threshold — the cost of a miss is large.**
+
+- A single strong cryptic site removed up to **78%** of protein expression (PrP study,
+  PMC11342779); canonical-site mutant fell to 33% of parent.
+- **13 of 17** randomly chosen transgenes spliced aberrantly at exon–exon junctions;
+  **17 of 17** at the V5 tag (PMC9379414). Cryptic splicing on transgene insertion is the
+  *common* case, not an edge case.
+- Empirically-optimal thresholds were consistently **lower** than the tool authors'
+  recommended cutoffs (Smith & Kitzman 2023).
+- Walker 2023's ClinGen calibration concluded 0.5 "may be calibrated too high."
+
+**Toward a higher threshold — the risk is concentrated, and decoys are everywhere.**
+
+- In a lentiviral vector, **4 cryptic sites accounted for ~82%** of aberrant fusion
+  transcripts (Cesana et al., *JCI* 2012). The burden is concentrated in a few *strong*
+  sites, which a conservative cutoff still catches.
+- Consensus-matching pseudo-sites outnumber real donors roughly **21:1**; a CDS is
+  saturated with `GT[R]AG`-like matches that never splice.
+- At SpliceAI deltaMax ≥ 0.06, **10% of a background set** is called splice-disrupting.
+
+**And the regime penalty applies to every call BT4 makes:** median prAUC **0.419 exonic**
+vs **0.773 intronic** (Smith & Kitzman 2023). BT4 designs coding sequence, so it operates
+entirely in the weaker half.
+
+## Deriving the threshold — measured in-container against the real weights
+
+The Pangolin weights are present in this container and **all 12 pins match**
+`PINNED_WEIGHT_SHA256`, so the following are first-hand measurements, not quotations.
+
+### The donor ladder reproduces, and 0.5 catches nothing
+
+Third-party designed host, 300 nt, shipped `N`-padded path, three plant positions:
+
+| rung | median peak | cleared 0.5 |
+|---|---|---|
+| L0 host unmodified | 0.0569 | 0/3 |
+| L5 composition scramble | 0.0562 | 0/3 |
+| L4 `GT`→`CT` ablation | 0.0552 | 0/3 |
+| L3 weaker motif | 0.0582 | 0/3 |
+| **L2 weakened real donor** | **0.1890** | 0/3 |
+| **L1 full consensus** | **0.3206** | **0/3** |
+
+The ordering and the ~6× separation reproduce exactly. But on this host **not even a
+textbook consensus donor clears 0.5.**
+
+### The absolute score is flank-dependent; the ratio is not
+
+Same motif, same position, varying only how much designed CDS surrounds it
+(non-repetitive flank built from distinct BT4-optimized proteins):
+
+| flank/side | L0 host | L2 weak | L1 full | L1/L0 |
+|---|---|---|---|---|
+| 0 | 0.0514 | 0.4357 | **0.6554** | 12.7× |
+| 100 | 0.0493 | 0.3393 | 0.5484 | 11.1× |
+| 250 | 0.0486 | 0.3040 | 0.5084 | 10.5× |
+| 500 | 0.0493 | 0.2521 | **0.4487** | 9.1× |
+| 1,000 | 0.0473 | 0.1994 | **0.3742** | 7.9× |
+
+**The identical textbook donor scores 0.655 bare and 0.374 inside 1 kb of designed CDS —
+crossing 0.5 in one direction purely because of surrounding sequence that contains no
+splice signal.** The absolute peak falls 1.75× while the ratio to local background stays
+in a tight 7.9–12.7× band.
+
+*This runs opposite to the earlier real-genomic-flank result in this document (0.545 →
+0.656 as flank grew). Both are consistent: real genomic flank supplies intron/exon
+architecture that makes a site more plausible, while more exon-like designed CDS makes it
+less so. The direction of the flank effect depends on what the flank is — which is
+precisely why a fixed absolute cutoff cannot be regime-independent.*
+
+### The acceptor arm, built to the published architecture
+
+The prior ladder was donor-only. A realistic acceptor needs branch point (YNYURAC,
+18–40 nt upstream) + polypyrimidine tract + `YAG`|`G`, assembled frame-safe (33 nt,
+11 codons, zero in-frame stops):
+
+| rung | peak | vs host |
+|---|---|---|
+| A0 host unmodified | 0.0536 | 1.0× |
+| **A1 full (BP+PPT+YAG)** | **0.4879** | 9.1× |
+| A2 branch point killed | 0.3486 | 6.5× |
+| A3 polypyrimidine tract broken | 0.0856 | 1.6× |
+| A4 `AG`→`AC` ablation | 0.0513 | 1.0× |
+| A5 composition scramble | 0.2328 | 4.3× |
+
+Biologically correct throughout: the invariant `AG` is essential (A4 collapses to
+baseline), the pyrimidine tract is nearly as essential (A3), and the branch point
+contributes without being required (A2 partial). **A1 — a fully-formed acceptor — scores
+0.4879 and misses the 0.5 cutoff.**
+
+**A5 is a failed control and the failure is instructive:** permuting a pyrimidine-rich
+cassette tends to *recreate* a tract followed by `AG`, so the scramble is accidentally a
+weak acceptor. An acceptor scramble must be constrained to avoid a terminal `AG` the way
+the donor scramble is constrained to avoid a junction `GT`.
+
+### Pooling all 21 measurements
+
+| statistic | lowest true site | highest negative | separation | usable interval |
+|---|---|---|---|---|
+| **absolute peak** | 0.1890 | 0.0856 | 2.21× | (0.086, 0.189) |
+| **peak / local background** | 3.32× | 1.60× | 2.08× | (1.60, 3.32) |
+
+**At the shipped 0.5, 11 of 14 true sites are missed — 79%**, including full-consensus
+donors at three of five flank lengths and the fully-formed acceptor. A ratio cutoff of
+**3.0×** produces **zero false positives and zero false negatives** across all 21.
+
+An absolute cutoff near **0.13** (the geometric midpoint of the pooled interval) also
+separates this set — but its usable window is narrow and, as the flank sweep shows, it
+drifts with construct context in a way the ratio does not.
+
+**This converges with the literature's negative result from the other direction.** Neither
+model's authors threshold a fixed absolute either: they use top-k (a *floating* threshold)
+or a delta against a reference. A background-relative statistic is the same family of
+answer.
+
+## Both of BT4's splice defenses are tuned to catch only the strongest sites
+
+Measured here, and the two findings compound.
+
+**1. The in-loop constraint is inert.** `avoid_splice_sites=True` changed **0 of 12**
+random proteins' delivered sequence, and cost **0.0000** CAI on KRas4B (1.0000 → 1.0000)
+while removing **zero** flagged sites. Across 20 default designs (9,000 nt) it fired
+**once**. Both halves are *correct* — positive controls fire on `GTAAGT` (donor) and
+`TTTTTTTTTTCTTCTAGG` (acceptor) — but CAI-max drives GC3 to **99.5%** (native KRAS:
+31.7%), and the strong consensus motifs are AT-rich, so they essentially never arise.
+
+**2. The out-of-loop CNN threshold misses intermediate sites**, as the ladder shows.
+
+So the constraint catches only full consensus (which never appears) and the threshold
+catches only near-consensus (0.57), while the sites cryptic splicing actually uses are
+intermediate-strength (0.357). **Neither defense covers the middle of the distribution.**
+
+## A correction to an earlier claim in this document's own framing
+
+Prior sessions asserted that BT4's high GC3 mechanically strips AT-rich splice motifs, so
+apparent splice safety was a GC3 artifact. **Directly tested, that claim is not
+supported** as stated:
+
+| | native KRAS | bt4 default |
+|---|---|---|
+| GC3 | 31.7% | 99.5% |
+| bare `GT` | 32 | 29 |
+| bare `AG` | 57 | 43 |
+| `GTAAGT` (textbook donor) | 0 | 0 |
+| pyrimidine tract ≥8 + `AG` | 0 | 0 |
+| PWM donor sites > 0.5 | 16 | 16 |
+| PWM acceptor sites > 0.5 | 32 | 28 |
+
+Motif counts barely move and the PWM flags the *same* number of donors in both. The
+accurate statement is narrower: **CAI-max never generates the AT-rich consensus in the
+first place**, which is why the constraint is inert — not that GC3 removes motifs from a
+sequence that had them. Wobble-base composition does shift drastically (A 34.9% → 0.5%,
+T 33.3% → 0.0%), but that did not translate into fewer flagged sites on this instrument.
+
+*Caveat: the PWM is a saturated instrument (below), so this weakens the GC3 claim rather
+than settling it. The discriminating test needs the CNN weights.*
+
+## The PWM baseline is barely more selective than the dinucleotide
+
+| | native KRAS | bt4 design |
+|---|---|---|
+| acceptor flags / all `AG` | 32/57 = **56.1%** | 28/43 = **65.1%** |
+| donor flags / all `GT` | 16/32 = **50.0%** | 16/29 = **55.2%** |
+| one flagged site per | 11.8 nt | 12.9 nt |
+
+At the shipped 0.5 it calls roughly **half to two-thirds of every `GT` and `AG`** a splice
+site. On the acceptor cassette ladder it scored the *host baseline* (0.7916) **higher**
+than the `AG`-ablated cassette (0.7479) — it cannot grade the controls at all. This is
+what `default()` returns today.
+
+## What this does NOT establish
+
+- **No threshold is calibrated by any of this.** Every positive is a motif planted here,
+  on one backend (Pangolin), with **ground truth assumed rather than assayed**. It bounds
+  an interval; it does not calibrate a probability. The 3.0x ratio cutoff has zero errors
+  on 21 points that were *chosen to be separable* -- that is a sanity floor, not a
+  measured error rate.
+- **The pooled interval mixes regimes.** Absolute peaks were pooled across flank lengths
+  and across donor and acceptor cassettes, which is what narrows the absolute window to
+  (0.086, 0.189). A single-regime interval is wider; the narrow one is the honest number
+  precisely because BT4 applies one constant across all regimes.
+- **It says nothing about specificity.** Every positive is a motif BT4 planted. Detecting
+  a planted site is not evidence about sites nobody put there, and lowering the threshold
+  to 0.14–0.21 would flag Beclin1 and KRas4B designs **with no way to know whether those
+  flags are true**.
+- **The two pressures were not jointly optimized.** Cesana's concentration finding (4
+  sites → 82%) and the ladder's floor finding point in opposite directions, and no
+  measurement here adjudicates between them. The direct test is available and unrun:
+  **score Cesana's four named LVV cryptic sites (SA1/SA3/SA4/SD5) and see where they
+  fall.** If they clear 0.5, the shipped constant is defensible for LVV; if they sit near
+  0.3, it is not.
+- **The GC3 correction is measured on one protein with a saturated instrument**, and does
+  not license the opposite claim either.
+
+## The one published family that *does* threshold an absolute score with no reference
+
+MaxEntScan's de-novo-creation rules are the only surveyed precedent for BT4's actual
+question — *did this edit create a site?* — scored without a reference model output:
+
+| rule | form |
+|---|---|
+| created site where none existed | `ALT >= 4 bits` (REF = 0) |
+| strengthened existing site | **`ALT >= 1.25 x REF`** |
+| VEP plugin bands | high > 8.5, moderate 6.2–8.5, low < 6.2 bits |
+| MES-NCSS | does the created site **beat the nearest native site**? |
+
+The numeric bit values cannot be copied onto a 0–1 pseudo-probability, but **the structure
+transfers, and it is the same structure the measurements above arrived at independently**:
+a *relative* criterion — score against a local reference — rather than a bare absolute
+constant. It also structurally forbids the tempting cheat of lowering the background to
+make signal reappear, because the reference moves with it.
+
+## Panels, ranked by fit — and the regime gap that none of them close
+
+**No published synonymous-CDS-in-fixed-vector splice panel exists.** Every option is
+regime-*transferred*, and BT4 designs in the models' weakest regime (exonic prAUC 0.419).
+
+| # | panel | N | why it ranks here | licence posture |
+|---|---|---|---|---|
+| 1 | **MaPSy** (Soemedi 2017) | 4,964 exonic | best exonic + **full WT/MT 170-mer sequence pairs**; ~10% splice-altering; 81% patient-tissue concordance | subscription supplement — hash-pin, don't vendor |
+| 2 | **Vex-seq** (Adamson 2018) | 2,059 | **CC BY 4.0** with oligo sequences in Table S1 — the only legally bundleable one | bundle |
+| 3 | **Rosenberg** (2015) | >2M synthetic | the sequence *is* the read; continuous inclusion ratio; fully synthetic | hash-pin |
+| 4 | **MFASS** (Cheung 2019) | 27,733 | 3.8% SDV, 83% outside canonical — but the label is exon **skipping**, the inverse of BT4's cryptic-site **gain** | no LICENSE file — hash-pin |
+| 5 | **SpliceVarDB** (Sullivan 2024) | 50,715 | coordinates + label, **not the tested sequence** | external check only |
+| 6 | **BRCA1-SGE** (Findlay 2018) | ~4,000 | label conflates splicing with protein LoF + NMD | weak fit |
+
+## The perturbation ladder, completed
+
+The donor arm exists (#124) and the acceptor arm is measured above. Two rungs the
+literature says are load-bearing and BT4 does not yet have:
+
+- **`GT`→`GC` (+2 T>C) — the graded rung.** 15–18% of canonical `GT` donors converted to
+  `GC` remain functional, producing 1–84% of normal transcripts (Lin et al., *Hum Mutat*
+  2019). Its true effect is **partial**, so it tests whether the model responds in a graded
+  rather than binary way — and a fixed cutoff that mis-calls the ~1-in-6 functional `GC`
+  sites fails exactly the hazard this document is about.
+- **Polypyrimidine-tract disruption with the `AG` left intact.** Measured above (A3, 0.0856,
+  1.6×): Pangolin *is* sensitive to it. A model responding only to the `AG` and blind to
+  C/T-richness would be under-reading what these CNNs were shown to use.
+
+Correct readout for the whole panel: near-ceiling at planted consensus anchors,
+**monotonically decreasing** consensus → weakened → knockout, **graded** at the `GT`→`GC`
+and PPT rungs, collapse at the `+1` and `AG` knockouts, and **flat at negative controls**.
+Failure of monotonicity or gradedness is a red flag with no wet-lab label required.
+
+**Flanks must be held fixed across the panel.** Flank content is a measured
+distribution-shift source in both directions — real genomic flank raises the peak, more
+designed CDS lowers it — so varying it within a panel confounds every rung.
+
+## Numbers this document must not cite as fact
+
+Surfaced by adversarial verification of the literature sweep:
+
+- **"SpliceAI 0.5 ≈ 5% false-positive rate" is unsupported.** The paper reports a
+  validation rate (~75%) and sensitivity (71% near-exon, 41% deep-intronic), not an FPR.
+- **"8,451 true donors" is a transcription error for 8,415** (Yeo & Burge 2004; 179,438
+  decoys, so the decoy:true ratio is ~21:1).
+- **MaxEntScan "weak < 6 / strong > 8 bits" is an informal heuristic**, not a primary
+  convention; wild-type donors run ~8 ± 2 bits.
