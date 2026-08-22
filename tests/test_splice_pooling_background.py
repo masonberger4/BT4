@@ -24,13 +24,14 @@ These tests pin: the default is byte-identical to the old behaviour, the backgro
 is now movable, and every consumer reads one constant.
 
 **The trap was then measured, and it was not a corner case.** Run against the
-hash-verified Pangolin weights on the designed-CDS panel — BT4's own regime — *no
-position on any sequence* exceeded 0.5, across a native CDS and thirty synonymous
-redesigns for each of three proteins. Peak scores were 0.323 / 0.435 and varied more
-than twofold between the native and its designs, and every one of them pooled to a
-risk of exactly ``0.0``. So ``delta_splicing`` was identically zero for every
-candidate, the rank agreements computed from those deltas were Spearman correlations
-of constants (they printed ``+0.000``), and the CLI reported it as the backend being
+hash-verified Pangolin weights on the designed-CDS panel — BT4's own regime, a native
+CDS and thirty synonymous redesigns for each of three proteins (93 sequences) — *only
+6 of those 93* carried any position above 0.5, and all six were designs of a single
+protein. Peak scores were 0.323 / 0.435 and varied more than twofold between the
+native and its designs, and every sub-background sequence pooled to a risk of exactly
+``0.0``. So ``delta_splicing`` was identically zero for those candidates, the rank
+agreements computed from those deltas were Spearman correlations of constants (they
+printed ``+0.000``), and the CLI reported it as the backend being
 unable to rank the candidates — a statement about BT4's pooling, read as a statement
 about the model.
 
