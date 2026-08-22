@@ -242,7 +242,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     up, dn = _read_flank(Path(args.flank_fasta), args.flank) if args.flank_fasta else ("", "")
     if not up:
         print("NOTE: no --flank-fasta, so the adapter pads with literal N. That path is")
-        print("      measured to deflate scores inside the CDS; read peaks as a lower bound.\n")
+        print("      measured NOT to be an estimate of the model's response. Its direction")
+        print("      depends on the flank: padded peaks read low against real genomic")
+        print("      flank and high against designed-CDS flank, so do not read them as a")
+        print("      bound in either direction without naming the flank type.\n")
 
     groups = tuple(args.groups) if args.groups else panel.groups
     print(f"{'host':10s} {'pos':>6s} {'rung':22s} {'peak':>7s} {'off':>4s} {'>thr':>5s}")

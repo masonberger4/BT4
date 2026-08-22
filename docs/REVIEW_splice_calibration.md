@@ -539,8 +539,10 @@ positions:
 
 BT4 already has the seam to fix this: `ConstructContext` carries the 5′UTR and backbone,
 and `score_in_context` routes them to the CNNs. What this measurement adds is that using
-it is **not a refinement — it changes the answer**, by ~0.19 of median peak score, in the
-direction that matters at a 0.5 cutoff. A splice number computed on the `N`-padded path
+it is **not a refinement — it changes the answer**, by **+0.093** of median peak score
+(0.2757 → 0.3691 on the same 9-sequence set), in the direction that matters at a 0.5
+cutoff. *(Corrected: this read "~0.19", the figure line 510 of this document already
+retracts as roughly double the same-set effect.)* A splice number computed on the `N`-padded path
 should be read as a lower bound on that model's response, not as its estimate — **against
 real genomic flank**. The flank sweep later in this document measures the opposite sign
 against designed-CDS flank, so the bound's *direction* is not regime-independent; only
@@ -588,7 +590,8 @@ by BT4's own `avoid_splice_sites` rule), three plant positions each, real chr1 f
 **L2 — a genuinely weakened but real donor — scores 0.357 and clears nothing.** The
 detection floor at a 0.5 cutoff sits *above* the intermediate-strength sites that cryptic
 splicing actually uses. Only a textbook-perfect consensus is reported. Combined with
-#123's ~0.19 median deflation on the `N`-padded path, the shipped configuration misses
+#123's **+0.093** median deflation on the `N`-padded path (corrected here from the
+retracted "~0.19"), the shipped configuration misses
 one plant in six even at full consensus (4/6 vs 5/6).
 
 So the operating point is not merely uncalibrated in the abstract: **it is demonstrably
@@ -910,10 +913,16 @@ flank is**, which is precisely why a fixed absolute cutoff cannot be regime-inde
 **This bounds an already-shipped claim.** BT4 states in several places that a splice
 number from the `N`-padded path is a *lower bound* on the model's response. That was
 measured against **real genomic** flank and still holds there. Against **designed-CDS**
-flank the same planted donor falls 0.6554 → 0.3742, so the padded number over-reads — an
-upper bound in that regime. What is regime-independent is only the weaker half: the padded
-number is **not an estimate**. Its sign as a bound is a function of the flank, so the word
-"lower" is only correct with the flank type named.
+flank the same planted donor falls 0.6554 → 0.3742, so *here* the padded number
+over-reads. **That is not licence to assert the reverse universal.** This sweep is one
+planted motif, one host, one plant position, one backend, five rows — strictly weaker
+evidence than the claim it bounds, and calling the padded path "an upper bound against
+designed-CDS flank" would be the same over-generalization pointed the other way, which is
+the error this section exists to correct. What survives is the negative: the padded number
+is **not an estimate**, and its sign as a bound is *not established* to be
+regime-independent. So the word "lower" must not be used without naming the flank type,
+and no bound in either direction should be asserted for designed-CDS flank on this
+evidence.
 
 ### The acceptor arm, built to the published architecture
 
@@ -942,7 +951,7 @@ the donor scramble is constrained to avoid a junction `GT`.
 
 ### Pooling all 21 measurements
 
-| statistic | lowest true site | highest negative | separation | usable interval |
+| statistic | lowest positive | highest negative | separation | usable interval |
 |---|---|---|---|---|
 | **absolute peak** | 0.1890 | 0.0856 | 2.21× | (0.086, 0.189) |
 | **peak / local background** | 3.32× | 1.60× | 2.08× | (1.60, 3.32) |
@@ -1080,10 +1089,17 @@ question — *did this edit create a site?* — scored without a reference model
 | VEP plugin bands | high > 8.5, moderate 6.2–8.5, low < 6.2 bits |
 | MES-NCSS | does the created site **beat the nearest native site**? |
 
+*Provenance of these values:* they come from the same literature sweep as the three figures
+retracted below, and are **not verified against the primary sources here**. Treat the bit
+values as attributed, not established.
+
 The numeric bit values cannot be copied onto a 0–1 pseudo-probability, but **the structure
-transfers, and it is the same structure the measurements above arrived at independently**:
-a *relative* criterion — score against a local reference — rather than a bare absolute
-constant. It also structurally forbids the tempting cheat of lowering the background to
+transfers, and it is the same structure the measurements above arrived at**: a *relative*
+criterion — score against a local reference — rather than a bare absolute constant.
+*Not* independently, though: it is also the same family of answer as the
+genome-wide-call-rate normalization Smith & Kitzman already recommend, recorded in
+[`RESEARCH_splice_cnn_calibration.md`](RESEARCH_splice_cnn_calibration.md) before these
+measurements were run. It also structurally forbids the tempting cheat of lowering the background to
 make signal reappear, because the reference moves with it.
 
 ## Panels, ranked by fit — and the regime gap that none of them close
@@ -1104,12 +1120,17 @@ regime-*transferred*, and BT4 designs in the models' weakest regime (exonic prAU
 ([`RESEARCH_splice_cnn_calibration.md`](RESEARCH_splice_cnn_calibration.md)) rather than
 introducing one; new here are Rosenberg 2015 and the ranking rationale, and the notable
 *change* is demoting BRCA1-SGE, which that document previously listed among the best fits
-for BT4's regime. (b) **The Vex-seq licence posture is unresolved.** That document records
-it as *GEO terms* (GSE113163); the CC BY 4.0 reading applies to the paper's supplementary
-table. These are different redistribution rights and the repo must not ship both answers
-as fact — a licence claim is the one class of error with consequences outside the repo, so
-it is recorded as open and **must be verified against the primary sources before anything
-is bundled**.
+for BT4's regime. (b) **The Vex-seq licence posture is unresolved, and this note resolves
+nothing.** This document previously called it *CC BY 4.0, the only legally bundleable one*;
+[`RESEARCH_splice_cnn_calibration.md`](RESEARCH_splice_cnn_calibration.md) records it as
+*GEO terms* (GSE113163). Those are different redistribution rights and the repo must not
+ship both as fact. **Only the disagreement is recorded** — deciding which grant covers
+which artefact is itself a licence determination, and making one from a secondary reading
+would repeat the original error at half scale. A licence claim is the one class of error
+with consequences outside the repo, so this **must be verified against the primary sources
+before anything is bundled**. Note also that "the only bundleable one" was independently
+wrong: this document's own opening section records an MIT-licensed panel already
+downloaded and hash-verified.
 
 ## The perturbation ladder, completed
 
