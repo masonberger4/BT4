@@ -208,6 +208,21 @@ five-figure panel. That call is made by a person looking at these numbers.
 
 Every script and the drawn panel are committed **in this PR, before the first scoring
 run**. Re-analysing with different code is a new pre-registration, not a correction.
+
+**How to verify these hashes.** They are SHA-256 of the **committed content** (LF line
+endings), not of a checked-out working-tree file. On Windows with `core.autocrlf=true`
+checkout rewrites LF to CRLF, so `sha256sum` over the working tree does **not** match and
+would look like the freeze had been violated when it had not. This was hit for real
+immediately after merge. The portable check, which works on every platform:
+
+```bash
+git show HEAD:scripts/prereg_round2_analyze.py | sha256sum
+```
+
+A `.gitattributes` pinning `* text=auto eol=lf` was added afterwards so fresh clones
+check out LF and plain `sha256sum` also works. It changed **no file contents** — the
+committed blobs were already LF — so the hashes below are unaffected by it.
+
 SHA-256 at freeze:
 
 | file | sha256 |

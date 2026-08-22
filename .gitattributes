@@ -1,0 +1,16 @@
+# Normalize text to LF in the repository, and check it out as LF everywhere.
+#
+# Without this, a Windows clone with `core.autocrlf=true` materializes text files
+# with CRLF, so `sha256sum` over the working tree does not match the SHA-256 of the
+# committed content. That matters here beyond tidiness: the round-2 pre-registration
+# (docs/PREREG_ribonn_part3_round2.md 7) records content hashes to prove its analysis
+# code was frozen before the data was seen, and a hash that only verifies on one
+# platform is not a freeze anyone can check.
+* text=auto eol=lf
+
+# Binary-ish assets git must not touch.
+*.png binary
+*.gz binary
+*.h5 binary
+*.pth binary
+*.tar.gz binary
